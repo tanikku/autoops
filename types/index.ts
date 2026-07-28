@@ -2,6 +2,15 @@ export const routineStatuses = ["active", "paused", "draft"] as const;
 
 export type RoutineStatus = (typeof routineStatuses)[number];
 
+export const routineFrequencies = [
+  "manual",
+  "daily",
+  "weekly",
+  "monthly",
+] as const;
+
+export type RoutineFrequency = (typeof routineFrequencies)[number];
+
 export type Routine = {
   id: string;
   name: string;
@@ -9,6 +18,8 @@ export type Routine = {
   prompt: string;
   schedule: string;
   status: RoutineStatus;
+  frequency: RoutineFrequency;
+  nextRunAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -19,10 +30,16 @@ export type RoutineInput = {
   prompt: string;
   schedule: string;
   status: RoutineStatus;
+  frequency: RoutineFrequency;
+  nextRunAt: Date | null;
 };
 
 export function isRoutineStatus(value: string): value is RoutineStatus {
   return (routineStatuses as readonly string[]).includes(value);
+}
+
+export function isRoutineFrequency(value: string): value is RoutineFrequency {
+  return (routineFrequencies as readonly string[]).includes(value);
 }
 
 export const runStatuses = ["running", "completed"] as const;

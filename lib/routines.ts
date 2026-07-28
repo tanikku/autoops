@@ -1,17 +1,26 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
-import { isRoutineStatus, type Routine, type RoutineInput } from "@/types";
+import {
+  isRoutineFrequency,
+  isRoutineStatus,
+  type Routine,
+  type RoutineInput,
+} from "@/types";
 
 type RoutineRecord = Awaited<
   ReturnType<typeof prisma.routine.findFirstOrThrow>
 >;
 
-// `status` is a plain string column in SQLite, so narrow it at the boundary.
+// `status` and `frequency` are plain string columns in SQLite, so narrow them
+// at the boundary.
 function toRoutine(record: RoutineRecord): Routine {
   return {
     ...record,
     status: isRoutineStatus(record.status) ? record.status : "draft",
+    frequency: isRoutineFrequency(record.frequency)
+      ? record.frequency
+      : "manual",
   };
 }
 

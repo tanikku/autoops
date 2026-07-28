@@ -26,6 +26,10 @@ const statusVariants: Record<
   draft: "outline",
 };
 
+function formatNextRun(value: Date) {
+  return value.toISOString().slice(0, 16).replace("T", " ");
+}
+
 export function RoutineCard({ routine }: { routine: Routine }) {
   return (
     <Card>
@@ -38,6 +42,11 @@ export function RoutineCard({ routine }: { routine: Routine }) {
           </Badge>
         </CardAction>
       </CardHeader>
+
+      <CardContent className="text-xs text-muted-foreground">
+        Next Run:{" "}
+        {routine.nextRunAt ? formatNextRun(routine.nextRunAt) : "Manual"}
+      </CardContent>
 
       <CardContent className="flex gap-2">
         <Button variant="outline" size="sm" disabled>
