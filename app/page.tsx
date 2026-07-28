@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { GitHubIcon } from "@/components/icons";
 
@@ -32,7 +33,11 @@ export default function Home() {
         </p>
 
         <div className="mt-10 flex w-full flex-col items-center gap-3 sm:w-auto sm:flex-row">
-          <Button size="lg" className="w-full sm:w-auto">
+          <Button
+            size="lg"
+            className="w-full sm:w-auto"
+            render={<Link href="/dashboard" />}
+          >
             Get Started
           </Button>
           <Button
