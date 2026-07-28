@@ -30,7 +30,7 @@ export function RoutineCard({ routine }: { routine: Routine }) {
     <Card>
       <CardHeader>
         <CardTitle>{routine.name}</CardTitle>
-        <CardDescription>{routine.schedule}</CardDescription>
+        <CardDescription>{routine.schedule || "No schedule"}</CardDescription>
         <CardAction>
           <Badge variant={statusVariants[routine.status]}>
             {statusLabels[routine.status]}
