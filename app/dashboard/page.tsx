@@ -2,8 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { DashboardNav } from "@/components/dashboard-nav";
 import { RoutineCard } from "@/components/routine-card";
+import { RunHistoryList } from "@/components/run-history-list";
 import { Button } from "@/components/ui/button";
 import { listRoutines } from "@/lib/routines";
+import { listRunHistory } from "@/lib/runs";
 
 export const metadata: Metadata = {
   title: "Dashboard — AutoOps",
@@ -14,7 +16,10 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const routines = await listRoutines();
+  const [routines, runs] = await Promise.all([
+    listRoutines(),
+    listRunHistory(),
+  ]);
 
   return (
     <div className="flex flex-1 flex-col bg-background">
@@ -47,6 +52,11 @@ export default async function DashboardPage() {
               ))}
             </div>
           )}
+        </section>
+
+        <section className="mt-10">
+          <h2 className="text-lg font-medium tracking-tight">Run History</h2>
+          <RunHistoryList runs={runs} />
         </section>
       </main>
     </div>

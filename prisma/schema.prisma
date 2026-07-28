@@ -11,12 +11,25 @@ datasource db {
 }
 
 model Routine {
-  id          String   @id @default(cuid())
+  id          String       @id @default(cuid())
   name        String
-  description String   @default("")
-  prompt      String   @default("")
-  schedule    String   @default("")
-  status      String   @default("draft")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  description String       @default("")
+  prompt      String       @default("")
+  schedule    String       @default("")
+  status      String       @default("draft")
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  runs        RunHistory[]
+}
+
+model RunHistory {
+  id         String    @id @default(cuid())
+  routineId  String
+  status     String    @default("running")
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  output     String    @default("")
+  routine    Routine   @relation(fields: [routineId], references: [id], onDelete: Cascade)
+
+  @@index([routineId])
 }

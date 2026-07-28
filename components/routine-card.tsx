@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import { RunRoutineButton } from "@/components/run-routine-button";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -42,9 +43,7 @@ export function RoutineCard({ routine }: { routine: Routine }) {
         <Button variant="outline" size="sm" disabled>
           Edit
         </Button>
-        <Button size="sm" disabled>
-          Run
-        </Button>
+        <RunRoutineButton routineId={routine.id} />
       </CardContent>
     </Card>
   );
