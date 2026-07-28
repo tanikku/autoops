@@ -1,10 +1,11 @@
 import "server-only";
 
+import { DummyProvider } from "@/lib/ai/dummy-provider";
 import { prisma } from "@/lib/prisma";
 import { isRunStatus, type RunHistory, type RunHistoryEntry } from "@/types";
 
 const SIMULATED_RUN_MS = 1000;
-const DUMMY_OUTPUT = "Execution completed successfully.";
+const provider = new DummyProvider();
 
 type RunRecord = Awaited<ReturnType<typeof prisma.runHistory.findFirstOrThrow>>;
 
@@ -32,16 +33,19 @@ export async function listRunHistory(): Promise<RunHistoryEntry[]> {
 export async function runRoutine(routineId: string): Promise<RunHistory> {
   const run = await prisma.runHistory.create({
     data: { routineId, status: "running" },
+    include: { routine: { select: { prompt: true } } },
   });
 
   await new Promise((resolve) => setTimeout(resolve, SIMULATED_RUN_MS));
+
+  const output = await provider.execute(run.routine.prompt);
 
   const finished = await prisma.runHistory.update({
     where: { id: run.id },
     data: {
       status: "completed",
       finishedAt: new Date(),
-      output: DUMMY_OUTPUT,
+      output,
     },
   });
 
