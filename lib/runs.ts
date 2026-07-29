@@ -1,12 +1,12 @@
 import "server-only";
 
-import { DummyProvider } from "@/lib/ai/dummy-provider";
+import { createAIProvider } from "@/lib/ai/factory";
 import { prisma } from "@/lib/prisma";
 import { promptVariables, renderPrompt } from "@/lib/prompt";
 import { isRunStatus, type RunHistory, type RunHistoryEntry } from "@/types";
 
 const SIMULATED_RUN_MS = 1000;
-const provider = new DummyProvider();
+const provider = createAIProvider();
 
 type RunRecord = Awaited<ReturnType<typeof prisma.runHistory.findFirstOrThrow>>;
 
