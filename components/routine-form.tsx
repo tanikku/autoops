@@ -62,7 +62,7 @@ export function RoutineForm() {
         <Input
           id="description"
           name="description"
-          placeholder="What does this routine do?"
+          placeholder="What does this worker do?"
         />
       </div>
 

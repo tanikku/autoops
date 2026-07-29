@@ -23,7 +23,7 @@ export function RunHistoryList({ runs }: { runs: RunHistoryEntry[] }) {
   if (runs.length === 0) {
     return (
       <p className="mt-4 text-sm text-muted-foreground">
-        No runs yet. Use Run on a routine to execute it.
+        No activity yet. Use Run on a worker to execute it.
       </p>
     );
   }
