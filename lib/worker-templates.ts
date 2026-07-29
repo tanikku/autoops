@@ -14,7 +14,7 @@ export const workerTemplates: WorkerTemplate[] = [
     name: "News Reporter",
     description: "Summarises the day's headlines for your industry.",
     defaultPrompt:
-      "Summarise today's most important news for my industry in five bullet points. Include a source link for each item.",
+      "Today's date is {{today}}.\n\nSummarize today's important news.",
     defaultFrequency: "daily",
   },
   {
@@ -46,7 +46,7 @@ export const workerTemplates: WorkerTemplate[] = [
     name: "Research Analyst",
     description: "Digs into a topic and reports what changed.",
     defaultPrompt:
-      "Research the topic I am tracking and report what changed since the last run, with sources and a short conclusion.",
+      "Generated at {{now}}.\n\nResearch the topic I am tracking and report what changed since the last run, with sources and a short conclusion.",
     defaultFrequency: "monthly",
   },
 ];

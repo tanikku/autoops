@@ -2,6 +2,7 @@ import "server-only";
 
 import { DummyProvider } from "@/lib/ai/dummy-provider";
 import { prisma } from "@/lib/prisma";
+import { promptVariables, renderPrompt } from "@/lib/prompt";
 import { isRunStatus, type RunHistory, type RunHistoryEntry } from "@/types";
 
 const SIMULATED_RUN_MS = 1000;
@@ -38,7 +39,8 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
 
   await new Promise((resolve) => setTimeout(resolve, SIMULATED_RUN_MS));
 
-  const output = await provider.execute(run.routine.prompt);
+  const prompt = renderPrompt(run.routine.prompt, promptVariables());
+  const output = await provider.execute(prompt);
 
   const finished = await prisma.runHistory.update({
     where: { id: run.id },
