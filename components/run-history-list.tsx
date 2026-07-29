@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import type { RunHistoryEntry, RunStatus } from "@/types";
@@ -32,9 +33,10 @@ export function RunHistoryList({ runs }: { runs: RunHistoryEntry[] }) {
     <Card className="mt-4">
       <CardContent className="divide-y divide-border">
         {runs.map((run) => (
-          <div
+          <Link
             key={run.id}
-            className="flex flex-col gap-1 py-3 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+            href={`/dashboard/runs/${run.id}`}
+            className="flex flex-col gap-1 py-3 outline-none first:pt-0 last:pb-0 hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
           >
             <div className="min-w-0">
               <p className="truncate font-medium">{run.routineName}</p>
@@ -46,7 +48,7 @@ export function RunHistoryList({ runs }: { runs: RunHistoryEntry[] }) {
             <Badge variant={statusVariants[run.status]}>
               {statusLabels[run.status]}
             </Badge>
-          </div>
+          </Link>
         ))}
       </CardContent>
     </Card>

@@ -58,6 +58,9 @@ export type RunHistory = {
 /** A run joined with the name of the routine it belongs to. */
 export type RunHistoryEntry = RunHistory & { routineName: string };
 
+/** A single run joined with the routine fields the detail view shows. */
+export type RunHistoryDetail = RunHistoryEntry & { routinePrompt: string };
+
 export function isRunStatus(value: string): value is RunStatus {
   return (runStatuses as readonly string[]).includes(value);
 }

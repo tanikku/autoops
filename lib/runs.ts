@@ -3,7 +3,12 @@ import "server-only";
 import { createAIProvider } from "@/lib/ai/factory";
 import { prisma } from "@/lib/prisma";
 import { promptVariables, renderPrompt } from "@/lib/prompt";
-import { isRunStatus, type RunHistory, type RunHistoryEntry } from "@/types";
+import {
+  isRunStatus,
+  type RunHistory,
+  type RunHistoryDetail,
+  type RunHistoryEntry,
+} from "@/types";
 
 const SIMULATED_RUN_MS = 1000;
 const provider = createAIProvider();
@@ -28,6 +33,24 @@ export async function listRunHistory(): Promise<RunHistoryEntry[]> {
     ...toRun(record),
     routineName: routine.name,
   }));
+}
+
+export async function getRun(id: string): Promise<RunHistoryDetail | null> {
+  const found = await prisma.runHistory.findUnique({
+    where: { id },
+    include: { routine: { select: { name: true, prompt: true } } },
+  });
+
+  if (!found) {
+    return null;
+  }
+
+  const { routine, ...record } = found;
+  return {
+    ...toRun(record),
+    routineName: routine.name,
+    routinePrompt: routine.prompt,
+  };
 }
 
 /** Executes a routine. Execution is simulated until real AI runs land. */
