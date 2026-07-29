@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { runRoutine } from "@/lib/runs";
+import { enqueueRoutine } from "@/lib/queue";
 
 export async function runRoutineAction(formData: FormData): Promise<void> {
   const routineId = String(formData.get("routineId") ?? "");
@@ -9,6 +9,6 @@ export async function runRoutineAction(formData: FormData): Promise<void> {
     return;
   }
 
-  await runRoutine(routineId);
+  await enqueueRoutine(routineId);
   revalidatePath("/dashboard");
 }
