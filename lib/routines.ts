@@ -8,13 +8,13 @@ import {
   type RoutineInput,
 } from "@/types";
 
-type RoutineRecord = Awaited<
+export type RoutineRecord = Awaited<
   ReturnType<typeof prisma.routine.findFirstOrThrow>
 >;
 
 // `status` and `frequency` are plain string columns in SQLite, so narrow them
 // at the boundary.
-function toRoutine(record: RoutineRecord): Routine {
+export function toRoutine(record: RoutineRecord): Routine {
   return {
     ...record,
     status: isRoutineStatus(record.status) ? record.status : "draft",
