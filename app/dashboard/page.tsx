@@ -37,6 +37,7 @@ export default async function DashboardPage() {
           </div>
           <Button
             className="w-full sm:w-auto"
+            nativeButton={false}
             render={<Link href="/dashboard/new" />}
           >
             Hire Worker
@@ -49,7 +50,10 @@ export default async function DashboardPage() {
           {routines.length === 0 ? (
             <div className="mt-4 flex flex-col items-start gap-3">
               <p className="text-sm text-muted-foreground">No workers yet.</p>
-              <Button render={<Link href="/dashboard/new" />}>
+              <Button
+                nativeButton={false}
+                render={<Link href="/dashboard/new" />}
+              >
                 Hire your first Worker
               </Button>
             </div>

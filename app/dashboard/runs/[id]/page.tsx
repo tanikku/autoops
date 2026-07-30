@@ -87,6 +87,7 @@ export default async function RunDetailPage({
         <Button
           variant="ghost"
           size="sm"
+          nativeButton={false}
           render={<Link href="/dashboard" />}
           className="-ml-2.5"
         >

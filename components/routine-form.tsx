@@ -175,7 +175,11 @@ export function RoutineForm() {
 
         <div className="flex gap-2">
           <SaveButton />
-          <Button variant="outline" render={<Link href="/dashboard" />}>
+          <Button
+            variant="outline"
+            nativeButton={false}
+            render={<Link href="/dashboard" />}
+          >
             Cancel
           </Button>
         </div>

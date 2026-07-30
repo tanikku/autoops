@@ -10,6 +10,7 @@ export default function Home() {
         <Button
           variant="ghost"
           size="sm"
+          nativeButton={false}
           render={
             <a
               href="https://github.com"
@@ -48,6 +49,7 @@ export default function Home() {
             variant="outline"
             size="lg"
             className="w-full sm:w-auto"
+            nativeButton={false}
             render={
               <a
                 href="https://github.com"
