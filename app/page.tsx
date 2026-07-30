@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { signIn } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { GitHubIcon } from "@/components/icons";
 
@@ -33,13 +33,17 @@ export default function Home() {
         </p>
 
         <div className="mt-10 flex w-full flex-col items-center gap-3 sm:w-auto sm:flex-row">
-          <Button
-            size="lg"
+          <form
+            action={async () => {
+              "use server";
+              await signIn("google", { redirectTo: "/dashboard" });
+            }}
             className="w-full sm:w-auto"
-            render={<Link href="/dashboard" />}
           >
-            Get Started
-          </Button>
+            <Button type="submit" size="lg" className="w-full sm:w-auto">
+              Continue with Google
+            </Button>
+          </form>
           <Button
             variant="outline"
             size="lg"
