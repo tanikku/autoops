@@ -77,6 +77,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 AUTH_SECRET=...
 AUTH_GOOGLE_ID=...
 AUTH_GOOGLE_SECRET=...
+CRON_SECRET=...
 ```
 
 `.env` is gitignored; `.env.example` is committed and holds no real values.
@@ -84,6 +85,48 @@ AUTH_GOOGLE_SECRET=...
 When `ANTHROPIC_API_KEY` is set, workers run against the Claude API. Without it,
 AutoOps falls back to a stand-in provider that returns a fixed response — no key
 is required to run the app locally.
+
+### Cron API
+
+`POST /api/cron/run` is the entry point for scheduled execution. It asks the
+dispatcher to run every worker that is due and reports how many it handed off.
+It is provider-agnostic — Vercel Cron, Cloudflare Cron, GitHub Actions, and
+Trigger.dev can all call it.
+
+- **`POST` only.** Other methods return `405`.
+- **`Authorization: Bearer <CRON_SECRET>` is required.** The header is matched
+  against `CRON_SECRET`; anything else returns `401`. With `CRON_SECRET` unset
+  the endpoint rejects every request, so a missing variable can never leave it
+  open.
+
+```bash
+curl -X POST http://localhost:3000/api/cron/run \
+  -H "Authorization: Bearer $CRON_SECRET"
+```
+
+Success (`200`) — `dispatched` is the number of workers handed to the queue:
+
+```json
+{ "success": true, "dispatched": 3 }
+```
+
+Nothing due (`200`):
+
+```json
+{ "success": true, "dispatched": 0 }
+```
+
+Missing or wrong secret (`401`):
+
+```json
+{ "success": false, "error": "Unauthorized" }
+```
+
+Failure (`500`) — the cause is written to the server log only:
+
+```json
+{ "success": false, "error": "Internal Server Error" }
+```
 
 ### Authentication
 
