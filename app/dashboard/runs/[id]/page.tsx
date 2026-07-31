@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { promptVariables, renderPrompt } from "@/lib/prompt";
 import { getRun } from "@/lib/runs";
+import { requireUserId } from "@/lib/session";
 import type { RunStatus } from "@/types";
 
 export const metadata: Metadata = {
@@ -66,7 +67,10 @@ export default async function RunDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const run = await getRun(id);
+  const userId = await requireUserId();
+  // A run owned by someone else is indistinguishable from one that does not
+  // exist: both 404, so the id is never confirmed.
+  const run = await getRun(id, userId);
 
   if (!run) {
     notFound();

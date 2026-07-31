@@ -8,6 +8,23 @@ AutoOps allows users to create AI-powered routines that can execute automaticall
 
 The goal is to eliminate repetitive AI work.
 
+## Architecture
+
+AutoOps is a **multi-tenant** application. Every signed-in Google account is a
+tenant, and data is scoped to its owner:
+
+- A **Worker** belongs to a User.
+- A **Run History** entry belongs to a User, inherited from the worker that
+  produced it.
+
+Every read is filtered by the session's user id, and ownership is enforced on
+the server. Requesting another tenant's worker or run returns **404** rather
+than 403, so the existence of a record is never disclosed.
+
+The **Scheduler** and **Dispatcher** are the deliberate exception: they run
+system-wide across all tenants, because scheduled execution is triggered by the
+platform rather than by a signed-in user.
+
 ## Features
 
 ### Current

@@ -13,6 +13,7 @@ export type RoutineFrequency = (typeof routineFrequencies)[number];
 
 export type Routine = {
   id: string;
+  userId: string;
   name: string;
   description: string;
   prompt: string;
@@ -49,6 +50,7 @@ export type RunStatus = (typeof runStatuses)[number];
 export type RunHistory = {
   id: string;
   routineId: string;
+  userId: string;
   status: RunStatus;
   startedAt: Date;
   finishedAt: Date | null;

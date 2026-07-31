@@ -6,6 +6,7 @@ import { RunHistoryList } from "@/components/run-history-list";
 import { Button } from "@/components/ui/button";
 import { listRoutines } from "@/lib/routines";
 import { listRunHistory } from "@/lib/runs";
+import { requireUserId } from "@/lib/session";
 
 export const metadata: Metadata = {
   title: "Dashboard — AutoOps",
@@ -16,9 +17,10 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
+  const userId = await requireUserId();
   const [routines, runs] = await Promise.all([
-    listRoutines(),
-    listRunHistory(),
+    listRoutines(userId),
+    listRunHistory(userId),
   ]);
 
   return (

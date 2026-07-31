@@ -2,8 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { auth } from "@/auth";
 import { createRoutine } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
+import { ensureUser } from "@/lib/users";
 import {
   isRoutineFrequency,
   isRoutineStatus,
@@ -17,6 +19,12 @@ export async function createRoutineAction(
   _prevState: CreateRoutineState,
   formData: FormData,
 ): Promise<CreateRoutineState> {
+  // The owner comes from the session, never from the submitted form.
+  const session = await auth();
+  if (!session?.user?.id || !session.user.email) {
+    redirect("/");
+  }
+
   const name = String(formData.get("name") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
   const prompt = String(formData.get("prompt") ?? "").trim();
@@ -36,15 +44,27 @@ export async function createRoutineAction(
     ? rawFrequency
     : "manual";
 
-  await createRoutine({
-    name,
-    description,
-    prompt,
-    schedule,
-    status,
-    frequency,
-    nextRunAt: calculateNextRunAt(frequency),
+  // JWT sessions never write the account row, so make sure it exists before
+  // the first row that references it.
+  await ensureUser({
+    id: session.user.id,
+    email: session.user.email,
+    name: session.user.name,
+    image: session.user.image,
   });
+
+  await createRoutine(
+    {
+      name,
+      description,
+      prompt,
+      schedule,
+      status,
+      frequency,
+      nextRunAt: calculateNextRunAt(frequency),
+    },
+    session.user.id,
+  );
 
   revalidatePath("/dashboard");
   redirect("/dashboard");

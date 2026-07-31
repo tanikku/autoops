@@ -24,31 +24,48 @@ export function toRoutine(record: RoutineRecord): Routine {
   };
 }
 
-export async function listRoutines(): Promise<Routine[]> {
+export async function listRoutines(userId: string): Promise<Routine[]> {
   const records = await prisma.routine.findMany({
+    where: { userId },
     orderBy: { createdAt: "desc" },
   });
   return records.map(toRoutine);
 }
 
-export async function getRoutine(id: string): Promise<Routine | null> {
-  const record = await prisma.routine.findUnique({ where: { id } });
+/** Returns null for both "missing" and "someone else's" — callers 404 on either. */
+export async function getRoutine(
+  id: string,
+  userId: string,
+): Promise<Routine | null> {
+  const record = await prisma.routine.findFirst({ where: { id, userId } });
   return record ? toRoutine(record) : null;
 }
 
-export async function createRoutine(input: RoutineInput): Promise<Routine> {
-  const record = await prisma.routine.create({ data: input });
+export async function createRoutine(
+  input: RoutineInput,
+  userId: string,
+): Promise<Routine> {
+  const record = await prisma.routine.create({ data: { ...input, userId } });
   return toRoutine(record);
 }
 
 export async function updateRoutine(
   id: string,
   input: Partial<RoutineInput>,
-): Promise<Routine> {
-  const record = await prisma.routine.update({ where: { id }, data: input });
-  return toRoutine(record);
+  userId: string,
+): Promise<Routine | null> {
+  const { count } = await prisma.routine.updateMany({
+    where: { id, userId },
+    data: input,
+  });
+
+  return count === 0 ? null : getRoutine(id, userId);
 }
 
-export async function deleteRoutine(id: string): Promise<void> {
-  await prisma.routine.delete({ where: { id } });
+export async function deleteRoutine(
+  id: string,
+  userId: string,
+): Promise<boolean> {
+  const { count } = await prisma.routine.deleteMany({ where: { id, userId } });
+  return count > 0;
 }
