@@ -25,6 +25,28 @@ The **Scheduler** and **Dispatcher** are the deliberate exception: they run
 system-wide across all tenants, because scheduled execution is triggered by the
 platform rather than by a signed-in user.
 
+### Worker Lifecycle
+
+A worker is created from the dashboard, edited in place, and runs either on its
+schedule or on demand:
+
+```
+Hire  →  Edit  →  Run (manual or scheduled)  →  Activity  →  Execution Detail
+```
+
+Editing (`/dashboard/workers/[id]/edit`) covers name, prompt, frequency, and
+status. Every step is scoped to the owner — editing someone else's worker
+returns **404**, and the owner is read from the session, never from the form.
+
+Changing the **frequency** resets the pending slot, because the old one no
+longer describes the new cadence: switching to `manual` clears `nextRunAt` so
+the worker stops being due, and switching away from it schedules the first slot.
+Leaving the frequency alone keeps the existing slot, so editing a name or prompt
+never shifts the schedule.
+
+Changing the **status** to `paused` or `draft` takes the worker out of scheduled
+execution without discarding its schedule.
+
 ### Scheduling Engine
 
 Scheduled execution is split across three modules, each with one job:

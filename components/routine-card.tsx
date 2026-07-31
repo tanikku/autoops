@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { RunRoutineButton } from "@/components/run-routine-button";
 import { Button } from "@/components/ui/button";
@@ -49,7 +50,12 @@ export function RoutineCard({ routine }: { routine: Routine }) {
       </CardContent>
 
       <CardContent className="flex gap-2">
-        <Button variant="outline" size="sm" disabled>
+        <Button
+          variant="outline"
+          size="sm"
+          nativeButton={false}
+          render={<Link href={`/dashboard/workers/${routine.id}/edit`} />}
+        >
           Edit
         </Button>
         <RunRoutineButton routineId={routine.id} />
