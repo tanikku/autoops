@@ -69,3 +69,16 @@ export async function deleteRoutine(
   const { count } = await prisma.routine.deleteMany({ where: { id, userId } });
   return count > 0;
 }
+
+/**
+ * Moves a worker's schedule forward.
+ *
+ * Deliberately not tenant-scoped: the dispatcher runs system-wide on behalf of
+ * the platform, not a signed-in user.
+ */
+export async function setRoutineNextRunAt(
+  id: string,
+  nextRunAt: Date | null,
+): Promise<void> {
+  await prisma.routine.update({ where: { id }, data: { nextRunAt } });
+}

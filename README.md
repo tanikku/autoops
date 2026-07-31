@@ -25,6 +25,26 @@ The **Scheduler** and **Dispatcher** are the deliberate exception: they run
 system-wide across all tenants, because scheduled execution is triggered by the
 platform rather than by a signed-in user.
 
+### Scheduling Engine
+
+Scheduled execution is split across three modules, each with one job:
+
+| Module | Responsibility |
+| --- | --- |
+| **Scheduler** (`lib/scheduler.ts`) | Decides *what* is due. Read-only — it never writes. |
+| **Schedule** (`lib/schedule.ts`) | Computes *when* the next slot falls. Pure arithmetic, no database access. |
+| **Dispatcher** (`lib/dispatcher.ts`) | Owns the hand-off: enqueues each due worker, then writes the new `nextRunAt`. |
+
+Two rules govern the update:
+
+- **`nextRunAt` advances from the stored value, never from the clock.** A worker
+  due at 09:00 that a cron tick picks up at 09:05 is next due at 09:00 the
+  following day. Late ticks cannot drag the schedule forward.
+- **The schedule advances only after the queue accepted the worker.** A failed
+  run leaves `nextRunAt` untouched, so the slot is retried rather than skipped.
+
+Workers with `manual` frequency keep `nextRunAt` as `null` and are never due.
+
 ## Features
 
 ### Current
