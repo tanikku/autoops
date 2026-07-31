@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
+import { DeleteWorkerButton } from "@/components/delete-worker-button";
 import { RunRoutineButton } from "@/components/run-routine-button";
 import { Button } from "@/components/ui/button";
 import {
@@ -59,6 +60,10 @@ export function RoutineCard({ routine }: { routine: Routine }) {
           Edit
         </Button>
         <RunRoutineButton routineId={routine.id} />
+        <DeleteWorkerButton
+          workerId={routine.id}
+          workerName={routine.name}
+        />
       </CardContent>
     </Card>
   );

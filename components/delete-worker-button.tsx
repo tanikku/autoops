@@ -1,53 +1,61 @@
 "use client";
 
-import { useActionState, useRef } from "react";
-import { useFormStatus } from "react-dom";
-import {
-  deleteWorkerAction,
-  type UpdateRoutineState,
-} from "@/app/dashboard/workers/[id]/edit/actions";
-import { useActionResult } from "@/components/notification/use-action-result";
+import { useRef, useTransition } from "react";
+import { deleteWorkerAction } from "@/app/dashboard/actions";
+import { useNotify } from "@/components/notification/notification-provider";
 import { Button } from "@/components/ui/button";
 
-function ConfirmDeleteButton() {
-  const { pending } = useFormStatus();
-
-  return (
-    <Button type="submit" variant="destructive" disabled={pending}>
-      {pending ? "Deleting…" : "Delete"}
-    </Button>
-  );
-}
-
-export function DeleteWorkerButton({ workerId }: { workerId: string }) {
+export function DeleteWorkerButton({
+  workerId,
+  workerName,
+}: {
+  workerId: string;
+  workerName: string;
+}) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const [state, formAction] = useActionState<UpdateRoutineState, FormData>(
-    deleteWorkerAction.bind(null, workerId),
-    null,
-  );
+  const notify = useNotify();
+  const [pending, startTransition] = useTransition();
 
-  useActionResult(state, { redirectTo: "/dashboard" });
+  function handleDelete() {
+    dialog.current?.close();
+
+    startTransition(async () => {
+      // A successful delete removes the card, and this button with it, so the
+      // toast is raised straight from the closure. An effect would never run:
+      // the component is gone by the time the result lands.
+      const result = await deleteWorkerAction(workerId, null);
+
+      if (result) {
+        notify({ type: result.status, message: result.message });
+      }
+    });
+  }
 
   return (
     <>
       <Button
         type="button"
-        variant="destructive"
+        variant="outline"
+        size="sm"
+        disabled={pending}
         onClick={() => dialog.current?.showModal()}
       >
-        Delete Worker
+        {pending ? "Deleting…" : "Delete"}
       </Button>
 
       <dialog
         ref={dialog}
-        aria-labelledby="delete-worker-title"
+        aria-labelledby={`delete-worker-title-${workerId}`}
         className="max-w-sm rounded-xl border border-border bg-background p-6 text-foreground shadow-lg backdrop:bg-black/50"
       >
-        <h2 id="delete-worker-title" className="text-base font-medium">
-          Delete this worker?
+        <h2
+          id={`delete-worker-title-${workerId}`}
+          className="text-base font-medium"
+        >
+          Delete “{workerName}”?
         </h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          This action cannot be undone.
+          This also removes its activity history. This cannot be undone.
         </p>
 
         <div className="mt-6 flex justify-end gap-2">
@@ -58,10 +66,11 @@ export function DeleteWorkerButton({ workerId }: { workerId: string }) {
           >
             Cancel
           </Button>
-          {/* The id travels with the action, so it cannot be swapped client-side. */}
-          <form action={formAction}>
-            <ConfirmDeleteButton />
-          </form>
+          {/* The id is passed by the handler, not the form, so it cannot be
+              swapped client-side. */}
+          <Button type="button" variant="destructive" onClick={handleDelete}>
+            Delete
+          </Button>
         </div>
       </dialog>
     </>

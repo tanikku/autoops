@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { DashboardNav } from "@/components/dashboard-nav";
-import { DeleteWorkerButton } from "@/components/delete-worker-button";
 import { WorkerEditForm } from "@/components/worker-edit-form";
 import { getRoutine } from "@/lib/routines";
 import { requireUserId } from "@/lib/session";
@@ -50,19 +49,6 @@ export default async function EditWorkerPage({
             status: worker.status,
           }}
         />
-
-        <section className="mt-12 max-w-2xl border-t border-border pt-8">
-          <h2 className="text-sm font-medium tracking-tight text-destructive">
-            Danger zone
-          </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Deleting this worker also removes its activity history. This cannot
-            be undone.
-          </p>
-          <div className="mt-4">
-            <DeleteWorkerButton workerId={worker.id} />
-          </div>
-        </section>
       </main>
     </div>
   );
