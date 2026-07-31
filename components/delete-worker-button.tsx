@@ -1,8 +1,12 @@
 "use client";
 
-import { useRef } from "react";
+import { useActionState, useRef } from "react";
 import { useFormStatus } from "react-dom";
-import { deleteWorkerAction } from "@/app/dashboard/workers/[id]/edit/actions";
+import {
+  deleteWorkerAction,
+  type UpdateRoutineState,
+} from "@/app/dashboard/workers/[id]/edit/actions";
+import { useActionResult } from "@/components/notification/use-action-result";
 import { Button } from "@/components/ui/button";
 
 function ConfirmDeleteButton() {
@@ -17,6 +21,12 @@ function ConfirmDeleteButton() {
 
 export function DeleteWorkerButton({ workerId }: { workerId: string }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const [state, formAction] = useActionState<UpdateRoutineState, FormData>(
+    deleteWorkerAction.bind(null, workerId),
+    null,
+  );
+
+  useActionResult(state, { redirectTo: "/dashboard" });
 
   return (
     <>
@@ -49,7 +59,7 @@ export function DeleteWorkerButton({ workerId }: { workerId: string }) {
             Cancel
           </Button>
           {/* The id travels with the action, so it cannot be swapped client-side. */}
-          <form action={deleteWorkerAction.bind(null, workerId)}>
+          <form action={formAction}>
             <ConfirmDeleteButton />
           </form>
         </div>

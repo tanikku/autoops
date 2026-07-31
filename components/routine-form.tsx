@@ -7,6 +7,7 @@ import {
   createRoutineAction,
   type CreateRoutineState,
 } from "@/app/dashboard/new/actions";
+import { useActionResult } from "@/components/notification/use-action-result";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -52,6 +53,8 @@ export function RoutineForm() {
     null,
   );
   const [template, setTemplate] = useState<WorkerTemplate | null>(null);
+
+  useActionResult(state, { redirectTo: "/dashboard" });
 
   return (
     <>
@@ -167,11 +170,6 @@ export function RoutineForm() {
           </select>
         </div>
 
-        {state?.error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {state.error}
-          </p>
-        ) : null}
 
         <div className="flex gap-2">
           <SaveButton />

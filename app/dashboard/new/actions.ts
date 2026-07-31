@@ -9,11 +9,12 @@ import { ensureUser } from "@/lib/users";
 import {
   isRoutineFrequency,
   isRoutineStatus,
+  type ActionResult,
   type RoutineFrequency,
   type RoutineStatus,
 } from "@/types";
 
-export type CreateRoutineState = { error: string } | null;
+export type CreateRoutineState = ActionResult | null;
 
 export async function createRoutineAction(
   _prevState: CreateRoutineState,
@@ -33,7 +34,7 @@ export async function createRoutineAction(
   const rawFrequency = String(formData.get("frequency") ?? "");
 
   if (!name) {
-    return { error: "Name is required." };
+    return { status: "error", message: "Name is required." };
   }
 
   const status: RoutineStatus = isRoutineStatus(rawStatus)
@@ -53,19 +54,26 @@ export async function createRoutineAction(
     image: session.user.image,
   });
 
-  await createRoutine(
-    {
-      name,
-      description,
-      prompt,
-      schedule,
-      status,
-      frequency,
-      nextRunAt: calculateNextRunAt(frequency),
-    },
-    session.user.id,
-  );
+  try {
+    await createRoutine(
+      {
+        name,
+        description,
+        prompt,
+        schedule,
+        status,
+        frequency,
+        nextRunAt: calculateNextRunAt(frequency),
+      },
+      session.user.id,
+    );
+  } catch (error) {
+    console.error("[worker] create failed", error);
+    return { status: "error", message: "Could not create the worker." };
+  }
 
   revalidatePath("/dashboard");
-  redirect("/dashboard");
+  // The caller raises the toast and then navigates, so the outcome never has
+  // to survive in the URL.
+  return { status: "success", message: `Worker "${name}" created.` };
 }

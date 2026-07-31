@@ -1,3 +1,13 @@
+/**
+ * What a server action reports back to the UI.
+ *
+ * Actions return this instead of redirecting so the client can raise a toast
+ * first and navigate afterwards — success no longer travels in the URL.
+ */
+export type ActionResult =
+  | { status: "success"; message: string }
+  | { status: "error"; message: string };
+
 export const routineStatuses = ["active", "paused", "draft"] as const;
 
 export type RoutineStatus = (typeof routineStatuses)[number];

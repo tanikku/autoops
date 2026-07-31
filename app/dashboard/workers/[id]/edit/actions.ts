@@ -1,18 +1,19 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import { deleteRoutine, getRoutine, updateRoutine } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
 import { requireUserId } from "@/lib/session";
 import {
   isRoutineFrequency,
   isRoutineStatus,
+  type ActionResult,
   type RoutineFrequency,
   type RoutineStatus,
 } from "@/types";
 
-export type UpdateRoutineState = { error: string } | null;
+export type UpdateRoutineState = ActionResult | null;
 
 /**
  * Deletes a worker and, through the schema's cascade, its run history.
@@ -21,16 +22,22 @@ export type UpdateRoutineState = { error: string } | null;
  * delete is matched on `id` *and* `userId`, so another tenant's worker is never
  * reachable — it 404s exactly like one that does not exist.
  */
-export async function deleteWorkerAction(id: string): Promise<void> {
+export async function deleteWorkerAction(
+  id: string,
+  prevState: UpdateRoutineState,
+): Promise<UpdateRoutineState> {
+  void prevState; // required by `useActionState`, unused here
   const userId = await requireUserId();
 
+  // Kept outside the try below: `notFound()` signals by throwing, and catching
+  // it would turn a 404 into an error toast.
   const deleted = await deleteRoutine(id, userId);
   if (!deleted) {
     notFound();
   }
 
   revalidatePath("/dashboard");
-  redirect("/dashboard?deleted=1");
+  return { status: "success", message: "Worker deleted." };
 }
 
 export async function updateRoutineAction(
@@ -53,7 +60,7 @@ export async function updateRoutineAction(
   const rawFrequency = String(formData.get("frequency") ?? "");
 
   if (!name) {
-    return { error: "Name is required." };
+    return { status: "error", message: "Name is required." };
   }
 
   const status: RoutineStatus = isRoutineStatus(rawStatus)
@@ -73,8 +80,17 @@ export async function updateRoutineAction(
       ? existing.nextRunAt
       : calculateNextRunAt(frequency);
 
-  await updateRoutine(id, { name, prompt, status, frequency, nextRunAt }, userId);
+  try {
+    await updateRoutine(
+      id,
+      { name, prompt, status, frequency, nextRunAt },
+      userId,
+    );
+  } catch (error) {
+    console.error("[worker] update failed", error);
+    return { status: "error", message: "Could not save the worker." };
+  }
 
   revalidatePath("/dashboard");
-  redirect("/dashboard");
+  return { status: "success", message: `Worker "${name}" saved.` };
 }

@@ -7,6 +7,7 @@ import {
   updateRoutineAction,
   type UpdateRoutineState,
 } from "@/app/dashboard/workers/[id]/edit/actions";
+import { useActionResult } from "@/components/notification/use-action-result";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -62,6 +63,8 @@ export function WorkerEditForm({
     null,
   );
 
+  useActionResult(state, { redirectTo: "/dashboard" });
+
   return (
     <form action={formAction} className="mt-8 flex max-w-2xl flex-col gap-6">
       <div className="grid gap-2">
@@ -111,12 +114,6 @@ export function WorkerEditForm({
           ))}
         </select>
       </div>
-
-      {state?.error ? (
-        <p role="alert" className="text-sm text-destructive">
-          {state.error}
-        </p>
-      ) : null}
 
       <div className="flex gap-2">
         <SaveButton />
