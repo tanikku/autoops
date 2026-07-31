@@ -16,9 +16,14 @@ export const metadata: Metadata = {
 // Routines live in the database, so this page must not be prerendered.
 export const dynamic = "force-dynamic";
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ deleted?: string }>;
+}) {
   const userId = await requireUserId();
-  const [routines, runs] = await Promise.all([
+  const [{ deleted }, routines, runs] = await Promise.all([
+    searchParams,
     listRoutines(userId),
     listRunHistory(userId),
   ]);
@@ -28,6 +33,15 @@ export default async function DashboardPage() {
       <DashboardNav />
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-10 sm:px-10">
+        {deleted ? (
+          <p
+            role="status"
+            className="mb-6 rounded-lg border border-border bg-muted px-4 py-3 text-sm"
+          >
+            Worker deleted.
+          </p>
+        ) : null}
+
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">

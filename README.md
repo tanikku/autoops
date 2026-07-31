@@ -32,11 +32,18 @@ schedule or on demand:
 
 ```
 Hire  →  Edit  →  Run (manual or scheduled)  →  Activity  →  Execution Detail
+                     │
+                     └─→  Delete
 ```
 
 Editing (`/dashboard/workers/[id]/edit`) covers name, prompt, frequency, and
-status. Every step is scoped to the owner — editing someone else's worker
-returns **404**, and the owner is read from the session, never from the form.
+status, and is also where a worker is deleted. Every step is scoped to the
+owner — touching someone else's worker returns **404**, and the owner is read
+from the session, never from the form.
+
+**Deleting** asks for confirmation, then removes the worker together with its
+run history (the schema cascades). There is no archive or restore: deletion is
+permanent.
 
 Changing the **frequency** resets the pending slot, because the old one no
 longer describes the new cadence: switching to `manual` clears `nextRunAt` so

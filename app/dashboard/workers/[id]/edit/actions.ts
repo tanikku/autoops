@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
-import { getRoutine, updateRoutine } from "@/lib/routines";
+import { deleteRoutine, getRoutine, updateRoutine } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
 import { requireUserId } from "@/lib/session";
 import {
@@ -13,6 +13,25 @@ import {
 } from "@/types";
 
 export type UpdateRoutineState = { error: string } | null;
+
+/**
+ * Deletes a worker and, through the schema's cascade, its run history.
+ *
+ * The id is bound to the action rather than submitted with the form, and the
+ * delete is matched on `id` *and* `userId`, so another tenant's worker is never
+ * reachable — it 404s exactly like one that does not exist.
+ */
+export async function deleteWorkerAction(id: string): Promise<void> {
+  const userId = await requireUserId();
+
+  const deleted = await deleteRoutine(id, userId);
+  if (!deleted) {
+    notFound();
+  }
+
+  revalidatePath("/dashboard");
+  redirect("/dashboard?deleted=1");
+}
 
 export async function updateRoutineAction(
   id: string,
