@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { DashboardNav } from "@/components/dashboard-nav";
+import { OverviewCards } from "@/components/overview-cards";
 import { RoutineCard } from "@/components/routine-card";
 import { RunHistoryList } from "@/components/run-history-list";
 import { Button } from "@/components/ui/button";
+import { summarizeWorkers } from "@/lib/overview";
 import { listRoutines } from "@/lib/routines";
 import { listRunHistory } from "@/lib/runs";
 import { requireUserId } from "@/lib/session";
@@ -22,6 +24,9 @@ export default async function DashboardPage() {
     listRoutines(userId),
     listRunHistory(userId),
   ]);
+
+  // Both lists are already in memory, so the summary adds no queries.
+  const overview = summarizeWorkers(routines, runs);
 
   return (
     <div className="flex flex-1 flex-col bg-background">
@@ -45,6 +50,11 @@ export default async function DashboardPage() {
             Hire Worker
           </Button>
         </div>
+
+        <section className="mt-10">
+          <h2 className="text-lg font-medium tracking-tight">Overview</h2>
+          <OverviewCards overview={overview} />
+        </section>
 
         <section className="mt-10">
           <h2 className="text-lg font-medium tracking-tight">My Workers</h2>
