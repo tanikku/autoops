@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useRef, useTransition } from "react";
 import { deleteWorkerAction } from "@/app/dashboard/actions";
 import { useNotify } from "@/components/notification/notification-provider";
@@ -8,16 +9,26 @@ import { Button } from "@/components/ui/button";
 export function DeleteWorkerButton({
   workerId,
   workerName,
+  redirectTo,
 }: {
   workerId: string;
   workerName: string;
+  /** Where to go before deleting, for callers whose page shows this worker. */
+  redirectTo?: string;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const notify = useNotify();
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
 
   function handleDelete() {
     dialog.current?.close();
+
+    // Navigating first, not after: a server action re-renders the page it was
+    // called from, and a page built around this worker cannot survive that.
+    if (redirectTo) {
+      router.push(redirectTo);
+    }
 
     startTransition(async () => {
       // A successful delete removes the card, and this button with it, so the

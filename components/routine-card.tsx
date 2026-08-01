@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
-import { DeleteWorkerButton } from "@/components/delete-worker-button";
 import { RunRoutineButton } from "@/components/run-routine-button";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,7 +35,14 @@ export function RoutineCard({ routine }: { routine: Routine }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{routine.name}</CardTitle>
+        <CardTitle>
+          <Link
+            href={`/dashboard/workers/${routine.id}`}
+            className="outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+          >
+            {routine.name}
+          </Link>
+        </CardTitle>
         <CardDescription>{routine.schedule || "No schedule"}</CardDescription>
         <CardAction>
           <Badge variant={statusVariants[routine.status]}>
@@ -51,19 +57,17 @@ export function RoutineCard({ routine }: { routine: Routine }) {
       </CardContent>
 
       <CardContent className="flex gap-2">
+        {/* Edit and Delete moved to the detail page, which is now the hub for
+            everything you can do to a worker. */}
         <Button
           variant="outline"
           size="sm"
           nativeButton={false}
-          render={<Link href={`/dashboard/workers/${routine.id}/edit`} />}
+          render={<Link href={`/dashboard/workers/${routine.id}`} />}
         >
-          Edit
+          View
         </Button>
         <RunRoutineButton routineId={routine.id} />
-        <DeleteWorkerButton
-          workerId={routine.id}
-          workerName={routine.name}
-        />
       </CardContent>
     </Card>
   );

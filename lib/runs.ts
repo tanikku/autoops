@@ -38,6 +38,24 @@ export async function listRunHistory(
   }));
 }
 
+/**
+ * The most recent run of a single worker, or null if it has never run.
+ *
+ * Tenant-scoped like every other read, so it cannot report a run belonging to
+ * someone else's worker.
+ */
+export async function getLastRun(
+  routineId: string,
+  userId: string,
+): Promise<RunHistory | null> {
+  const record = await prisma.runHistory.findFirst({
+    where: { routineId, userId },
+    orderBy: { startedAt: "desc" },
+  });
+
+  return record ? toRun(record) : null;
+}
+
 /** Returns null for both "missing" and "someone else's" — callers 404 on either. */
 export async function getRun(
   id: string,

@@ -63,7 +63,9 @@ export function WorkerEditForm({
     null,
   );
 
-  useActionResult(state, { redirectTo: "/dashboard" });
+  // Editing is reached from the detail page, so saving returns there.
+  const detailHref = `/dashboard/workers/${worker.id}`;
+  useActionResult(state, { redirectTo: detailHref });
 
   return (
     <form action={formAction} className="mt-8 flex max-w-2xl flex-col gap-6">
@@ -120,7 +122,7 @@ export function WorkerEditForm({
         <Button
           variant="outline"
           nativeButton={false}
-          render={<Link href="/dashboard" />}
+          render={<Link href={detailHref} />}
         >
           Cancel
         </Button>
