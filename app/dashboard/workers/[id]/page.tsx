@@ -7,8 +7,10 @@ import { RunRoutineButton } from "@/components/run-routine-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { WorkerHealthSummary } from "@/components/worker-health";
+import { summarizeRuns } from "@/lib/health";
 import { getRoutine } from "@/lib/routines";
-import { getLastRun } from "@/lib/runs";
+import { listRunsForWorker } from "@/lib/runs";
 import { requireUserId } from "@/lib/session";
 import type { RoutineFrequency, RoutineStatus } from "@/types";
 
@@ -70,7 +72,9 @@ export default async function WorkerDetailPage({
     notFound();
   }
 
-  const lastRun = await getLastRun(worker.id, userId);
+  // One query for the worker's runs, folded into the same summary the
+  // dashboard card shows.
+  const health = summarizeRuns(await listRunsForWorker(worker.id, userId));
 
   return (
     <div className="flex flex-1 flex-col bg-background">
@@ -100,6 +104,12 @@ export default async function WorkerDetailPage({
 
           <Card className="mt-8">
             <CardContent>
+              <WorkerHealthSummary health={health} />
+            </CardContent>
+          </Card>
+
+          <Card className="mt-4">
+            <CardContent>
               <dl className="divide-y divide-border">
                 <Detail
                   label="Frequency"
@@ -120,7 +130,9 @@ export default async function WorkerDetailPage({
                 <Detail
                   label="Last Run"
                   value={
-                    lastRun ? formatTimestamp(lastRun.startedAt) : "Never run"
+                    health.lastRunAt
+                      ? formatTimestamp(health.lastRunAt)
+                      : "Never run"
                   }
                 />
                 <Detail

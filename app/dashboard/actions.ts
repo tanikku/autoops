@@ -54,13 +54,21 @@ export async function runRoutineAction(
     return { status: "error", message: "Worker not found." };
   }
 
+  let run;
   try {
-    await enqueueRoutine(routineId);
+    run = await enqueueRoutine(routineId);
   } catch (error) {
     console.error("[worker] manual run failed", error);
     return { status: "error", message: `"${routine.name}" failed to run.` };
   }
 
   revalidatePath("/dashboard");
+
+  // A failed run is recorded rather than thrown, so the absence of an
+  // exception no longer means the worker succeeded.
+  if (run.status === "failed") {
+    return { status: "error", message: `"${routine.name}" failed to run.` };
+  }
+
   return { status: "success", message: `"${routine.name}" ran successfully.` };
 }

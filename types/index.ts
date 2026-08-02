@@ -53,7 +53,7 @@ export function isRoutineFrequency(value: string): value is RoutineFrequency {
   return (routineFrequencies as readonly string[]).includes(value);
 }
 
-export const runStatuses = ["running", "completed"] as const;
+export const runStatuses = ["running", "completed", "failed"] as const;
 
 export type RunStatus = (typeof runStatuses)[number];
 

@@ -5,6 +5,7 @@ import { OverviewCards } from "@/components/overview-cards";
 import { RoutineCard } from "@/components/routine-card";
 import { RunHistoryList } from "@/components/run-history-list";
 import { Button } from "@/components/ui/button";
+import { groupHealthByWorker, NEVER_RUN } from "@/lib/health";
 import { summarizeWorkers } from "@/lib/overview";
 import { listRoutines } from "@/lib/routines";
 import { listRunHistory } from "@/lib/runs";
@@ -25,8 +26,9 @@ export default async function DashboardPage() {
     listRunHistory(userId),
   ]);
 
-  // Both lists are already in memory, so the summary adds no queries.
+  // Both lists are already in memory, so the summaries add no queries.
   const overview = summarizeWorkers(routines, runs);
+  const healthByWorker = groupHealthByWorker(runs);
 
   return (
     <div className="flex flex-1 flex-col bg-background">
@@ -72,7 +74,11 @@ export default async function DashboardPage() {
           ) : (
             <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {routines.map((routine) => (
-                <RoutineCard key={routine.id} routine={routine} />
+                <RoutineCard
+                  key={routine.id}
+                  routine={routine}
+                  health={healthByWorker.get(routine.id) ?? NEVER_RUN}
+                />
               ))}
             </div>
           )}

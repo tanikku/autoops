@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { RunRoutineButton } from "@/components/run-routine-button";
+import { WorkerHealthSummary } from "@/components/worker-health";
+import { NEVER_RUN, type WorkerHealth } from "@/lib/health";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -31,7 +33,13 @@ function formatNextRun(value: Date) {
   return value.toISOString().slice(0, 16).replace("T", " ");
 }
 
-export function RoutineCard({ routine }: { routine: Routine }) {
+export function RoutineCard({
+  routine,
+  health = NEVER_RUN,
+}: {
+  routine: Routine;
+  health?: WorkerHealth;
+}) {
   return (
     <Card>
       <CardHeader>
@@ -54,6 +62,10 @@ export function RoutineCard({ routine }: { routine: Routine }) {
       <CardContent className="text-xs text-muted-foreground">
         Next Run:{" "}
         {routine.nextRunAt ? formatNextRun(routine.nextRunAt) : "Manual"}
+      </CardContent>
+
+      <CardContent>
+        <WorkerHealthSummary health={health} />
       </CardContent>
 
       <CardContent className="flex gap-2">

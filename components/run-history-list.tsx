@@ -6,6 +6,7 @@ import type { RunHistoryEntry, RunStatus } from "@/types";
 const statusLabels: Record<RunStatus, string> = {
   running: "Running",
   completed: "Completed",
+  failed: "Failed",
 };
 
 const statusVariants: Record<
@@ -14,6 +15,7 @@ const statusVariants: Record<
 > = {
   running: "secondary",
   completed: "default",
+  failed: "destructive",
 };
 
 function formatTimestamp(value: Date) {

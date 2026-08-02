@@ -39,21 +39,21 @@ export async function listRunHistory(
 }
 
 /**
- * The most recent run of a single worker, or null if it has never run.
+ * Every run of a single worker, newest first.
  *
- * Tenant-scoped like every other read, so it cannot report a run belonging to
+ * Tenant-scoped like every other read, so it cannot report runs belonging to
  * someone else's worker.
  */
-export async function getLastRun(
+export async function listRunsForWorker(
   routineId: string,
   userId: string,
-): Promise<RunHistory | null> {
-  const record = await prisma.runHistory.findFirst({
+): Promise<RunHistory[]> {
+  const records = await prisma.runHistory.findMany({
     where: { routineId, userId },
     orderBy: { startedAt: "desc" },
   });
 
-  return record ? toRun(record) : null;
+  return records.map(toRun);
 }
 
 /** Returns null for both "missing" and "someone else's" — callers 404 on either. */
@@ -96,17 +96,30 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
 
   await new Promise((resolve) => setTimeout(resolve, SIMULATED_RUN_MS));
 
-  const prompt = renderPrompt(routine.prompt, promptVariables());
-  const output = await provider.execute(prompt);
+  try {
+    const prompt = renderPrompt(routine.prompt, promptVariables());
+    const output = await provider.execute(prompt);
 
-  const finished = await prisma.runHistory.update({
-    where: { id: run.id },
-    data: {
-      status: "completed",
-      finishedAt: new Date(),
-      output,
-    },
-  });
+    const finished = await prisma.runHistory.update({
+      where: { id: run.id },
+      data: { status: "completed", finishedAt: new Date(), output },
+    });
 
-  return toRun(finished);
+    return toRun(finished);
+  } catch (error) {
+    // Without this the row stays "running" forever and the failure is
+    // invisible to the health summary.
+    console.error("[worker] run failed", error);
+
+    const failed = await prisma.runHistory.update({
+      where: { id: run.id },
+      data: {
+        status: "failed",
+        finishedAt: new Date(),
+        output: error instanceof Error ? error.message : "Execution failed.",
+      },
+    });
+
+    return toRun(failed);
+  }
 }

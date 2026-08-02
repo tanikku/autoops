@@ -20,6 +20,7 @@ export const dynamic = "force-dynamic";
 const statusLabels: Record<RunStatus, string> = {
   running: "Running",
   completed: "Completed",
+  failed: "Failed",
 };
 
 const statusVariants: Record<
@@ -28,6 +29,7 @@ const statusVariants: Record<
 > = {
   running: "secondary",
   completed: "default",
+  failed: "destructive",
 };
 
 function formatTimestamp(value: Date | null) {
