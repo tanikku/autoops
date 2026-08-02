@@ -6,21 +6,25 @@ import { getRoutine, updateRoutine } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
 import { requireUserId } from "@/lib/session";
 import {
+  hasWorkerFormErrors,
   readWorkerForm,
+  summarizeWorkerFormErrors,
   validateWorkerForm,
+  type WorkerFieldErrors,
   type WorkerFormInput,
 } from "@/lib/worker-input";
 import type { ActionResult } from "@/types";
 
 /**
- * A rejected submission carries the values back.
+ * A rejected submission carries the values and the per-field messages back.
  *
- * React resets a form once its action settles, so without this the fields
- * would fall back to the stored worker and everything the user typed would be
- * lost to a missing name.
+ * React resets a form once its action settles, so without the values the
+ * fields would fall back to the stored worker and everything the user typed
+ * would be lost to a missing name. The errors let each field say what is wrong
+ * with it, next to the input.
  */
 export type UpdateRoutineState =
-  | (ActionResult & { values?: WorkerFormInput })
+  | (ActionResult & { values?: WorkerFormInput; errors?: WorkerFieldErrors })
   | null;
 
 export async function updateRoutineAction(
@@ -39,9 +43,14 @@ export async function updateRoutineAction(
 
   const input = readWorkerForm(formData);
 
-  const error = validateWorkerForm(input);
-  if (error) {
-    return { status: "error", message: error, values: input };
+  const errors = validateWorkerForm(input);
+  if (hasWorkerFormErrors(errors)) {
+    return {
+      status: "error",
+      message: summarizeWorkerFormErrors(errors),
+      values: input,
+      errors,
+    };
   }
 
   // An existing worker falls back to what it already had: an unreadable value

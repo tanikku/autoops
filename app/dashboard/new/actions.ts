@@ -7,21 +7,25 @@ import { createRoutine } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
 import { ensureUser } from "@/lib/users";
 import {
+  hasWorkerFormErrors,
   readWorkerForm,
+  summarizeWorkerFormErrors,
   validateWorkerForm,
+  type WorkerFieldErrors,
   type WorkerFormInput,
 } from "@/lib/worker-input";
 import type { ActionResult } from "@/types";
 
 /**
- * A rejected submission carries the values back.
+ * A rejected submission carries the values and the per-field messages back.
  *
- * React resets a form once its action settles, so without this the fields
- * would fall back to their original defaults and everything the user typed —
- * including a long prompt — would be lost to a missing name.
+ * React resets a form once its action settles, so without the values the
+ * fields would fall back to their original defaults and everything the user
+ * typed — including a long prompt — would be lost to a missing name. The
+ * errors let each field say what is wrong with it, next to the input.
  */
 export type CreateRoutineState =
-  | (ActionResult & { values?: WorkerFormInput })
+  | (ActionResult & { values?: WorkerFormInput; errors?: WorkerFieldErrors })
   | null;
 
 export async function createRoutineAction(
@@ -36,9 +40,14 @@ export async function createRoutineAction(
 
   const input = readWorkerForm(formData);
 
-  const error = validateWorkerForm(input);
-  if (error) {
-    return { status: "error", message: error, values: input };
+  const errors = validateWorkerForm(input);
+  if (hasWorkerFormErrors(errors)) {
+    return {
+      status: "error",
+      message: summarizeWorkerFormErrors(errors),
+      values: input,
+      errors,
+    };
   }
 
   // A new worker starts as a draft that nothing schedules, so both fall back

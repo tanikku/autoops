@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import {
   updateRoutineAction,
@@ -36,15 +36,27 @@ export function WorkerEditForm({
     null,
   );
 
+  // Bumped on every submit so the form remounts with the result. `defaultValue`
+  // is read once at initialisation; feeding rejected input back through it on
+  // a re-render changes it after the fact, which Base UI rejects.
+  const [attempt, setAttempt] = useState(0);
+
   // Editing is reached from the detail page, so saving returns there.
   const detailHref = `/dashboard/workers/${worker.id}`;
   useActionResult(state, { redirectTo: detailHref });
 
   return (
-    <form action={formAction} className="mt-8 flex max-w-2xl flex-col gap-6">
+    <form
+      key={attempt}
+      action={(formData) => {
+        setAttempt((count) => count + 1);
+        formAction(formData);
+      }}
+      className="mt-8 flex max-w-2xl flex-col gap-6"
+    >
       {/* A rejected submission wins over the stored worker, so the fields keep
           what was typed instead of reverting on a validation error. */}
-      <WorkerFields values={state?.values ?? worker} />
+      <WorkerFields values={state?.values ?? worker} errors={state?.errors} />
 
       <div className="flex gap-2">
         <SaveButton />

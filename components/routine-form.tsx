@@ -45,6 +45,11 @@ export function RoutineForm() {
   const [templateValues, setTemplateValues] =
     useState<WorkerFieldValues | null>(null);
 
+  // Bumped on every submit so the form remounts with the result. `defaultValue`
+  // is read once at initialisation; feeding rejected input back through it on
+  // a re-render changes it after the fact, which Base UI rejects.
+  const [attempt, setAttempt] = useState(0);
+
   useActionResult(state, { redirectTo: "/dashboard" });
 
   function selectTemplate(item: WorkerTemplate) {
@@ -94,14 +99,20 @@ export function RoutineForm() {
       <form
         // Remounting applies the selected template's values to the fields while
         // leaving every one of them editable.
-        key={template?.id ?? "blank"}
+        key={`${template?.id ?? "blank"}-${attempt}`}
         action={(formData) => {
           setTemplateValues(null);
+          setAttempt((count) => count + 1);
           formAction(formData);
         }}
         className="mt-8 flex max-w-2xl flex-col gap-6"
       >
-        <WorkerFields values={templateValues ?? state?.values ?? {}} />
+        {/* Messages belong to the values that produced them: picking a
+            template replaces those values, so the messages go with them. */}
+        <WorkerFields
+          values={templateValues ?? state?.values ?? {}}
+          errors={templateValues ? undefined : state?.errors}
+        />
 
         <div className="flex gap-2">
           <SaveButton />
