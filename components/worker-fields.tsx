@@ -35,7 +35,6 @@ export type WorkerFieldValues = {
   name?: string;
   description?: string;
   prompt?: string;
-  schedule?: string;
   frequency?: RoutineFrequency | null;
   status?: RoutineStatus | null;
 };
@@ -116,16 +115,6 @@ export function WorkerFields({
           placeholder="Instructions sent to the AI on every run."
         />
         <FieldError id="prompt-error" message={errors.prompt} />
-      </div>
-
-      <div className="grid gap-2">
-        <Label htmlFor="schedule">Schedule</Label>
-        <Input
-          {...errorProps("schedule", errors.schedule)}
-          defaultValue={values.schedule}
-          placeholder="Every day at 07:00"
-        />
-        <FieldError id="schedule-error" message={errors.schedule} />
       </div>
 
       <div className="grid gap-2">

@@ -65,8 +65,8 @@ Hire  →  Worker Detail  →  Run (manual or scheduled)  →  Activity  →  Ex
 The card in **My Workers** links to `/dashboard/workers/[id]`. Reading and
 editing are deliberately separate: the detail page shows everything including
 the fields no form should expose (`Created At`, `Updated At`, `Last Run`), while
-`/dashboard/workers/[id]/edit` covers only what can change — name, prompt,
-frequency, and status. Saving an edit returns to the detail page.
+`/dashboard/workers/[id]/edit` covers only what can change — name, description,
+prompt, frequency, and status. Saving an edit returns to the detail page.
 
 Every step is scoped to the owner — touching someone else's worker returns
 **404**, and the owner is read from the session, never from the form.
@@ -89,6 +89,17 @@ never shifts the schedule.
 
 Changing the **status** to `paused` or `draft` takes the worker out of scheduled
 execution without discarding its schedule.
+
+**Frequency is the only cadence a worker has.** The label shown on the card and
+the detail page — "Every day", "Manual execution" — is generated from it rather
+than stored. There used to be a free-text `schedule` field beside it, which
+meant a worker running daily could describe itself as weekly and nothing would
+object. Deriving the label removes that possibility.
+
+What frequency cannot express is a **time of day**: `nextRunAt` advances from
+whenever the worker was saved, so a daily worker created at 15:30 runs at 15:30.
+The label says how often, never when, because claiming otherwise would be the
+same mismatch in a new place.
 
 ### Dashboard
 
@@ -344,11 +355,21 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
 
 **UI**
 
-- Toast visibility — the success toast is low-contrast and easy to miss
-- Editing description and schedule — both are shown but not editable
+- Character counters — a field only reports being over its limit after the form
+  is submitted
+- Scrolling to the first error — on a long form the field at fault can be off
+  screen when the toast appears
 
 **Scheduling**
 
+- **A time of day.** `frequency` says how often, never when: `nextRunAt`
+  advances from whenever the worker was saved, so a daily worker created at
+  15:30 runs at 15:30 forever. The free-text `schedule` field used to paper
+  over this, and its removal makes the gap plain rather than creating it.
+  Closing it means extending `frequency` with the fields that carry a time,
+  which also raises time zones — every timestamp in the UI is currently UTC.
+  The `schedule` column stays in the schema until then: that work either drops
+  it or replaces it, and one migration is better than two.
 - Catch-up strategy after a long outage — currently every missed slot is
   retried one at a time; skipping to the next future slot, or capping the
   number of catch-up runs, are the alternatives

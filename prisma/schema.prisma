@@ -28,6 +28,10 @@ model Routine {
   name        String
   description String       @default("")
   prompt      String       @default("")
+  /// Free-text cadence label from before the UI derived one from `frequency`.
+  /// No longer written or read; retained for compatibility with rows created
+  /// earlier. Revisit when the scheduler gains a time of day — this column is
+  /// then either dropped or replaced by the fields that carry it.
   schedule    String       @default("")
   status      String       @default("draft")
   frequency   String       @default("manual")

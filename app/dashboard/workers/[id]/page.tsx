@@ -111,13 +111,12 @@ export default async function WorkerDetailPage({
           <Card className="mt-4">
             <CardContent>
               <dl className="divide-y divide-border">
+                {/* No separate Schedule row: it would restate the frequency in
+                    other words. The card carries the phrased version, which is
+                    the only place without a Frequency row of its own. */}
                 <Detail
                   label="Frequency"
                   value={frequencyLabels[worker.frequency]}
-                />
-                <Detail
-                  label="Schedule"
-                  value={worker.schedule || "No schedule"}
                 />
                 <Detail
                   label="Next Run"

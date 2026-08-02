@@ -74,7 +74,6 @@ export async function updateRoutineAction(
         name: input.name,
         description: input.description,
         prompt: input.prompt,
-        schedule: input.schedule,
         status,
         frequency,
         nextRunAt,

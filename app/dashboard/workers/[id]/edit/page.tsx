@@ -46,7 +46,6 @@ export default async function EditWorkerPage({
             name: worker.name,
             description: worker.description,
             prompt: worker.prompt,
-            schedule: worker.schedule,
             frequency: worker.frequency,
             status: worker.status,
           }}

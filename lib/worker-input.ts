@@ -18,14 +18,11 @@ import {
  * - `prompt` is sent to the model on every run, so its length is a cost and
  *   latency ceiling as much as a storage one. 10,000 characters is roughly
  *   2,500–5,000 tokens: ample for instructions, far short of a context limit.
- * - `schedule` is a short human label such as "Every day at 07:00". The
- *   cadence that actually runs lives in `frequency`.
  */
 export const workerFieldLimits = {
   name: 100,
   description: 500,
   prompt: 10_000,
-  schedule: 100,
 } as const;
 
 export type WorkerFieldName = keyof typeof workerFieldLimits;
@@ -37,14 +34,12 @@ const fieldLabels: Record<WorkerFieldName, string> = {
   name: "Name",
   description: "Description",
   prompt: "Prompt",
-  schedule: "Schedule",
 };
 
 export type WorkerFormInput = {
   name: string;
   description: string;
   prompt: string;
-  schedule: string;
   /** null when the field is absent or holds a value the app does not accept. */
   status: RoutineStatus | null;
   frequency: RoutineFrequency | null;
@@ -70,7 +65,6 @@ export function readWorkerForm(formData: FormData): WorkerFormInput {
     name: text(formData, "name"),
     description: text(formData, "description"),
     prompt: text(formData, "prompt"),
-    schedule: text(formData, "schedule"),
     status: isRoutineStatus(status) ? status : null,
     frequency: isRoutineFrequency(frequency) ? frequency : null,
   };
@@ -82,8 +76,8 @@ export function readWorkerForm(formData: FormData): WorkerFormInput {
  * Both actions call this and neither adds checks of its own, so a rule cannot
  * apply on creation and go missing on edit.
  *
- * Only the name is required. Description and Schedule are free text and may be
- * blank — a worker without either is still runnable.
+ * Only the name is required. Description and Prompt may be blank — a worker
+ * without either is still a valid record.
  */
 export function validateWorkerForm(input: WorkerFormInput): WorkerFieldErrors {
   const errors: WorkerFieldErrors = {};

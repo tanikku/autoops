@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { RunRoutineButton } from "@/components/run-routine-button";
 import { WorkerHealthSummary } from "@/components/worker-health";
 import { NEVER_RUN, type WorkerHealth } from "@/lib/health";
+import { scheduleLabel } from "@/lib/schedule-label";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -51,7 +52,7 @@ export function RoutineCard({
             {routine.name}
           </Link>
         </CardTitle>
-        <CardDescription>{routine.schedule || "No schedule"}</CardDescription>
+        <CardDescription>{scheduleLabel(routine.frequency)}</CardDescription>
         <CardAction>
           <Badge variant={statusVariants[routine.status]}>
             {statusLabels[routine.status]}

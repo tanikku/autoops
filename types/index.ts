@@ -27,6 +27,11 @@ export type Routine = {
   name: string;
   description: string;
   prompt: string;
+  /**
+   * Legacy free-text cadence label. No longer written or displayed — the UI
+   * derives its label from `frequency`. Kept on the entity because the column
+   * still holds values written before the change.
+   */
   schedule: string;
   status: RoutineStatus;
   frequency: RoutineFrequency;
@@ -35,11 +40,11 @@ export type Routine = {
   updatedAt: Date;
 };
 
+/** What a write accepts. `schedule` is absent: nothing sets it any more. */
 export type RoutineInput = {
   name: string;
   description: string;
   prompt: string;
-  schedule: string;
   status: RoutineStatus;
   frequency: RoutineFrequency;
   nextRunAt: Date | null;

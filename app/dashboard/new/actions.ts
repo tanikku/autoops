@@ -70,7 +70,6 @@ export async function createRoutineAction(
         name: input.name,
         description: input.description,
         prompt: input.prompt,
-        schedule: input.schedule,
         status,
         frequency,
         nextRunAt: calculateNextRunAt(frequency),
