@@ -7,14 +7,22 @@ import { createRoutine } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
 import { ensureUser } from "@/lib/users";
 import {
-  isRoutineFrequency,
-  isRoutineStatus,
-  type ActionResult,
-  type RoutineFrequency,
-  type RoutineStatus,
-} from "@/types";
+  readWorkerForm,
+  validateWorkerForm,
+  type WorkerFormInput,
+} from "@/lib/worker-input";
+import type { ActionResult } from "@/types";
 
-export type CreateRoutineState = ActionResult | null;
+/**
+ * A rejected submission carries the values back.
+ *
+ * React resets a form once its action settles, so without this the fields
+ * would fall back to their original defaults and everything the user typed —
+ * including a long prompt — would be lost to a missing name.
+ */
+export type CreateRoutineState =
+  | (ActionResult & { values?: WorkerFormInput })
+  | null;
 
 export async function createRoutineAction(
   _prevState: CreateRoutineState,
@@ -26,24 +34,17 @@ export async function createRoutineAction(
     redirect("/");
   }
 
-  const name = String(formData.get("name") ?? "").trim();
-  const description = String(formData.get("description") ?? "").trim();
-  const prompt = String(formData.get("prompt") ?? "").trim();
-  const schedule = String(formData.get("schedule") ?? "").trim();
-  const rawStatus = String(formData.get("status") ?? "");
-  const rawFrequency = String(formData.get("frequency") ?? "");
+  const input = readWorkerForm(formData);
 
-  if (!name) {
-    return { status: "error", message: "Name is required." };
+  const error = validateWorkerForm(input);
+  if (error) {
+    return { status: "error", message: error, values: input };
   }
 
-  const status: RoutineStatus = isRoutineStatus(rawStatus)
-    ? rawStatus
-    : "draft";
-
-  const frequency: RoutineFrequency = isRoutineFrequency(rawFrequency)
-    ? rawFrequency
-    : "manual";
+  // A new worker starts as a draft that nothing schedules, so both fall back
+  // to the quietest option rather than to a previous value.
+  const status = input.status ?? "draft";
+  const frequency = input.frequency ?? "manual";
 
   // JWT sessions never write the account row, so make sure it exists before
   // the first row that references it.
@@ -57,10 +58,10 @@ export async function createRoutineAction(
   try {
     await createRoutine(
       {
-        name,
-        description,
-        prompt,
-        schedule,
+        name: input.name,
+        description: input.description,
+        prompt: input.prompt,
+        schedule: input.schedule,
         status,
         frequency,
         nextRunAt: calculateNextRunAt(frequency),
@@ -69,11 +70,15 @@ export async function createRoutineAction(
     );
   } catch (error) {
     console.error("[worker] create failed", error);
-    return { status: "error", message: "Could not create the worker." };
+    return {
+      status: "error",
+      message: "Could not create the worker.",
+      values: input,
+    };
   }
 
   revalidatePath("/dashboard");
   // The caller raises the toast and then navigates, so the outcome never has
   // to survive in the URL.
-  return { status: "success", message: `Worker "${name}" created.` };
+  return { status: "success", message: `Worker "${input.name}" created.` };
 }

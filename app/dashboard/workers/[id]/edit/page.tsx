@@ -44,7 +44,9 @@ export default async function EditWorkerPage({
           worker={{
             id: worker.id,
             name: worker.name,
+            description: worker.description,
             prompt: worker.prompt,
+            schedule: worker.schedule,
             frequency: worker.frequency,
             status: worker.status,
           }}
