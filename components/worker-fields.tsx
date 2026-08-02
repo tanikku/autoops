@@ -1,9 +1,14 @@
 "use client";
 
+import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import type { WorkerFieldErrors, WorkerFieldName } from "@/lib/worker-input";
+import {
+  workerFieldLimits,
+  type WorkerFieldErrors,
+  type WorkerFieldName,
+} from "@/lib/worker-input";
 import {
   routineFrequencies,
   routineStatuses,
@@ -39,30 +44,88 @@ export type WorkerFieldValues = {
   status?: RoutineStatus | null;
 };
 
-function FieldError({ id, message }: { id: string; message?: string }) {
-  if (!message) {
-    return null;
-  }
-
-  return (
-    <p id={id} className="text-sm text-destructive">
-      {message}
-    </p>
-  );
-}
-
 /**
- * Wires a field to its message: the input is marked invalid and points at the
- * text through `aria-describedby`, so a screen reader reads the reason rather
- * than announcing an unexplained error state.
+ * A text field with its label, character count and error message.
+ *
+ * The value stays uncontrolled — the form submits through a server action that
+ * reads FormData, not component state — so only the *length* is tracked here.
+ * Typing updates a number, never the input's value, which keeps IME composition
+ * untouched: nothing rewrites the field mid-conversion.
+ *
+ * The limit comes from `workerFieldLimits`, the same constant
+ * `validateWorkerForm` checks against. The counter cannot promise a bound the
+ * server does not enforce.
+ *
+ * There is no `maxLength`: truncating during IME composition drops characters
+ * the user has not finished typing. Going over is allowed, shown, and rejected
+ * on submit.
  */
-function errorProps(field: WorkerFieldName, message?: string) {
-  return {
+function CountedField({
+  field,
+  label,
+  defaultValue,
+  placeholder,
+  error,
+  required,
+  multiline,
+}: {
+  field: WorkerFieldName;
+  label: string;
+  defaultValue?: string;
+  placeholder: string;
+  error?: string;
+  required?: boolean;
+  multiline?: boolean;
+}) {
+  const limit = workerFieldLimits[field];
+  const [length, setLength] = useState(defaultValue?.length ?? 0);
+  const over = length > limit;
+
+  const countId = `${field}-count`;
+  const errorId = `${field}-error`;
+
+  const controlProps = {
     id: field,
     name: field,
-    "aria-invalid": message ? true : undefined,
-    "aria-describedby": message ? `${field}-error` : undefined,
+    defaultValue,
+    placeholder,
+    required,
+    onChange: (
+      event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
+    ) => setLength(event.target.value.length),
+    // Both descriptions are announced, so the reason and the count are read
+    // together rather than one replacing the other.
+    "aria-describedby": error ? `${errorId} ${countId}` : countId,
+    "aria-invalid": error ? (true as const) : undefined,
   };
+
+  return (
+    <div className="grid gap-2">
+      <div className="flex items-baseline justify-between gap-4">
+        <Label htmlFor={field}>{label}</Label>
+        <span
+          id={countId}
+          className={`text-xs tabular-nums ${
+            over ? "text-destructive" : "text-muted-foreground"
+          }`}
+        >
+          {length} / {limit}
+        </span>
+      </div>
+
+      {multiline ? (
+        <Textarea {...controlProps} rows={5} />
+      ) : (
+        <Input {...controlProps} />
+      )}
+
+      {error ? (
+        <p id={errorId} className="text-sm text-destructive">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 /**
@@ -85,37 +148,31 @@ export function WorkerFields({
 }) {
   return (
     <>
-      <div className="grid gap-2">
-        <Label htmlFor="name">Name</Label>
-        <Input
-          {...errorProps("name", errors.name)}
-          required
-          defaultValue={values.name}
-          placeholder="Daily Website Update"
-        />
-        <FieldError id="name-error" message={errors.name} />
-      </div>
+      <CountedField
+        field="name"
+        label="Name"
+        required
+        defaultValue={values.name}
+        placeholder="Daily Website Update"
+        error={errors.name}
+      />
 
-      <div className="grid gap-2">
-        <Label htmlFor="description">Description</Label>
-        <Input
-          {...errorProps("description", errors.description)}
-          defaultValue={values.description}
-          placeholder="What does this worker do?"
-        />
-        <FieldError id="description-error" message={errors.description} />
-      </div>
+      <CountedField
+        field="description"
+        label="Description"
+        defaultValue={values.description}
+        placeholder="What does this worker do?"
+        error={errors.description}
+      />
 
-      <div className="grid gap-2">
-        <Label htmlFor="prompt">Prompt</Label>
-        <Textarea
-          {...errorProps("prompt", errors.prompt)}
-          rows={5}
-          defaultValue={values.prompt}
-          placeholder="Instructions sent to the AI on every run."
-        />
-        <FieldError id="prompt-error" message={errors.prompt} />
-      </div>
+      <CountedField
+        field="prompt"
+        label="Prompt"
+        multiline
+        defaultValue={values.prompt}
+        placeholder="Instructions sent to the AI on every run."
+        error={errors.prompt}
+      />
 
       <div className="grid gap-2">
         <Label htmlFor="frequency">Frequency</Label>
