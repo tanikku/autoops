@@ -52,3 +52,6 @@ next-env.d.ts
 /.claude/skills
 /.windsurf
 /skills-lock.json
+
+# local scratch: databases and files moved out of the way, never committed
+/削除用
