@@ -551,16 +551,21 @@ For production, add the same path on your deployed origin.
 
 Known and deliberately deferred — none of these are bugs waiting on a fix.
 
+**Blocking**
+
+- **A way to set your timezone.** `User.timezone` decides both what timestamps
+  read as and, since workers gained a time of day, *when they actually run* —
+  and the only way to change it is editing the database by hand. Everyone is on
+  UTC, so "09:00" means 18:00 in Tokyo. The Settings link exists in the nav and
+  is disabled. This was a nice-to-have while the column only affected display;
+  it stopped being one when it started affecting execution.
+
 **Scheduling**
 
-- **A time of day, and time zones with it.** `frequency` says how often, never
-  when: a daily worker created at 15:30 runs at 15:30 forever. The free-text
-  `schedule` field used to paper over this, and its removal makes the gap plain
-  rather than creating it. Closing it means extending `frequency` with the
-  fields that carry a time, and deciding whose clock they refer to — every
-  timestamp in the UI is currently UTC. The `schedule` column stays in the
-  schema until then: that work either drops it or replaces it, and one
-  migration is better than two.
+- **A day of the week, and a day of the month.** A worker can pick the time it
+  runs but not which day: a weekly worker keeps the weekday it was saved on,
+  and a monthly one keeps the date. `runAtWeekday` and `runAtDay` alongside
+  `runAtMinutes` would close this, in the same shape.
 - Catch-up strategy after a long outage — currently every missed slot is
   retried one at a time; skipping to the next future slot, or capping the
   number of catch-up runs, are the alternatives
@@ -568,6 +573,19 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
   position through shorter months
 - Making the run and the `nextRunAt` update atomic — needs a transactional
   backend, so it is deferred to the Redis/PostgreSQL migration
+
+**Design debt**
+
+- **`lib/schedule.ts` reads from the database.** `advanceNextRunAt` looks up the
+  owner's timezone, so the module the architecture section calls pure
+  arithmetic is not, and the schedule layer has taken on a repository's job.
+  The arithmetic itself stayed pure and separately testable, which is why this
+  was accepted rather than fixed: separating it properly reaches into the
+  dispatcher and the repository boundary at once, which is more than the sprint
+  that introduced it was scoped for.
+- **The architecture section above says otherwise.** It still describes
+  `lib/schedule.ts` as touching no database. Correct it when the split lands,
+  or correct it sooner if the split does not.
 
 **Concurrency**
 
