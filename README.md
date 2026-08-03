@@ -388,13 +388,23 @@ The dispatcher hands the **whole worker** to the schedule module rather than
 picking fields out of it. Choosing which parts of a schedule matter would be
 the dispatcher deciding something, and it decides nothing.
 
-Two rules govern the update:
+**`nextRunAt` advances from the stored value, never from the clock.** A worker
+due at 09:00 that a cron tick picks up at 09:05 is next due at 09:00 the
+following day. Late ticks cannot drag the schedule forward.
 
-- **`nextRunAt` advances from the stored value, never from the clock.** A worker
-  due at 09:00 that a cron tick picks up at 09:05 is next due at 09:00 the
-  following day. Late ticks cannot drag the schedule forward.
-- **The schedule advances only after the queue accepted the worker.** A failed
-  run leaves `nextRunAt` untouched, so the slot is retried rather than skipped.
+**A failed run advances the schedule too.** Execution reports its outcome by
+recording it — `runRoutine` catches what a provider throws and stores the run
+as `failed` — so nothing propagates back to the dispatcher, and the next slot
+is set either way. The failure is not lost: it is in the run history and in the
+[health summary](#worker-health), and the worker can be run again by hand.
+
+That is a decision, not an oversight. **AutoOps executes work based on the
+current execution time.** Replaying a missed slot later would not reproduce the
+original context: a prompt's `{{today}}` resolves when the run happens, so
+retrying yesterday's slot today produces today's work with yesterday's name on
+it. Holding a slot open until it succeeds is a retry system — a different
+feature, with its own questions about attempt counts and backoff, and one that
+a permanently failing worker would otherwise re-run on every tick forever.
 
 Workers with `manual` frequency keep `nextRunAt` as `null` and are never due.
 So are `paused` and `draft` ones, which keep their slot but are not selected.

@@ -14,8 +14,11 @@ import { getDueWorkers } from "@/lib/scheduler";
  * worker runs. Owning the hand-off here is what lets any of them be replaced
  * without touching the others.
  *
- * The schedule is advanced only after the queue accepted the worker, so a
- * failed run leaves it due and does not silently skip a slot.
+ * **A run that fails still advances the schedule.** Execution reports its
+ * outcome by recording it rather than by throwing, so nothing distinguishes the
+ * two cases here — and nothing should. Deciding whether a failure deserves
+ * another attempt is a retry policy, and the dispatcher holds no policies. The
+ * failure is visible in the run history either way.
  *
  * Returns the ids that were enqueued.
  */

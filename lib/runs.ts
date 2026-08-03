@@ -83,6 +83,12 @@ export async function getRun(
  *
  * The run inherits the routine's owner, so both the manual and the dispatched
  * path record it without the caller having to pass a user through.
+ *
+ * **A failing provider is a result, not an exception.** It comes back as a
+ * `failed` record, which is what makes the failure countable in the health
+ * summary instead of vanishing up the call stack. Callers depend on this: the
+ * manual run action reads `status` to choose its message, and the dispatcher
+ * advances the schedule without having to ask.
  */
 export async function runRoutine(routineId: string): Promise<RunHistory> {
   const routine = await prisma.routine.findUniqueOrThrow({
