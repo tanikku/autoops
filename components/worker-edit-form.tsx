@@ -10,6 +10,7 @@ import {
 import { useActionResult } from "@/components/notification/use-action-result";
 import { Button } from "@/components/ui/button";
 import {
+  useScrollToFirstError,
   WorkerFields,
   type WorkerFieldValues,
 } from "@/components/worker-fields";
@@ -44,6 +45,7 @@ export function WorkerEditForm({
   // Editing is reached from the detail page, so saving returns there.
   const detailHref = `/dashboard/workers/${worker.id}`;
   useActionResult(state, { redirectTo: detailHref });
+  useScrollToFirstError(state?.errors);
 
   return (
     <form

@@ -16,6 +16,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
+  useScrollToFirstError,
   WorkerFields,
   type WorkerFieldValues,
 } from "@/components/worker-fields";
@@ -50,7 +51,13 @@ export function RoutineForm() {
   // a re-render changes it after the fact, which Base UI rejects.
   const [attempt, setAttempt] = useState(0);
 
+  // Messages belong to the values that produced them: picking a template
+  // replaces those values, so the messages go with them — and so does the jump
+  // to the field they pointed at.
+  const visibleErrors = templateValues ? undefined : state?.errors;
+
   useActionResult(state, { redirectTo: "/dashboard" });
+  useScrollToFirstError(visibleErrors);
 
   function selectTemplate(item: WorkerTemplate) {
     setTemplate(item);
@@ -107,11 +114,9 @@ export function RoutineForm() {
         }}
         className="mt-8 flex max-w-2xl flex-col gap-6"
       >
-        {/* Messages belong to the values that produced them: picking a
-            template replaces those values, so the messages go with them. */}
         <WorkerFields
           values={templateValues ?? state?.values ?? {}}
-          errors={templateValues ? undefined : state?.errors}
+          errors={visibleErrors}
         />
 
         <div className="flex gap-2">

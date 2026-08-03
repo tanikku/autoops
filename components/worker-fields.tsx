@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -43,6 +43,66 @@ export type WorkerFieldValues = {
   frequency?: RoutineFrequency | null;
   status?: RoutineStatus | null;
 };
+
+/**
+ * The order `WorkerFields` renders these in, which is what makes "the first
+ * error" mean the topmost one on screen rather than whichever the validator
+ * happened to record first.
+ *
+ * Kept beside the markup deliberately: reordering the fields without
+ * reordering this list would send the user to the wrong one.
+ */
+const fieldOrder: WorkerFieldName[] = ["name", "description", "prompt"];
+
+/**
+ * Brings the first rejected field into view and focuses it.
+ *
+ * A toast at the top of the screen says something is wrong; on a form long
+ * enough to scroll, it does not say *where*. This closes that gap.
+ *
+ * Reaches for the element by id rather than threading refs through
+ * `WorkerFields`: the ids already exist to tie labels and messages to their
+ * inputs, so nothing new has to be managed to find them.
+ *
+ * A successful submit returns no errors and nothing moves.
+ */
+export function useScrollToFirstError(errors: WorkerFieldErrors | undefined) {
+  useEffect(() => {
+    if (!errors) {
+      return;
+    }
+
+    const field = fieldOrder.find((name) => errors[name]);
+    if (!field) {
+      return;
+    }
+
+    const element = document.getElementById(field);
+    if (!element) {
+      return;
+    }
+
+    const reducedMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+
+    // Waiting a frame: the form remounts on submit, and starting a scroll
+    // before that layout settles leaves it measuring the old one.
+    const frame = requestAnimationFrame(() => {
+      // Focus first, and without a scroll of its own — a focus landing
+      // mid-animation cancels the scroll and drops the field wherever the
+      // browser prefers, usually the very edge of the viewport.
+      element.focus({ preventScroll: true });
+
+      element.scrollIntoView({
+        block: "center",
+        behavior: reducedMotion ? "auto" : "smooth",
+      });
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [errors]);
+}
 
 /**
  * A text field with its label, character count and error message.
