@@ -1,3 +1,4 @@
+import { minutesToTimeValue } from "@/lib/worker-input";
 import type { RoutineFrequency } from "@/types";
 
 const scheduleLabels: Record<RoutineFrequency, string> = {
@@ -15,9 +16,18 @@ const scheduleLabels: Record<RoutineFrequency, string> = {
  * advertising itself as weekly. Generating the text means the label cannot
  * disagree with what the dispatcher actually does.
  *
- * The label says how often, not when — `frequency` carries no time of day, so
- * claiming one here would be the same lie in a new place.
+ * The time is only appended when one was chosen. A worker without it runs at
+ * whatever time its slot already held, which no fixed phrase describes.
  */
-export function scheduleLabel(frequency: RoutineFrequency): string {
-  return scheduleLabels[frequency];
+export function scheduleLabel(
+  frequency: RoutineFrequency,
+  runAtMinutes: number | null = null,
+): string {
+  const label = scheduleLabels[frequency];
+
+  if (frequency === "manual" || runAtMinutes === null) {
+    return label;
+  }
+
+  return `${label} at ${minutesToTimeValue(runAtMinutes)}`;
 }

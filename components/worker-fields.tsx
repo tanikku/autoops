@@ -42,6 +42,8 @@ export type WorkerFieldValues = {
   prompt?: string;
   frequency?: RoutineFrequency | null;
   status?: RoutineStatus | null;
+  /** `HH:mm`, as an `<input type="time">` carries it. */
+  runAt?: string;
 };
 
 /**
@@ -206,6 +208,13 @@ export function WorkerFields({
   values: WorkerFieldValues;
   errors?: WorkerFieldErrors;
 }) {
+  // The only controlled field, and only because another one depends on it: a
+  // time of day is meaningless for a manual worker, so the select has to be
+  // readable while the form is being filled in.
+  const [frequency, setFrequency] = useState<RoutineFrequency>(
+    values.frequency ?? "manual",
+  );
+
   return (
     <>
       <CountedField
@@ -239,16 +248,39 @@ export function WorkerFields({
         <select
           id="frequency"
           name="frequency"
-          defaultValue={values.frequency ?? "manual"}
+          value={frequency}
+          onChange={(event) =>
+            setFrequency(event.target.value as RoutineFrequency)
+          }
           className={selectClassName}
         >
-          {routineFrequencies.map((frequency) => (
-            <option key={frequency} value={frequency}>
-              {frequencyLabels[frequency]}
+          {routineFrequencies.map((option) => (
+            <option key={option} value={option}>
+              {frequencyLabels[option]}
             </option>
           ))}
         </select>
       </div>
+
+      {/* Only a scheduled worker has a slot to place a time in. Rendering the
+          field conditionally also keeps it out of the submission: a manual
+          worker sends no time, which is what the action stores. */}
+      {frequency !== "manual" ? (
+        <div className="grid gap-2">
+          <Label htmlFor="runAt">Run at</Label>
+          <Input
+            id="runAt"
+            name="runAt"
+            type="time"
+            defaultValue={values.runAt}
+            className="w-40"
+          />
+          <p className="text-xs text-muted-foreground">
+            In your timezone. Leave empty to run at whatever time the worker
+            was saved.
+          </p>
+        </div>
+      ) : null}
 
       <div className="grid gap-2">
         <Label htmlFor="status">Status</Label>

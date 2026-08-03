@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { createRoutine } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
-import { ensureUser } from "@/lib/users";
+import { ensureUser, getUserTimezone } from "@/lib/users";
 import {
   hasWorkerFormErrors,
   readWorkerForm,
@@ -64,6 +64,11 @@ export async function createRoutineAction(
     image: session.user.image,
   });
 
+  // A time of day only means anything alongside a cadence: a manual worker has
+  // no slot to place it in.
+  const runAtMinutes = frequency === "manual" ? null : input.runAtMinutes;
+  const timezone = await getUserTimezone(session.user.id);
+
   try {
     await createRoutine(
       {
@@ -72,7 +77,8 @@ export async function createRoutineAction(
         prompt: input.prompt,
         status,
         frequency,
-        nextRunAt: calculateNextRunAt(frequency),
+        runAtMinutes,
+        nextRunAt: calculateNextRunAt({ frequency, runAtMinutes, timezone }),
       },
       session.user.id,
     );

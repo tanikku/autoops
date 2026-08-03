@@ -4,6 +4,7 @@ import { DashboardNav } from "@/components/dashboard-nav";
 import { WorkerEditForm } from "@/components/worker-edit-form";
 import { getRoutine } from "@/lib/routines";
 import { requireUserId } from "@/lib/session";
+import { minutesToTimeValue } from "@/lib/worker-input";
 
 export const metadata: Metadata = {
   title: "Edit Worker — AutoOps",
@@ -48,6 +49,7 @@ export default async function EditWorkerPage({
             prompt: worker.prompt,
             frequency: worker.frequency,
             status: worker.status,
+            runAt: minutesToTimeValue(worker.runAtMinutes),
           }}
         />
       </main>

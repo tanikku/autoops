@@ -27,9 +27,13 @@ export async function dispatchDueWorkers(now: Date): Promise<string[]> {
     await enqueueRoutine(worker.id);
     dispatched.push(worker.id);
 
+    // The whole schedule goes to the schedule module, which is the only place
+    // that knows what to do with it. Reading the owner's timezone happens
+    // there too: picking it apart here would be the dispatcher deciding
+    // something.
     await setRoutineNextRunAt(
       worker.id,
-      advanceNextRunAt(worker.frequency, worker.nextRunAt),
+      await advanceNextRunAt(worker, worker.nextRunAt),
     );
   }
 

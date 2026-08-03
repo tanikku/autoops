@@ -20,6 +20,7 @@ import {
   WorkerFields,
   type WorkerFieldValues,
 } from "@/components/worker-fields";
+import { minutesToTimeValue } from "@/lib/worker-input";
 import { workerTemplates, type WorkerTemplate } from "@/lib/worker-templates";
 
 function SaveButton() {
@@ -115,7 +116,15 @@ export function RoutineForm() {
         className="mt-8 flex max-w-2xl flex-col gap-6"
       >
         <WorkerFields
-          values={templateValues ?? state?.values ?? {}}
+          values={
+            templateValues ??
+            (state?.values
+              ? {
+                  ...state.values,
+                  runAt: minutesToTimeValue(state.values.runAtMinutes),
+                }
+              : {})
+          }
           errors={visibleErrors}
         />
 

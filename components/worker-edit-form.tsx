@@ -14,6 +14,7 @@ import {
   WorkerFields,
   type WorkerFieldValues,
 } from "@/components/worker-fields";
+import { minutesToTimeValue } from "@/lib/worker-input";
 
 function SaveButton() {
   const { pending } = useFormStatus();
@@ -58,7 +59,17 @@ export function WorkerEditForm({
     >
       {/* A rejected submission wins over the stored worker, so the fields keep
           what was typed instead of reverting on a validation error. */}
-      <WorkerFields values={state?.values ?? worker} errors={state?.errors} />
+      <WorkerFields
+        values={
+          state?.values
+            ? {
+                ...state.values,
+                runAt: minutesToTimeValue(state.values.runAtMinutes),
+              }
+            : worker
+        }
+        errors={state?.errors}
+      />
 
       <div className="flex gap-2">
         <SaveButton />

@@ -43,10 +43,47 @@ export type WorkerFormInput = {
   /** null when the field is absent or holds a value the app does not accept. */
   status: RoutineStatus | null;
   frequency: RoutineFrequency | null;
+  /** Minutes into the day, or null when no time was given. */
+  runAtMinutes: number | null;
 };
 
 function text(formData: FormData, field: string): string {
   return String(formData.get(field) ?? "").trim();
+}
+
+const TIME_PATTERN = /^(\d{1,2}):(\d{2})$/;
+
+/**
+ * Reads an `<input type="time">` value into minutes into the day.
+ *
+ * The browser submits `HH:mm`, but the field can be left blank and the value
+ * arrives as a string either way, so anything unparseable becomes null — the
+ * same as not choosing a time.
+ */
+function timeOfDay(formData: FormData, field: string): number | null {
+  const match = TIME_PATTERN.exec(text(formData, field));
+  if (!match) {
+    return null;
+  }
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+
+  if (hours > 23 || minutes > 59) {
+    return null;
+  }
+
+  return hours * 60 + minutes;
+}
+
+/** `540` → `09:00`, for putting a stored value back into the form. */
+export function minutesToTimeValue(minutes: number | null): string | undefined {
+  if (minutes === null) {
+    return undefined;
+  }
+
+  const hours = String(Math.floor(minutes / 60)).padStart(2, "0");
+  return `${hours}:${String(minutes % 60).padStart(2, "0")}`;
 }
 
 /**
@@ -67,6 +104,7 @@ export function readWorkerForm(formData: FormData): WorkerFormInput {
     prompt: text(formData, "prompt"),
     status: isRoutineStatus(status) ? status : null,
     frequency: isRoutineFrequency(frequency) ? frequency : null,
+    runAtMinutes: timeOfDay(formData, "runAt"),
   };
 }
 

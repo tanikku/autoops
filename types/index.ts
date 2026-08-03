@@ -27,26 +27,26 @@ export type Routine = {
   name: string;
   description: string;
   prompt: string;
-  /**
-   * Legacy free-text cadence label. No longer written or displayed — the UI
-   * derives its label from `frequency`. Kept on the entity because the column
-   * still holds values written before the change.
-   */
-  schedule: string;
   status: RoutineStatus;
   frequency: RoutineFrequency;
+  /**
+   * Time of day the worker runs, as minutes into the day in the owner's
+   * timezone: 0 is midnight, 540 is 09:00. Null keeps whatever time the
+   * pending slot already had.
+   */
+  runAtMinutes: number | null;
   nextRunAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 };
 
-/** What a write accepts. `schedule` is absent: nothing sets it any more. */
 export type RoutineInput = {
   name: string;
   description: string;
   prompt: string;
   status: RoutineStatus;
   frequency: RoutineFrequency;
+  runAtMinutes: number | null;
   nextRunAt: Date | null;
 };
 

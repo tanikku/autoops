@@ -51,7 +51,9 @@ export function RoutineCard({
             {routine.name}
           </Link>
         </CardTitle>
-        <CardDescription>{scheduleLabel(routine.frequency)}</CardDescription>
+        <CardDescription>
+          {scheduleLabel(routine.frequency, routine.runAtMinutes)}
+        </CardDescription>
         <CardAction>
           <Badge variant={statusVariants[routine.status]}>
             {statusLabels[routine.status]}

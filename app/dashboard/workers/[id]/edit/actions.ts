@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { getRoutine, updateRoutine } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
 import { requireUserId } from "@/lib/session";
+import { getUserTimezone } from "@/lib/users";
 import {
   hasWorkerFormErrors,
   readWorkerForm,
@@ -58,14 +59,23 @@ export async function updateRoutineAction(
   const status = input.status ?? existing.status;
   const frequency = input.frequency ?? existing.frequency;
 
-  // Changing the cadence invalidates the pending slot: a worker switched to
-  // `manual` must stop being due, and one switched away from it needs a first
-  // slot. An unchanged cadence keeps its slot so editing never shifts the
-  // schedule.
-  const nextRunAt =
-    frequency === existing.frequency
-      ? existing.nextRunAt
-      : calculateNextRunAt(frequency);
+  // A time of day only means anything alongside a cadence: a manual worker has
+  // no slot to place it in.
+  const runAtMinutes = frequency === "manual" ? null : input.runAtMinutes;
+  const timezone = await getUserTimezone(userId);
+
+  // Changing the cadence *or the time* invalidates the pending slot: a worker
+  // switched to `manual` must stop being due, one switched away from it needs a
+  // first slot, and a worker moved from 09:00 to 07:00 should not run at 09:00
+  // once more first. Leaving both alone keeps the slot, so editing a name or
+  // prompt never shifts the schedule.
+  const scheduleChanged =
+    frequency !== existing.frequency ||
+    runAtMinutes !== existing.runAtMinutes;
+
+  const nextRunAt = scheduleChanged
+    ? calculateNextRunAt({ frequency, runAtMinutes, timezone })
+    : existing.nextRunAt;
 
   try {
     await updateRoutine(
@@ -76,6 +86,7 @@ export async function updateRoutineAction(
         prompt: input.prompt,
         status,
         frequency,
+        runAtMinutes,
         nextRunAt,
       },
       userId,

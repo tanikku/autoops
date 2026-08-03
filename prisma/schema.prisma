@@ -32,13 +32,13 @@ model Routine {
   name        String
   description String       @default("")
   prompt      String       @default("")
-  /// Free-text cadence label from before the UI derived one from `frequency`.
-  /// No longer written or read; retained for compatibility with rows created
-  /// earlier. Revisit when the scheduler gains a time of day — this column is
-  /// then either dropped or replaced by the fields that carry it.
-  schedule    String       @default("")
   status      String       @default("draft")
   frequency   String       @default("manual")
+  /// Time of day the worker runs, as minutes into the day in the owner's
+  /// timezone: 0 is midnight, 540 is 09:00. Null keeps whatever time the
+  /// pending slot already had, which is how every worker behaved before a time
+  /// could be chosen.
+  runAtMinutes Int?
   nextRunAt   DateTime?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
