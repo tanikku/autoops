@@ -65,6 +65,7 @@ export function WorkerEditForm({
             ? {
                 ...state.values,
                 runAt: minutesToTimeValue(state.values.runAtMinutes),
+                runAtWeekday: state.values.runAtWeekday,
               }
             : worker
         }

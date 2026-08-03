@@ -50,6 +50,7 @@ export default async function EditWorkerPage({
             frequency: worker.frequency,
             status: worker.status,
             runAt: minutesToTimeValue(worker.runAtMinutes),
+            runAtWeekday: worker.runAtWeekday,
           }}
         />
       </main>

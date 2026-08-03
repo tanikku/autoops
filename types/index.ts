@@ -35,6 +35,11 @@ export type Routine = {
    * pending slot already had.
    */
   runAtMinutes: number | null;
+  /**
+   * Day of the week a weekly worker runs, 0 (Sunday) to 6 (Saturday), in the
+   * owner's timezone. Null keeps the weekday the pending slot already falls on.
+   */
+  runAtWeekday: number | null;
   nextRunAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -47,8 +52,19 @@ export type RoutineInput = {
   status: RoutineStatus;
   frequency: RoutineFrequency;
   runAtMinutes: number | null;
+  runAtWeekday: number | null;
   nextRunAt: Date | null;
 };
+
+export const weekdays = [
+  { value: 0, label: "Sunday" },
+  { value: 1, label: "Monday" },
+  { value: 2, label: "Tuesday" },
+  { value: 3, label: "Wednesday" },
+  { value: 4, label: "Thursday" },
+  { value: 5, label: "Friday" },
+  { value: 6, label: "Saturday" },
+] as const;
 
 export function isRoutineStatus(value: string): value is RoutineStatus {
   return (routineStatuses as readonly string[]).includes(value);

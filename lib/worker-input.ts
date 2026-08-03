@@ -45,6 +45,8 @@ export type WorkerFormInput = {
   frequency: RoutineFrequency | null;
   /** Minutes into the day, or null when no time was given. */
   runAtMinutes: number | null;
+  /** 0 (Sunday) to 6 (Saturday), or null when no day was given. */
+  runAtWeekday: number | null;
 };
 
 function text(formData: FormData, field: string): string {
@@ -76,6 +78,22 @@ function timeOfDay(formData: FormData, field: string): number | null {
   return hours * 60 + minutes;
 }
 
+/**
+ * Reads a weekday from a select that submits its value as a string.
+ *
+ * An empty option means "no particular day", so anything outside 0–6 becomes
+ * null rather than being clamped — a value that far off is not a near miss.
+ */
+function weekday(formData: FormData, field: string): number | null {
+  const raw = text(formData, field);
+  if (raw === "") {
+    return null;
+  }
+
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 0 && value <= 6 ? value : null;
+}
+
 /** `540` → `09:00`, for putting a stored value back into the form. */
 export function minutesToTimeValue(minutes: number | null): string | undefined {
   if (minutes === null) {
@@ -105,6 +123,7 @@ export function readWorkerForm(formData: FormData): WorkerFormInput {
     status: isRoutineStatus(status) ? status : null,
     frequency: isRoutineFrequency(frequency) ? frequency : null,
     runAtMinutes: timeOfDay(formData, "runAt"),
+    runAtWeekday: weekday(formData, "runAtWeekday"),
   };
 }
 

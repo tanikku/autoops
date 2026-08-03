@@ -12,6 +12,7 @@ import {
 import {
   routineFrequencies,
   routineStatuses,
+  weekdays,
   type RoutineFrequency,
   type RoutineStatus,
 } from "@/types";
@@ -44,6 +45,8 @@ export type WorkerFieldValues = {
   status?: RoutineStatus | null;
   /** `HH:mm`, as an `<input type="time">` carries it. */
   runAt?: string;
+  /** 0 (Sunday) to 6 (Saturday), or null for no particular day. */
+  runAtWeekday?: number | null;
 };
 
 /**
@@ -262,9 +265,28 @@ export function WorkerFields({
         </select>
       </div>
 
-      {/* Only a scheduled worker has a slot to place a time in. Rendering the
-          field conditionally also keeps it out of the submission: a manual
-          worker sends no time, which is what the action stores. */}
+      {/* Only a weekly worker has a week to place a day in. Rendering these
+          conditionally also keeps them out of the submission: a manual worker
+          sends no time, which is what the action stores. */}
+      {frequency === "weekly" ? (
+        <div className="grid gap-2">
+          <Label htmlFor="runAtWeekday">Day</Label>
+          <select
+            id="runAtWeekday"
+            name="runAtWeekday"
+            defaultValue={values.runAtWeekday ?? ""}
+            className={selectClassName}
+          >
+            <option value="">Same day it was saved</option>
+            {weekdays.map((day) => (
+              <option key={day.value} value={day.value}>
+                {day.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
+
       {frequency !== "manual" ? (
         <div className="grid gap-2">
           <Label htmlFor="runAt">Run at</Label>

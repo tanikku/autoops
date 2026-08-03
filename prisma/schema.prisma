@@ -39,6 +39,11 @@ model Routine {
   /// pending slot already had, which is how every worker behaved before a time
   /// could be chosen.
   runAtMinutes Int?
+  /// Day of the week a weekly worker runs, in the owner's timezone: 0 is
+  /// Sunday through 6 is Saturday, matching JavaScript's own numbering so no
+  /// conversion sits between this column and the arithmetic. Null keeps
+  /// whichever weekday the pending slot already falls on.
+  runAtWeekday Int?
   nextRunAt   DateTime?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt

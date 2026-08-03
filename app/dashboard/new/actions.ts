@@ -64,9 +64,11 @@ export async function createRoutineAction(
     image: session.user.image,
   });
 
-  // A time of day only means anything alongside a cadence: a manual worker has
-  // no slot to place it in.
+  // A time of day only means anything alongside a cadence, and a weekday only
+  // alongside a week: a manual worker has no slot to place either in, and a
+  // daily one runs on every day there is.
   const runAtMinutes = frequency === "manual" ? null : input.runAtMinutes;
+  const runAtWeekday = frequency === "weekly" ? input.runAtWeekday : null;
   const timezone = await getUserTimezone(session.user.id);
 
   try {
@@ -78,7 +80,13 @@ export async function createRoutineAction(
         status,
         frequency,
         runAtMinutes,
-        nextRunAt: calculateNextRunAt({ frequency, runAtMinutes, timezone }),
+        runAtWeekday,
+        nextRunAt: calculateNextRunAt({
+          frequency,
+          runAtMinutes,
+          runAtWeekday,
+          timezone,
+        }),
       },
       session.user.id,
     );

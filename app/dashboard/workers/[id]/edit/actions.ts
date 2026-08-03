@@ -59,22 +59,25 @@ export async function updateRoutineAction(
   const status = input.status ?? existing.status;
   const frequency = input.frequency ?? existing.frequency;
 
-  // A time of day only means anything alongside a cadence: a manual worker has
-  // no slot to place it in.
+  // A time of day only means anything alongside a cadence, and a weekday only
+  // alongside a week: a manual worker has no slot to place either in, and a
+  // daily one runs on every day there is.
   const runAtMinutes = frequency === "manual" ? null : input.runAtMinutes;
+  const runAtWeekday = frequency === "weekly" ? input.runAtWeekday : null;
   const timezone = await getUserTimezone(userId);
 
-  // Changing the cadence *or the time* invalidates the pending slot: a worker
+  // Any part of the schedule changing invalidates the pending slot: a worker
   // switched to `manual` must stop being due, one switched away from it needs a
-  // first slot, and a worker moved from 09:00 to 07:00 should not run at 09:00
-  // once more first. Leaving both alone keeps the slot, so editing a name or
-  // prompt never shifts the schedule.
+  // first slot, and a worker moved from Monday to Wednesday should not run on
+  // Monday once more first. Leaving all of it alone keeps the slot, so editing
+  // a name or prompt never shifts the schedule.
   const scheduleChanged =
     frequency !== existing.frequency ||
-    runAtMinutes !== existing.runAtMinutes;
+    runAtMinutes !== existing.runAtMinutes ||
+    runAtWeekday !== existing.runAtWeekday;
 
   const nextRunAt = scheduleChanged
-    ? calculateNextRunAt({ frequency, runAtMinutes, timezone })
+    ? calculateNextRunAt({ frequency, runAtMinutes, runAtWeekday, timezone })
     : existing.nextRunAt;
 
   try {
@@ -87,6 +90,7 @@ export async function updateRoutineAction(
         status,
         frequency,
         runAtMinutes,
+        runAtWeekday,
         nextRunAt,
       },
       userId,
