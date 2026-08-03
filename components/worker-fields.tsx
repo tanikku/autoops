@@ -10,6 +10,8 @@ import {
   type WorkerFieldName,
 } from "@/lib/worker-input";
 import {
+  monthDays,
+  ordinal,
   routineFrequencies,
   routineStatuses,
   weekdays,
@@ -47,6 +49,8 @@ export type WorkerFieldValues = {
   runAt?: string;
   /** 0 (Sunday) to 6 (Saturday), or null for no particular day. */
   runAtWeekday?: number | null;
+  /** 1 to 31, or null for no particular day. */
+  runAtDay?: number | null;
 };
 
 /**
@@ -284,6 +288,28 @@ export function WorkerFields({
               </option>
             ))}
           </select>
+        </div>
+      ) : null}
+
+      {frequency === "monthly" ? (
+        <div className="grid gap-2">
+          <Label htmlFor="runAtDay">Day</Label>
+          <select
+            id="runAtDay"
+            name="runAtDay"
+            defaultValue={values.runAtDay ?? ""}
+            className={selectClassName}
+          >
+            <option value="">Same day it was saved</option>
+            {monthDays.map((day) => (
+              <option key={day} value={day}>
+                {ordinal(day)}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-muted-foreground">
+            Days past the end of a month run on the last day instead.
+          </p>
         </div>
       ) : null}
 

@@ -56,6 +56,7 @@ export function RoutineCard({
             routine.frequency,
             routine.runAtMinutes,
             routine.runAtWeekday,
+            routine.runAtDay,
           )}
         </CardDescription>
         <CardAction>

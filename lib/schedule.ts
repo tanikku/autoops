@@ -15,12 +15,15 @@ export type ScheduleInput = {
   runAtMinutes: number | null;
   /** 0 (Sunday) to 6 (Saturday) in the owner's zone, or null to keep the weekday of the slot being advanced. */
   runAtWeekday: number | null;
+  /** 1 to 31 in the owner's zone, or null to keep the day of the slot being advanced. */
+  runAtDay: number | null;
   /** IANA zone the time of day is read in. */
   timezone: string;
 };
 
 const MINUTES_PER_DAY = 1440;
 const DAYS_PER_WEEK = 7;
+const DAYS_PER_MONTH_MAX = 31;
 
 /**
  * Advances a worker's schedule by one interval.
@@ -48,6 +51,7 @@ export async function advanceNextRunAt(
       frequency: worker.frequency,
       runAtMinutes: worker.runAtMinutes,
       runAtWeekday: worker.runAtWeekday,
+      runAtDay: worker.runAtDay,
       timezone: await getUserTimezone(worker.userId),
     },
     currentNextRunAt,
@@ -71,7 +75,7 @@ export function calculateNextRunAt(
   schedule: ScheduleInput,
   from: Date = new Date(),
 ): Date | null {
-  const { frequency, runAtMinutes, runAtWeekday, timezone } = schedule;
+  const { frequency, runAtMinutes, runAtWeekday, runAtDay, timezone } = schedule;
 
   if (frequency === "manual") {
     return null;
@@ -99,7 +103,7 @@ export function calculateNextRunAt(
       );
       break;
     case "monthly":
-      local.setUTCMonth(local.getUTCMonth() + 1);
+      advanceMonth(local, runAtDay);
       break;
   }
 
@@ -128,6 +132,47 @@ export function calculateNextRunAt(
 function daysUntilWeekday(current: number, target: number): number {
   return ((target - current) % DAYS_PER_WEEK + DAYS_PER_WEEK) % DAYS_PER_WEEK
     || DAYS_PER_WEEK;
+}
+
+/** Day 0 of the following month is the last day of this one. */
+function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+}
+
+/**
+ * Moves to the chosen day of next month, or to that month's last day when it
+ * is shorter.
+ *
+ * **`setUTCMonth` cannot be used for this.** A day past the end of the target
+ * month rolls into the one after: the 31st of January becomes the 3rd of
+ * March. Worse, the rolled value then becomes the basis for the next step, so
+ * a worker set for month-end quietly turns into one that runs on the 3rd and
+ * never returns. Setting the year, month and day together avoids the roll,
+ * because the day is already known to fit.
+ *
+ * The clamping is not remembered. `runAtDay` stays the intent and the landed
+ * date is only a consequence of it, so February borrows the 28th without March
+ * inheriting it — the 31st comes back the following month.
+ *
+ * With no `runAtDay`, the day of the slot being advanced plays that role. It
+ * is clamped the same way, which is a change from what this did before: it
+ * used to roll, and a monthly worker created on the 31st would drift to the
+ * 3rd and stay there.
+ */
+function advanceMonth(local: Date, runAtDay: number | null): void {
+  const targetDay =
+    runAtDay === null ? local.getUTCDate() : clampToMonth(runAtDay);
+
+  const month = local.getUTCMonth() + 1;
+  const rollsOver = month > 11;
+  const year = rollsOver ? local.getUTCFullYear() + 1 : local.getUTCFullYear();
+  const nextMonth = rollsOver ? 0 : month;
+
+  local.setUTCFullYear(
+    year,
+    nextMonth,
+    Math.min(targetDay, daysInMonth(year, nextMonth)),
+  );
 }
 
 /** Adds one interval to an instant, leaving its time of day alone. */
@@ -163,4 +208,15 @@ function clampToDay(minutes: number): number {
 /** The same guard for a weekday, which the form constrains but the column does not. */
 function clampToWeek(weekday: number): number {
   return Math.min(Math.max(Math.trunc(weekday), 0), DAYS_PER_WEEK - 1);
+}
+
+/**
+ * The same guard for a day of the month.
+ *
+ * Clamps to 31 rather than to the length of any particular month: which month
+ * this lands in is not known here, and shortening it is what `advanceMonth`
+ * does with the answer.
+ */
+function clampToMonth(day: number): number {
+  return Math.min(Math.max(Math.trunc(day), 1), DAYS_PER_MONTH_MAX);
 }

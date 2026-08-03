@@ -64,6 +64,7 @@ export async function updateRoutineAction(
   // daily one runs on every day there is.
   const runAtMinutes = frequency === "manual" ? null : input.runAtMinutes;
   const runAtWeekday = frequency === "weekly" ? input.runAtWeekday : null;
+  const runAtDay = frequency === "monthly" ? input.runAtDay : null;
   const timezone = await getUserTimezone(userId);
 
   // Any part of the schedule changing invalidates the pending slot: a worker
@@ -74,10 +75,17 @@ export async function updateRoutineAction(
   const scheduleChanged =
     frequency !== existing.frequency ||
     runAtMinutes !== existing.runAtMinutes ||
-    runAtWeekday !== existing.runAtWeekday;
+    runAtWeekday !== existing.runAtWeekday ||
+    runAtDay !== existing.runAtDay;
 
   const nextRunAt = scheduleChanged
-    ? calculateNextRunAt({ frequency, runAtMinutes, runAtWeekday, timezone })
+    ? calculateNextRunAt({
+        frequency,
+        runAtMinutes,
+        runAtWeekday,
+        runAtDay,
+        timezone,
+      })
     : existing.nextRunAt;
 
   try {
@@ -91,6 +99,7 @@ export async function updateRoutineAction(
         frequency,
         runAtMinutes,
         runAtWeekday,
+        runAtDay,
         nextRunAt,
       },
       userId,

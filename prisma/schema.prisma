@@ -44,6 +44,11 @@ model Routine {
   /// conversion sits between this column and the arithmetic. Null keeps
   /// whichever weekday the pending slot already falls on.
   runAtWeekday Int?
+  /// Day of the month a monthly worker runs, in the owner's timezone: 1 to 31.
+  /// A day past the end of a month runs on that month's last day instead, and
+  /// the month after returns to the chosen one. Null keeps whichever day the
+  /// pending slot already falls on.
+  runAtDay    Int?
   nextRunAt   DateTime?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt

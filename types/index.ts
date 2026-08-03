@@ -40,6 +40,12 @@ export type Routine = {
    * owner's timezone. Null keeps the weekday the pending slot already falls on.
    */
   runAtWeekday: number | null;
+  /**
+   * Day of the month a monthly worker runs, 1 to 31, in the owner's timezone.
+   * A day past the end of a month runs on that month's last day. Null keeps
+   * the day the pending slot already falls on.
+   */
+  runAtDay: number | null;
   nextRunAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -53,6 +59,7 @@ export type RoutineInput = {
   frequency: RoutineFrequency;
   runAtMinutes: number | null;
   runAtWeekday: number | null;
+  runAtDay: number | null;
   nextRunAt: Date | null;
 };
 
@@ -65,6 +72,28 @@ export const weekdays = [
   { value: 5, label: "Friday" },
   { value: 6, label: "Saturday" },
 ] as const;
+
+/** 1 to 31, for a month-day select. */
+export const monthDays = Array.from({ length: 31 }, (_, index) => index + 1);
+
+/** `1` → `1st`, `22` → `22nd`. Teens are all `th`, which the modulo below allows for. */
+export function ordinal(day: number): string {
+  const lastTwo = day % 100;
+  if (lastTwo >= 11 && lastTwo <= 13) {
+    return `${day}th`;
+  }
+
+  switch (day % 10) {
+    case 1:
+      return `${day}st`;
+    case 2:
+      return `${day}nd`;
+    case 3:
+      return `${day}rd`;
+    default:
+      return `${day}th`;
+  }
+}
 
 export function isRoutineStatus(value: string): value is RoutineStatus {
   return (routineStatuses as readonly string[]).includes(value);

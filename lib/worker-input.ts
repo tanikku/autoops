@@ -47,6 +47,8 @@ export type WorkerFormInput = {
   runAtMinutes: number | null;
   /** 0 (Sunday) to 6 (Saturday), or null when no day was given. */
   runAtWeekday: number | null;
+  /** 1 to 31, or null when no day was given. */
+  runAtDay: number | null;
 };
 
 function text(formData: FormData, field: string): string {
@@ -85,13 +87,29 @@ function timeOfDay(formData: FormData, field: string): number | null {
  * null rather than being clamped — a value that far off is not a near miss.
  */
 function weekday(formData: FormData, field: string): number | null {
+  return wholeNumberInRange(formData, field, 0, 6);
+}
+
+/**
+ * Reads a bounded whole number from a select that submits strings.
+ *
+ * An empty option means "no particular one", so anything outside the range
+ * becomes null rather than being clamped — a value that far off is not a near
+ * miss, and the schedule module clamps what it reads from the database anyway.
+ */
+function wholeNumberInRange(
+  formData: FormData,
+  field: string,
+  min: number,
+  max: number,
+): number | null {
   const raw = text(formData, field);
   if (raw === "") {
     return null;
   }
 
   const value = Number(raw);
-  return Number.isInteger(value) && value >= 0 && value <= 6 ? value : null;
+  return Number.isInteger(value) && value >= min && value <= max ? value : null;
 }
 
 /** `540` → `09:00`, for putting a stored value back into the form. */
@@ -124,6 +142,7 @@ export function readWorkerForm(formData: FormData): WorkerFormInput {
     frequency: isRoutineFrequency(frequency) ? frequency : null,
     runAtMinutes: timeOfDay(formData, "runAt"),
     runAtWeekday: weekday(formData, "runAtWeekday"),
+    runAtDay: wholeNumberInRange(formData, "runAtDay", 1, 31),
   };
 }
 

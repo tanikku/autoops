@@ -69,6 +69,7 @@ export async function createRoutineAction(
   // daily one runs on every day there is.
   const runAtMinutes = frequency === "manual" ? null : input.runAtMinutes;
   const runAtWeekday = frequency === "weekly" ? input.runAtWeekday : null;
+  const runAtDay = frequency === "monthly" ? input.runAtDay : null;
   const timezone = await getUserTimezone(session.user.id);
 
   try {
@@ -81,10 +82,12 @@ export async function createRoutineAction(
         frequency,
         runAtMinutes,
         runAtWeekday,
+        runAtDay,
         nextRunAt: calculateNextRunAt({
           frequency,
           runAtMinutes,
           runAtWeekday,
+          runAtDay,
           timezone,
         }),
       },

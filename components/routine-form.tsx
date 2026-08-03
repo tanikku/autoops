@@ -123,6 +123,7 @@ export function RoutineForm() {
                   ...state.values,
                   runAt: minutesToTimeValue(state.values.runAtMinutes),
                   runAtWeekday: state.values.runAtWeekday,
+                  runAtDay: state.values.runAtDay,
                 }
               : {})
           }

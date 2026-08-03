@@ -1,5 +1,5 @@
 import { minutesToTimeValue } from "@/lib/worker-input";
-import { weekdays, type RoutineFrequency } from "@/types";
+import { ordinal, weekdays, type RoutineFrequency } from "@/types";
 
 const scheduleLabels: Record<RoutineFrequency, string> = {
   manual: "Manual execution",
@@ -24,19 +24,34 @@ export function scheduleLabel(
   frequency: RoutineFrequency,
   runAtMinutes: number | null = null,
   runAtWeekday: number | null = null,
+  runAtDay: number | null = null,
 ): string {
   if (frequency === "manual") {
     return scheduleLabels.manual;
   }
 
-  const day =
-    frequency === "weekly" && runAtWeekday !== null
-      ? weekdays.find((weekday) => weekday.value === runAtWeekday)?.label
-      : undefined;
-
-  const cadence = day ? `Every ${day}` : scheduleLabels[frequency];
+  const cadence = describeCadence(frequency, runAtWeekday, runAtDay);
 
   return runAtMinutes === null
     ? cadence
     : `${cadence} at ${minutesToTimeValue(runAtMinutes)}`;
+}
+
+function describeCadence(
+  frequency: RoutineFrequency,
+  runAtWeekday: number | null,
+  runAtDay: number | null,
+): string {
+  if (frequency === "weekly" && runAtWeekday !== null) {
+    const day = weekdays.find((weekday) => weekday.value === runAtWeekday);
+    if (day) {
+      return `Every ${day.label}`;
+    }
+  }
+
+  if (frequency === "monthly" && runAtDay !== null) {
+    return `On the ${ordinal(runAtDay)}`;
+  }
+
+  return scheduleLabels[frequency];
 }

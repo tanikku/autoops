@@ -51,6 +51,7 @@ export default async function EditWorkerPage({
             status: worker.status,
             runAt: minutesToTimeValue(worker.runAtMinutes),
             runAtWeekday: worker.runAtWeekday,
+            runAtDay: worker.runAtDay,
           }}
         />
       </main>
