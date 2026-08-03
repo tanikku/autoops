@@ -24,6 +24,23 @@ export async function getUserTimezone(userId: string): Promise<string> {
 }
 
 /**
+ * Changes the zone a user's timestamps are read and scheduled in.
+ *
+ * Touches that column and nothing else: the rest of the row comes from the
+ * provider and is refreshed by `ensureUser` at sign-in, so writing it here
+ * would only risk overwriting something newer with something staler.
+ */
+export async function setUserTimezone(
+  userId: string,
+  timezone: string,
+): Promise<void> {
+  await prisma.user.update({
+    where: { id: userId },
+    data: { timezone },
+  });
+}
+
+/**
  * Writes the signed-in account to the database if it is not there yet.
  *
  * Sessions are JWT-only (no Prisma adapter), so nothing creates the row at

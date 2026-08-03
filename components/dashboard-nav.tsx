@@ -22,7 +22,12 @@ export async function DashboardNav() {
           >
             Dashboard
           </Button>
-          <Button variant="ghost" size="sm" disabled>
+          <Button
+            variant="ghost"
+            size="sm"
+            nativeButton={false}
+            render={<Link href="/dashboard/settings" />}
+          >
             Settings
           </Button>
         </nav>
