@@ -575,5 +575,22 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
 
 **Operational**
 
+- **Deployment.** AutoOps has only ever run locally, so there is no deployment
+  section above and this entry deliberately does not invent one — what follows
+  is the list of decisions still open, not a plan. Needed before Closed Beta:
+
+  | Decision | Open question |
+  | --- | --- |
+  | Hosting platform | Where the app runs, and whether its runtime supports the Node APIs the driver adapter needs |
+  | Environment variables | Where each of the five is set, and who holds the values |
+  | `CRON_SECRET` | How the secret reaches both the app and whatever calls the cron endpoint |
+  | Database hosting | SQLite on a persistent disk, or a hosted database — most platforms have ephemeral filesystems, which SQLite does not survive |
+  | SQLite migration path | Whether to move to PostgreSQL before Beta or after, and how existing rows travel |
+  | Cron execution | Which scheduler calls `POST /api/cron/run`, how often, and what happens when a tick is missed |
+
+  The last two are connected to the scheduling items above: a transactional
+  backend is what unblocks atomic run-and-advance, so the database decision
+  arrives before that work, not after.
+
 - `削除用/dev.db.bak` — the database from before the tenant identity fix, kept
   until Closed Beta starts
