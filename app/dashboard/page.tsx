@@ -10,6 +10,7 @@ import { summarizeWorkers } from "@/lib/overview";
 import { listRoutines } from "@/lib/routines";
 import { listRunHistory } from "@/lib/runs";
 import { requireUserId } from "@/lib/session";
+import { getUserTimezone } from "@/lib/users";
 
 export const metadata: Metadata = {
   title: "Dashboard — AutoOps",
@@ -21,9 +22,10 @@ export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const userId = await requireUserId();
-  const [routines, runs] = await Promise.all([
+  const [routines, runs, timezone] = await Promise.all([
     listRoutines(userId),
     listRunHistory(userId),
+    getUserTimezone(userId),
   ]);
 
   // Both lists are already in memory, so the summaries add no queries.
@@ -55,7 +57,7 @@ export default async function DashboardPage() {
 
         <section className="mt-10">
           <h2 className="text-lg font-medium tracking-tight">Overview</h2>
-          <OverviewCards overview={overview} />
+          <OverviewCards overview={overview} timezone={timezone} />
         </section>
 
         <section className="mt-10">
@@ -78,6 +80,7 @@ export default async function DashboardPage() {
                   key={routine.id}
                   routine={routine}
                   health={healthByWorker.get(routine.id) ?? NEVER_RUN}
+                  timezone={timezone}
                 />
               ))}
             </div>
@@ -86,7 +89,7 @@ export default async function DashboardPage() {
 
         <section className="mt-10">
           <h2 className="text-lg font-medium tracking-tight">Activity</h2>
-          <RunHistoryList runs={runs} />
+          <RunHistoryList runs={runs} timezone={timezone} />
         </section>
       </main>
     </div>

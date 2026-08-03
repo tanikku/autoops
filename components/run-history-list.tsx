@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { formatDateTimeWithSeconds } from "@/lib/datetime";
 import type { RunHistoryEntry, RunStatus } from "@/types";
 
 const statusLabels: Record<RunStatus, string> = {
@@ -18,11 +19,13 @@ const statusVariants: Record<
   failed: "destructive",
 };
 
-function formatTimestamp(value: Date) {
-  return value.toISOString().slice(0, 19).replace("T", " ");
-}
-
-export function RunHistoryList({ runs }: { runs: RunHistoryEntry[] }) {
+export function RunHistoryList({
+  runs,
+  timezone,
+}: {
+  runs: RunHistoryEntry[];
+  timezone: string;
+}) {
   if (runs.length === 0) {
     return (
       <p className="mt-4 text-sm text-muted-foreground">
@@ -43,7 +46,7 @@ export function RunHistoryList({ runs }: { runs: RunHistoryEntry[] }) {
             <div className="min-w-0">
               <p className="truncate font-medium">{run.routineName}</p>
               <p className="text-xs text-muted-foreground">
-                {formatTimestamp(run.startedAt)}
+                {formatDateTimeWithSeconds(run.startedAt, timezone)}
                 {run.output ? ` — ${run.output}` : null}
               </p>
             </div>

@@ -1,4 +1,5 @@
 import { CircleAlert, CircleCheck, CircleDashed, Loader } from "lucide-react";
+import { formatDateTime } from "@/lib/datetime";
 import type { WorkerHealth } from "@/lib/health";
 import type { RunStatus } from "@/types";
 
@@ -29,11 +30,13 @@ const neverRun = {
   Icon: CircleDashed,
 };
 
-function formatTimestamp(value: Date) {
-  return value.toISOString().slice(0, 16).replace("T", " ");
-}
-
-export function WorkerHealthSummary({ health }: { health: WorkerHealth }) {
+export function WorkerHealthSummary({
+  health,
+  timezone,
+}: {
+  health: WorkerHealth;
+  timezone: string;
+}) {
   const { label, className, Icon } = health.lastResult
     ? resultStyles[health.lastResult]
     : neverRun;
@@ -47,7 +50,7 @@ export function WorkerHealthSummary({ health }: { health: WorkerHealth }) {
         <span className="font-medium">{label}</span>
         {health.lastRunAt ? (
           <span className="text-muted-foreground">
-            {formatTimestamp(health.lastRunAt)}
+            {formatDateTime(health.lastRunAt, timezone)}
           </span>
         ) : null}
       </p>

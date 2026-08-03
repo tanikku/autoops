@@ -8,10 +8,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { WorkerHealthSummary } from "@/components/worker-health";
+import { formatDateTimeWithSeconds } from "@/lib/datetime";
 import { summarizeRuns } from "@/lib/health";
 import { getRoutine } from "@/lib/routines";
 import { listRunsForWorker } from "@/lib/runs";
 import { requireUserId } from "@/lib/session";
+import { getUserTimezone } from "@/lib/users";
 import type { RoutineFrequency, RoutineStatus } from "@/types";
 
 export const metadata: Metadata = {
@@ -44,9 +46,6 @@ const frequencyLabels: Record<RoutineFrequency, string> = {
   monthly: "Monthly",
 };
 
-function formatTimestamp(value: Date) {
-  return value.toISOString().slice(0, 19).replace("T", " ");
-}
 
 function Detail({ label, value }: { label: string; value: string }) {
   return (
@@ -74,7 +73,11 @@ export default async function WorkerDetailPage({
 
   // One query for the worker's runs, folded into the same summary the
   // dashboard card shows.
-  const health = summarizeRuns(await listRunsForWorker(worker.id, userId));
+  const [runs, timezone] = await Promise.all([
+    listRunsForWorker(worker.id, userId),
+    getUserTimezone(userId),
+  ]);
+  const health = summarizeRuns(runs);
 
   return (
     <div className="flex flex-1 flex-col bg-background">
@@ -104,7 +107,7 @@ export default async function WorkerDetailPage({
 
           <Card className="mt-8">
             <CardContent>
-              <WorkerHealthSummary health={health} />
+              <WorkerHealthSummary health={health} timezone={timezone} />
             </CardContent>
           </Card>
 
@@ -122,7 +125,7 @@ export default async function WorkerDetailPage({
                   label="Next Run"
                   value={
                     worker.nextRunAt
-                      ? formatTimestamp(worker.nextRunAt)
+                      ? formatDateTimeWithSeconds(worker.nextRunAt, timezone)
                       : "Manual"
                   }
                 />
@@ -130,17 +133,17 @@ export default async function WorkerDetailPage({
                   label="Last Run"
                   value={
                     health.lastRunAt
-                      ? formatTimestamp(health.lastRunAt)
+                      ? formatDateTimeWithSeconds(health.lastRunAt, timezone)
                       : "Never run"
                   }
                 />
                 <Detail
                   label="Created At"
-                  value={formatTimestamp(worker.createdAt)}
+                  value={formatDateTimeWithSeconds(worker.createdAt, timezone)}
                 />
                 <Detail
                   label="Updated At"
-                  value={formatTimestamp(worker.updatedAt)}
+                  value={formatDateTimeWithSeconds(worker.updatedAt, timezone)}
                 />
               </dl>
             </CardContent>

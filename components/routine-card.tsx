@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { RunRoutineButton } from "@/components/run-routine-button";
 import { WorkerHealthSummary } from "@/components/worker-health";
+import { formatDateTime } from "@/lib/datetime";
 import { NEVER_RUN, type WorkerHealth } from "@/lib/health";
 import { scheduleLabel } from "@/lib/schedule-label";
 import { Button } from "@/components/ui/button";
@@ -30,16 +31,14 @@ const statusVariants: Record<
   draft: "outline",
 };
 
-function formatNextRun(value: Date) {
-  return value.toISOString().slice(0, 16).replace("T", " ");
-}
-
 export function RoutineCard({
   routine,
   health = NEVER_RUN,
+  timezone,
 }: {
   routine: Routine;
   health?: WorkerHealth;
+  timezone: string;
 }) {
   return (
     <Card>
@@ -62,11 +61,13 @@ export function RoutineCard({
 
       <CardContent className="text-xs text-muted-foreground">
         Next Run:{" "}
-        {routine.nextRunAt ? formatNextRun(routine.nextRunAt) : "Manual"}
+        {routine.nextRunAt
+          ? formatDateTime(routine.nextRunAt, timezone)
+          : "Manual"}
       </CardContent>
 
       <CardContent>
-        <WorkerHealthSummary health={health} />
+        <WorkerHealthSummary health={health} timezone={timezone} />
       </CardContent>
 
       <CardContent className="flex gap-2">

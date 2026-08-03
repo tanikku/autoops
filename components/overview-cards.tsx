@@ -1,9 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card";
+import { formatDateTime } from "@/lib/datetime";
 import type { WorkerOverview } from "@/lib/overview";
-
-function formatTimestamp(value: Date) {
-  return value.toISOString().slice(0, 16).replace("T", " ");
-}
 
 function SummaryCard({ label, value }: { label: string; value: string }) {
   return (
@@ -18,7 +15,13 @@ function SummaryCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function OverviewCards({ overview }: { overview: WorkerOverview }) {
+export function OverviewCards({
+  overview,
+  timezone,
+}: {
+  overview: WorkerOverview;
+  timezone: string;
+}) {
   return (
     <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
       <SummaryCard label="Total Workers" value={String(overview.total)} />
@@ -28,7 +31,7 @@ export function OverviewCards({ overview }: { overview: WorkerOverview }) {
         label="Next Scheduled Run"
         value={
           overview.nextScheduledRun
-            ? formatTimestamp(overview.nextScheduledRun)
+            ? formatDateTime(overview.nextScheduledRun, timezone)
             : "None scheduled"
         }
       />
@@ -36,7 +39,7 @@ export function OverviewCards({ overview }: { overview: WorkerOverview }) {
         label="Last Execution"
         value={
           overview.lastExecution
-            ? formatTimestamp(overview.lastExecution)
+            ? formatDateTime(overview.lastExecution, timezone)
             : "Never"
         }
       />

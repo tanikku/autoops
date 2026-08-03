@@ -17,6 +17,10 @@ model User {
   email     String       @unique
   name      String?
   image     String?
+  /// IANA zone the dashboard renders timestamps in, e.g. "Asia/Tokyo".
+  /// Defaults to UTC so existing rows keep displaying exactly what they did
+  /// before there was a setting to change.
+  timezone  String       @default("UTC")
   createdAt DateTime     @default(now())
   routines  Routine[]
   runs      RunHistory[]

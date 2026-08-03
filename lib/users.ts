@@ -1,6 +1,27 @@
 import "server-only";
 
+import { DEFAULT_TIMEZONE } from "@/lib/datetime";
 import { prisma } from "@/lib/prisma";
+
+/**
+ * The zone the signed-in user's timestamps are rendered in.
+ *
+ * Read from the database rather than carried in the session: the JWT is issued
+ * at sign-in and would keep serving the old value until the next one, so a
+ * changed setting would appear to do nothing.
+ *
+ * Falls back to UTC for a user whose row does not exist yet — `ensureUser`
+ * only writes it when the first worker is created, so a fresh account can
+ * reach the dashboard before the row does.
+ */
+export async function getUserTimezone(userId: string): Promise<string> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { timezone: true },
+  });
+
+  return user?.timezone ?? DEFAULT_TIMEZONE;
+}
 
 /**
  * Writes the signed-in account to the database if it is not there yet.

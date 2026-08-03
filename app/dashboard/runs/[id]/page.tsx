@@ -4,9 +4,11 @@ import { notFound } from "next/navigation";
 import { DashboardNav } from "@/components/dashboard-nav";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { formatDateTimeWithSeconds } from "@/lib/datetime";
 import { promptVariables, renderPrompt } from "@/lib/prompt";
 import { getRun } from "@/lib/runs";
 import { requireUserId } from "@/lib/session";
+import { getUserTimezone } from "@/lib/users";
 import type { RunStatus } from "@/types";
 
 export const metadata: Metadata = {
@@ -32,8 +34,8 @@ const statusVariants: Record<
   failed: "destructive",
 };
 
-function formatTimestamp(value: Date | null) {
-  return value ? value.toISOString().slice(0, 19).replace("T", " ") : "—";
+function formatTimestamp(value: Date | null, timezone: string) {
+  return value ? formatDateTimeWithSeconds(value, timezone) : "—";
 }
 
 function formatDuration(startedAt: Date, finishedAt: Date | null) {
@@ -72,7 +74,10 @@ export default async function RunDetailPage({
   const userId = await requireUserId();
   // A run owned by someone else is indistinguishable from one that does not
   // exist: both 404, so the id is never confirmed.
-  const run = await getRun(id, userId);
+  const [run, timezone] = await Promise.all([
+    getRun(id, userId),
+    getUserTimezone(userId),
+  ]);
 
   if (!run) {
     notFound();
@@ -118,8 +123,14 @@ export default async function RunDetailPage({
             label="Execution Time"
             value={formatDuration(run.startedAt, run.finishedAt)}
           />
-          <Field label="Started At" value={formatTimestamp(run.startedAt)} />
-          <Field label="Finished At" value={formatTimestamp(run.finishedAt)} />
+          <Field
+            label="Started At"
+            value={formatTimestamp(run.startedAt, timezone)}
+          />
+          <Field
+            label="Finished At"
+            value={formatTimestamp(run.finishedAt, timezone)}
+          />
         </dl>
 
         <Block label="Prompt" value={run.routinePrompt} />
