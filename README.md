@@ -486,7 +486,7 @@ the next one, so a changed setting would appear to do nothing.
 
 **Storage**
 
-- SQLite + Prisma
+- PostgreSQL + Prisma
 
 ### Planned
 
@@ -503,7 +503,7 @@ the next one, so a changed setting would appear to do nothing.
 | Language | **TypeScript** | |
 | Mutations | **Server Actions** | No REST layer for the dashboard; the only HTTP endpoints are auth and cron |
 | Auth | **Auth.js v5** + **Google OAuth** | JWT sessions, no database adapter — see [Tenant Identity](#tenant-identity) |
-| Database | **SQLite** + **Prisma 7** | Prisma 7 requires a driver adapter (`@prisma/adapter-better-sqlite3`) |
+| Database | **PostgreSQL** + **Prisma 7** | Prisma 7 requires a driver adapter (`@prisma/adapter-pg`). Locally, PostgreSQL comes from `compose.yaml` |
 | Styling | **Tailwind CSS v4** | Theme tokens in `app/globals.css` |
 | Components | **shadcn/ui** (Base UI) | Note: Base UI, not Radix — buttons take `render`, not `asChild` |
 | Icons | **lucide-react** | |
@@ -515,6 +515,23 @@ Two details bite anyone who assumes the usual defaults:
   `render={<Link/>}` *and* `nativeButton={false}`; `asChild` does not exist.
 - **Prisma 7 needs a driver adapter.** `lib/prisma.ts` constructs one; a plain
   `new PrismaClient()` will not connect.
+
+### How Prisma connects
+
+Prisma 7 splits the connection across three files, and the connection URL is
+**not** one of them — `schema.prisma` has no `datasource url`, because Prisma 7
+rejects the schema outright if it finds one (`P1012`).
+
+| File | Holds | Used by |
+| --- | --- | --- |
+| `prisma/schema.prisma` | `provider = "postgresql"` and the models — no URL | Both, for the shape of the data |
+| `prisma.config.ts` | `datasource.url` | The Prisma CLI (`migrate`, `studio`) |
+| `lib/prisma.ts` | `new PrismaPg({ connectionString })` | The application at runtime |
+
+Both read the same value from `lib/db-url.ts`, which prefers `DATABASE_URL` and
+falls back to the `compose.yaml` container, so a fresh checkout can migrate
+without setting anything. **That fallback protects the CLI only** — see
+[Local Development](#local-development) for why the running app is different.
 
 ## Data Model
 
@@ -551,7 +568,7 @@ others changes — editing a name or a prompt never shifts a schedule.
 runs.** Both are `onDelete: Cascade` in the schema, which is why deleting a
 worker needs no cleanup code.
 
-`status` and `frequency` are plain strings in SQLite, so `lib/routines.ts`
+`status` and `frequency` are plain string columns, so `lib/routines.ts`
 narrows them at the boundary and falls back to `draft` / `manual` on anything
 unrecognised. The same applies to `RunHistory.status`.
 
@@ -559,13 +576,38 @@ unrecognised. The same applies to `RunHistory.status`.
 what the scheduler relies on. A timezone changes how they are read, never what
 is stored.
 
-## Development
+## Local Development
+
+Requires **Docker Desktop** — PostgreSQL runs in a container defined by
+`compose.yaml` (image `postgres:17-alpine`, published on **port 5433** so it
+cannot collide with a PostgreSQL already installed on 5432).
 
 ```bash
 pnpm install
-pnpm dev                    # http://localhost:3000
+docker compose up -d              # start PostgreSQL, wait for healthy
+pnpm exec prisma migrate deploy   # apply migrations
+pnpm exec prisma generate         # generate the client
+pnpm dev                          # http://localhost:3000
+```
+
+Three things to know before the first run:
+
+- **PostgreSQL has to be up.** Nothing that touches the database works without
+  it — not the app, not `migrate`, not `studio`.
+- **`.env` must point `DATABASE_URL` at PostgreSQL.** `.env.example` holds the
+  value that matches `compose.yaml`.
+- **A stale `DATABASE_URL` fails in only one place.** Prisma 7 does not load
+  `.env`; Next.js does. So the CLI falls back to the `compose.yaml` container
+  and appears to work, while the running app connects to whatever `.env` says.
+  A leftover value from an earlier setup therefore produces migrations that
+  succeed and pages that throw. If the CLI is happy and the app is not, check
+  `DATABASE_URL` first.
+
+Everything else:
+
+```bash
 pnpm lint
-pnpm exec tsc --noEmit      # types; `pnpm build` also checks them
+pnpm exec tsc --noEmit            # types; `pnpm build` also checks them
 pnpm build
 ```
 
@@ -574,6 +616,7 @@ Database:
 ```bash
 pnpm exec prisma migrate dev      # create and apply a migration
 pnpm exec prisma migrate deploy   # apply existing migrations
+pnpm exec prisma migrate status   # check the database matches the migrations
 pnpm exec prisma studio           # browse the data
 ```
 
@@ -590,13 +633,14 @@ in the values:
 cp .env.example .env
 ```
 
-```
-ANTHROPIC_API_KEY=sk-ant-...
-AUTH_SECRET=...
-AUTH_GOOGLE_ID=...
-AUTH_GOOGLE_SECRET=...
-CRON_SECRET=...
-```
+| Variable | Required | What it is |
+| --- | --- | --- |
+| `DATABASE_URL` | Yes | PostgreSQL connection string. The committed value matches `compose.yaml` |
+| `AUTH_SECRET` | Yes | Signs the session JWT |
+| `AUTH_GOOGLE_ID` | Yes | Google OAuth client id |
+| `AUTH_GOOGLE_SECRET` | Yes | Google OAuth client secret |
+| `CRON_SECRET` | Yes | Bearer token for `POST /api/cron/run`. Unset means every request is rejected |
+| `ANTHROPIC_API_KEY` | No | Real AI execution. Without it, a stand-in provider answers |
 
 `.env` is gitignored; `.env.example` is committed and holds no real values.
 
@@ -733,8 +777,9 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
 - Catch-up strategy after a long outage — currently every missed slot is
   retried one at a time; skipping to the next future slot, or capping the
   number of catch-up runs, are the alternatives
-- Making the run and the `nextRunAt` update atomic — needs a transactional
-  backend, so it is deferred to the Redis/PostgreSQL migration
+- Making the run and the `nextRunAt` update atomic — PostgreSQL supplies the
+  transactions this needs, so the backend is no longer what blocks it; the work
+  itself is still unscheduled
 
 **Concurrency**
 
@@ -749,15 +794,10 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
   | Decision | Open question |
   | --- | --- |
   | Hosting platform | Where the app runs, and whether its runtime supports the Node APIs the driver adapter needs |
-  | Environment variables | Where each of the five is set, and who holds the values |
+  | Environment variables | Where each of the six is set, and who holds the values |
   | `CRON_SECRET` | How the secret reaches both the app and whatever calls the cron endpoint |
-  | Database hosting | SQLite on a persistent disk, or a hosted database — most platforms have ephemeral filesystems, which SQLite does not survive |
-  | SQLite migration path | Whether to move to PostgreSQL before Beta or after, and how existing rows travel |
+  | Database hosting | Which managed PostgreSQL, and how its URL reaches the app. `compose.yaml` is a development convenience, not a deployment target |
   | Cron execution | Which scheduler calls `POST /api/cron/run`, how often, and what happens when a tick is missed |
-
-  The last two are connected to the scheduling items above: a transactional
-  backend is what unblocks atomic run-and-advance, so the database decision
-  arrives before that work, not after.
 
 - `削除用/` — things moved aside rather than deleted, kept until Closed Beta
   starts: the database from before the tenant identity fix, the values the
