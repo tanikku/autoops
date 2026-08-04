@@ -62,7 +62,7 @@ Manual                          Scheduled
   │                                │
   │                          Scheduler ── decides what is due
   │                                │
-  │                          Dispatcher ── hands off, then advances nextRunAt
+  │                          Dispatcher ── claims each slot, then hands off
   │                                │
   └────────────► Queue ◄───────────┘
                    │
@@ -79,7 +79,7 @@ Each module does one thing, and the boundaries are deliberate:
 | --- | --- | --- |
 | `lib/scheduler.ts` | Deciding *what* is due | Write anything. It is read-only |
 | `lib/schedule.ts` | Computing *when* the next slot falls | Decide what is due, or run anything |
-| `lib/dispatcher.ts` | The hand-off, and advancing `nextRunAt` | Decide what is due, or interpret a schedule |
+| `lib/dispatcher.ts` | Claiming each due slot, then the hand-off | Decide what is due, interpret a schedule, or retry a failure |
 | `lib/queue.ts` | Being the boundary a run crosses | Anything else — it runs inline for now |
 | `lib/prompt.ts` | Substituting `{{variables}}` | Know where the prompt came from |
 | `lib/ai/*` | Talking to a model | Know about workers, users or schedules |
@@ -192,9 +192,10 @@ gives the Monday after, not the one that just ran — the day a calculation is
 made for has already been dispatched, and returning it would schedule a second
 run on it.
 
-That is a decision rather than an edge case, and it is what a catch-up strategy
-would be changing: as things stand, a worker advances exactly one interval per
-tick, so several missed slots take several ticks to work through.
+That is a decision rather than an edge case: the day a calculation is made for
+has already been dispatched. It is not what happens after an outage, though — a
+backlog of missed slots is dropped rather than worked through one tick at a
+time, which the [Scheduling Engine](#scheduling-engine) covers.
 
 #### A month is shorter than 31 days
 
@@ -219,9 +220,9 @@ next step, so a worker set for month-end silently turns into one that runs on
 the 3rd and never returns. Setting year, month and day together avoids the roll,
 because the day is already known to fit.
 
-Skipping the month was the alternative and was rejected: it would leave a
-catch-up strategy needing to know which months a worker was *supposed* to run
-in, rather than treating every gap as a gap.
+Skipping the month was the alternative and was rejected: it would leave the
+schedule needing to know which months a worker was *supposed* to run in, rather
+than treating every gap as a gap.
 
 ### Dashboard
 
@@ -364,9 +365,9 @@ Worker settings              Scheduler  ──►  Dispatcher  ──►  Queue
 
 | Module | Responsibility |
 | --- | --- |
-| **Schedule** (`lib/schedule.ts`) | Turns a worker's settings into an instant. Everything about frequency, time of day, weekday, day of month and timezone lives here. |
+| **Schedule** (`lib/schedule.ts`) | Turns a worker's settings into an instant. Frequency, time of day, weekday, day of month, timezone and what to do about missed slots all live here — it is the single source of truth for scheduling arithmetic, and it touches no database. |
 | **Scheduler** (`lib/scheduler.ts`) | Decides *what* is due. Read-only — it never writes. |
-| **Dispatcher** (`lib/dispatcher.ts`) | Owns the hand-off: enqueues each due worker, then writes the new `nextRunAt`. |
+| **Dispatcher** (`lib/dispatcher.ts`) | Owns the hand-off: claims each due slot, then enqueues the workers it won. |
 
 **The scheduler's selection has never changed**, through every addition to how
 schedules are described:
@@ -388,7 +389,7 @@ The dispatcher hands the **whole worker** to the schedule module rather than
 picking fields out of it. Choosing which parts of a schedule matter would be
 the dispatcher deciding something, and it decides nothing.
 
-**`nextRunAt` advances from the stored value, never from the clock.** A worker
+**`nextRunAt` advances from the stored slot, never from the clock.** A worker
 due at 09:00 that a cron tick picks up at 09:05 is next due at 09:00 the
 following day. Late ticks cannot drag the schedule forward.
 
@@ -409,18 +410,101 @@ a permanently failing worker would otherwise re-run on every tick forever.
 Workers with `manual` frequency keep `nextRunAt` as `null` and are never due.
 So are `paused` and `draft` ones, which keep their slot but are not selected.
 
-`lib/schedule.ts` calculates and nothing else. Every function in it is pure —
-the module reads no rows, so what comes back depends only on what was handed
-in. It has one entry point, `calculateNextRunAt(schedule, from)`, and two
-callers:
+#### The slot is claimed before the worker runs
 
-| Caller | Where the timezone comes from |
+Advancing `nextRunAt` is not something the dispatcher does afterwards — it is
+how it takes the work in the first place. `claimRoutineSlot` writes only while
+the column still holds the value that was read:
+
+```ts
+where: { id, nextRunAt: expected }
+```
+
+A single `UPDATE` is atomic, so two cron ticks arriving together produce one
+winner and one `false`, and the loser skips that worker rather than running it
+a second time. **No transaction is involved, deliberately.** Wrapping the run
+instead would mean holding one open across a call to the AI provider, which is
+the case every guide on transactions tells you to avoid.
+
+It works because the next slot is always later than the current one. A
+frequency that could land on the same instant would defeat the check silently —
+which is the other reason [the next slot is never today](#the-next-slot-is-never-today).
+
+**A claimed slot stays claimed, even when the run never happens.** A process
+that dies between the claim and the hand-off spends that slot, and the worker
+waits for its next one. Claiming afterwards would turn the same crash into a
+duplicate run instead — and a duplicate bills an API and produces real output
+twice, so losing a slot is the safer direction.
+
+#### Missed slots are dropped, not replayed
+
+A week of downtime leaves a daily worker seven slots behind. Advancing one
+interval per tick would work through them one at a time and run the worker
+eight times on the way back.
+
+**Those eight runs would not be the eight that were missed.** A prompt's
+`{{today}}` resolves when the run happens, so each of them produces *today's*
+work: eight identical results, eight times the cost, and an activity feed made
+of them. `advanceSchedule` resumes from the current time instead — one run to
+get current, then the ordinary cadence.
+
+```
+advanceSchedule(schedule, slot, now)
+  one step from `slot` reaches the future  →  take it
+  it does not                              →  start again from `now`
+```
+
+**The threshold is what keeps this from touching ordinary lateness.** A tick
+five seconds late is not an outage, and treating it as one would move a 09:00
+worker to 09:00:05 and keep sliding. Only a slot whose *successor* is also in
+the past counts as missed, so a late tick leaves the chosen time exactly where
+it was.
+
+Dropping the backlog is safe because the destination is identical either way: a
+worker seven days behind lands on the same instant as one that never missed a
+run. What is lost is the count — **nothing records how many slots were
+skipped**, which is the known cost of the choice.
+
+The decision lives in `lib/schedule.ts` rather than in the dispatcher. What to
+do about a missed slot is a scheduling policy, and the dispatcher holds none.
+
+#### One worker failing is one worker failing
+
+The dispatcher catches per worker. Anything thrown while claiming or handing
+off used to escape the loop and end the tick — and due workers are ordered by
+`nextRunAt`, so one broken worker took every worker behind it, and the same
+ones lost every time.
+
+The failure is logged with the worker's id and the loop carries on. **That is
+not a retry.** The claimed slot is still spent and the worker still waits for
+its next one, exactly as it would have; the only decision is to continue with
+the rest of the list.
+
+How many failed comes back with the result, and the [Cron API](#cron-api)
+passes it on. Without it a tick where everything failed would be
+indistinguishable from a quiet one — both report zero dispatched and both
+return `200`.
+
+#### `lib/schedule.ts` computes and nothing else
+
+Every function in it is pure. The module reads no rows and imports no database
+code, so what comes back depends only on what was handed in. That is what makes
+it the single place scheduling arithmetic lives, and the only part of the
+pipeline with unit tests.
+
+| Entry point | Answers |
 | --- | --- |
-| The hire and edit actions | The signed-in user, read once per submission |
-| The dispatcher | The owner of the worker being advanced |
+| `calculateNextRunAt(schedule, from)` | Where the slot after `from` falls |
+| `advanceSchedule(schedule, slot, now)` | Where a worker goes once `slot` is taken, catching up at most once |
 
-`from` is the slot being advanced, never the clock. Passing the moment a cron
-tick happened to fire would drag the schedule along with it.
+`from` and `slot` are slots, never the clock. `advanceSchedule` is the only one
+told what time it is, and it is *told* rather than allowed to look — which is
+what keeps its answer reproducible.
+
+| Caller | Uses | Where the timezone comes from |
+| --- | --- | --- |
+| The hire and edit actions | `calculateNextRunAt` | The signed-in user, read once per submission |
+| The dispatcher | `advanceSchedule` | The owner of the worker being claimed |
 
 **Resolving the timezone belongs to the caller, not to the module.** For the
 dispatcher that is no extra responsibility: it already loads the due workers
@@ -670,7 +754,8 @@ empty string, so a typo shows up in the output instead of silently vanishing.
 ### Cron API
 
 `POST /api/cron/run` is the entry point for scheduled execution. It asks the
-dispatcher to run every worker that is due and reports how many it handed off.
+dispatcher to run every worker that is due and reports how many it handed off
+and how many it could not.
 It is provider-agnostic — Vercel Cron, Cloudflare Cron, GitHub Actions, and
 Trigger.dev can all call it.
 
@@ -685,16 +770,27 @@ curl -X POST http://localhost:3000/api/cron/run \
   -H "Authorization: Bearer $CRON_SECRET"
 ```
 
-Success (`200`) — `dispatched` is the number of workers handed to the queue:
+Success (`200`) — `dispatched` is the number of workers handed to the queue,
+`failed` the number that threw on the way:
 
 ```json
-{ "success": true, "dispatched": 3 }
+{ "success": true, "dispatched": 3, "failed": 0 }
 ```
 
 Nothing due (`200`):
 
 ```json
-{ "success": true, "dispatched": 0 }
+{ "success": true, "dispatched": 0, "failed": 0 }
+```
+
+**A `200` with a non-zero `failed` is a partial success**, and the only signal
+that anything went wrong — the loop no longer stops at the first failure, so
+the status code stays `200` even when every worker throws. The causes are in
+the server log, one line per worker, with the id. `500` is now reserved for a
+tick that could not run at all.
+
+```json
+{ "success": true, "dispatched": 2, "failed": 1 }
 ```
 
 Missing or wrong secret (`401`):
@@ -765,16 +861,20 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
 
 **Scheduling**
 
-- Catch-up strategy after a long outage — currently every missed slot is
-  retried one at a time; skipping to the next future slot, or capping the
-  number of catch-up runs, are the alternatives
-- Making the run and the `nextRunAt` update atomic — PostgreSQL supplies the
-  transactions this needs, so the backend is no longer what blocks it; the work
-  itself is still unscheduled
+- Skipped slots are not counted — a worker that resumes after an outage says
+  nothing about how many runs it dropped. Recording it needs a column, and no
+  screen asks for the number yet
+- A worker with no chosen time of day drifts when it catches up: with no
+  `runAtMinutes` to anchor to, it resumes at whatever time the recovery
+  happened. Workers that have one keep it
 
 **Concurrency**
 
-- Optimistic locking — two tabs editing the same worker currently last-write-wins
+- Optimistic locking — two tabs editing the same worker still last-write-wins on
+  name, description and prompt. `nextRunAt` is no longer among them: the edit
+  action leaves the column out of the update unless the schedule changed, so a
+  save cannot undo a claim. A `version` column would cover the rest, and is
+  deferred until more than one person can edit a worker
 
 **Operational**
 
