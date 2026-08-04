@@ -52,8 +52,8 @@
 
 ## 現在地
 
-**HEAD: `2047eb9`** — `docs: record what a deployment needs that local development does not`
-working tree clean / origin/main と一致 / CI 緑
+どこまで進んでいるかは `git log --oneline -10` と `git status` で確認してください。
+**ここに commit hash は書きません** — このファイル自体が git 管理下にあるため、書いた瞬間に1つ古くなります。
 
 ### 次のタスク — Railway への初回デプロイ
 
