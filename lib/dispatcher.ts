@@ -1,74 +1,90 @@
 import "server-only";
 
 import { enqueueRoutine } from "@/lib/queue";
-import { setRoutineNextRunAt } from "@/lib/routines";
+import { claimRoutineSlot } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
 import { getDueWorkers } from "@/lib/scheduler";
 import { getUserTimezone } from "@/lib/users";
 import type { Routine } from "@/types";
 
 /**
- * Hands the workers the scheduler selected to the queue, in order, then moves
- * each one's schedule forward.
+ * Claims each worker the scheduler selected, then hands the ones it won to the
+ * queue.
  *
  * The dispatcher decides nothing — the scheduler owns *what* is due, the
  * schedule module owns *when* the next slot falls, and the queue owns *how* a
  * worker runs. Owning the hand-off here is what lets any of them be replaced
  * without touching the others.
  *
- * **A run that fails still advances the schedule.** Execution reports its
- * outcome by recording it rather than by throwing, so nothing distinguishes the
- * two cases here — and nothing should. Deciding whether a failure deserves
- * another attempt is a retry policy, and the dispatcher holds no policies. The
- * failure is visible in the run history either way.
+ * **A slot is taken before it is run, not after.** Two cron ticks arriving at
+ * once — a retry, an overlapping manual call, a second instance — would both
+ * read the same due workers, and running first would run each of them twice.
+ * Claiming first makes one of the two lose and skip the worker. What that costs
+ * is the opposite failure: a process that dies between claiming and running
+ * drops that slot instead of repeating it, which is the safer direction when a
+ * run bills an API and produces real output.
  *
- * Returns the ids that were enqueued.
+ * **A run that fails still advances the schedule** — the slot is already gone
+ * by the time execution starts. Execution reports its outcome by recording it
+ * rather than by throwing, so nothing distinguishes the two cases here, and
+ * nothing should. Deciding whether a failure deserves another attempt is a
+ * retry policy, and the dispatcher holds no policies.
+ *
+ * Returns the ids that were enqueued, which is the workers claimed rather than
+ * the workers found.
  */
 export async function dispatchDueWorkers(now: Date): Promise<string[]> {
   const dueWorkers = await getDueWorkers(now);
   const dispatched: string[] = [];
 
   for (const worker of dueWorkers) {
+    if (!(await claimSlot(worker))) {
+      continue;
+    }
+
     await enqueueRoutine(worker.id);
     dispatched.push(worker.id);
-
-    await setRoutineNextRunAt(worker.id, await nextSlotFor(worker));
   }
 
   return dispatched;
 }
 
 /**
- * Where the pending slot moves to once a worker has been handed off.
+ * Moves a worker's pending slot on, and says whether this call is the one that
+ * did it.
  *
  * Gathering the owner's timezone is the dispatcher's job because reading rows
  * already is: it loads the workers and writes the result back. Handing the
  * schedule module a complete `ScheduleInput` is what keeps that module free of
  * the database and pure enough to reason about on its own.
  *
- * The next slot is measured from the slot that just ran — never from the clock
+ * The next slot is measured from the slot being claimed — never from the clock
  * — so a cron tick that fires late does not drag the schedule with it. A worker
  * due at 09:00 and dispatched at 09:05 is next due at 09:00 the following day,
  * not 09:05.
  *
- * A worker with no pending slot keeps none. The scheduler never returns one,
- * since a null `nextRunAt` cannot be due; the guard stays because this function
- * promises an answer for any worker, not only for the ones that arrive here
- * today.
+ * A worker with no pending slot has nothing to claim. The scheduler never
+ * returns one, since a null `nextRunAt` cannot be due; the guard stays because
+ * a slot that could be claimed twice is the one thing this function exists to
+ * prevent.
  */
-async function nextSlotFor(worker: Routine): Promise<Date | null> {
+async function claimSlot(worker: Routine): Promise<boolean> {
   if (worker.nextRunAt === null) {
-    return null;
+    return false;
   }
 
-  return calculateNextRunAt(
+  const timezone = await getUserTimezone(worker.userId);
+
+  const nextRunAt = calculateNextRunAt(
     {
       frequency: worker.frequency,
       runAtMinutes: worker.runAtMinutes,
       runAtWeekday: worker.runAtWeekday,
       runAtDay: worker.runAtDay,
-      timezone: await getUserTimezone(worker.userId),
+      timezone,
     },
     worker.nextRunAt,
   );
+
+  return claimRoutineSlot(worker.id, worker.nextRunAt, nextRunAt);
 }

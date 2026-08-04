@@ -71,14 +71,34 @@ export async function deleteRoutine(
 }
 
 /**
- * Moves a worker's schedule forward.
+ * Takes a worker's pending slot, reporting whether this caller got it.
+ *
+ * The write lands only while `nextRunAt` still holds `expected` — the value the
+ * caller read a moment ago. Two dispatchers reaching the same slot therefore
+ * produce one `true` and one `false`: a single `UPDATE` is atomic, so by the
+ * time the loser's runs, its `WHERE` no longer matches anything.
+ *
+ * **This is what stops a worker running twice**, and it needs no transaction to
+ * do it. Wrapping the execution instead would mean holding one open across a
+ * call to the AI provider, which is the case every guide on transactions tells
+ * you to avoid.
+ *
+ * It works because the next slot is always later than the current one — the
+ * schedule module never returns the value it was given. A frequency that could
+ * land on the same instant would defeat the check silently.
  *
  * Deliberately not tenant-scoped: the dispatcher runs system-wide on behalf of
  * the platform, not a signed-in user.
  */
-export async function setRoutineNextRunAt(
+export async function claimRoutineSlot(
   id: string,
+  expected: Date,
   nextRunAt: Date | null,
-): Promise<void> {
-  await prisma.routine.update({ where: { id }, data: { nextRunAt } });
+): Promise<boolean> {
+  const { count } = await prisma.routine.updateMany({
+    where: { id, nextRunAt: expected },
+    data: { nextRunAt },
+  });
+
+  return count === 1;
 }
