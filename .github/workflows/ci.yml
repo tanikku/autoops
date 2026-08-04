@@ -1,0 +1,47 @@
+# The four checks the README asks for before a commit, run on every push and
+# pull request so nobody has to remember them.
+#
+# **No secrets, and no database.** Every page renders per request, so nothing
+# reaches Postgres during a build, and `prisma generate` only reads the schema.
+# That is what keeps this to one file with nothing to configure — verified by
+# running all four with every environment variable emptied.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# This workflow reports; it never writes to the repository.
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Before setup-node, which needs pnpm on PATH to find the store it is
+      # asked to cache. The version is pinned here rather than in
+      # `package.json`, which this workflow deliberately leaves alone.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # `--frozen-lockfile` fails rather than quietly resolving something the
+      # lockfile does not describe. `postinstall` generates the Prisma client
+      # as part of this step.
+      - run: pnpm install --frozen-lockfile
+
+      # Cheapest first: a lint error should not wait on a build to surface.
+      - run: pnpm lint
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm test
+      - run: pnpm build
