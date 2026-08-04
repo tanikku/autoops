@@ -745,8 +745,26 @@ cp .env.example .env
 `.env` is gitignored; `.env.example` is committed and holds no real values.
 
 When `ANTHROPIC_API_KEY` is set, workers run against the Claude API. Without it,
-AutoOps falls back to a stand-in provider that returns a fixed response — no key
-is required to run the app locally.
+AutoOps falls back to a stand-in provider that returns a fixed response. **That
+fallback exists so the app is usable without a key**: the whole pipeline —
+scheduling, claiming, dispatch, run history — can be exercised locally, and
+against a live model only when you want to be.
+
+**It is also the one misconfiguration that does not announce itself.** A
+missing key in production is not an error. The stand-in answers, runs are
+recorded as successes, and the health summary stays green over work that never
+happened. Nothing downstream can tell: by the time a run is written, which
+provider produced it is no longer knowable.
+
+The only signal is a line logged once per process when the fallback is chosen:
+
+```
+[ai] ANTHROPIC_API_KEY is not configured — using the stand-in provider.
+```
+
+**Check for it after deploying.** Seeing it in development is expected;
+seeing it in production means every scheduled worker is producing a fixed
+string.
 
 **How long a request may take, and how often it is retried, are AutoOps'
 decisions rather than the SDK's.** `lib/ai/claude-provider.ts` passes both: ten
