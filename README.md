@@ -481,9 +481,22 @@ its next one, exactly as it would have; the only decision is to continue with
 the rest of the list.
 
 How many failed comes back with the result, and the [Cron API](#cron-api)
-passes it on. Without it a tick where everything failed would be
+passes it on. Without it a tick where nothing could be handed off would be
 indistinguishable from a quiet one — both report zero dispatched and both
 return `200`.
+
+**It counts hand-offs, not runs.** What is caught here is a worker that could
+not be *started*: a claim that threw, a worker deleted out from under the tick,
+a row that could not be written. A worker whose run then fails is not caught
+here at all — execution reports its outcome by recording it rather than by
+throwing, so the hand-off succeeded and the worker is counted as dispatched.
+The two failures are different events, and only one of them reaches this
+number:
+
+| Failure | Counted as | Where it shows |
+| --- | --- | --- |
+| Could not hand the worker off | `failed` | The tick's result, and a log line with the worker's id |
+| The run itself failed | `dispatched` | A `failed` row in the run history, and the [health summary](#worker-health) |
 
 #### `lib/schedule.ts` computes and nothing else
 
@@ -819,11 +832,26 @@ curl -X POST http://localhost:3000/api/cron/run \
 ```
 
 Success (`200`) — `dispatched` is the number of workers handed to the queue,
-`failed` the number that threw on the way:
+`failed` the number that could not be:
 
 ```json
 { "success": true, "dispatched": 3, "failed": 0 }
 ```
+
+⚠️ **`failed` does not count runs that failed.** It counts workers that never
+started: a claim that threw, a worker deleted mid-tick, a row that could not be
+written. A run that fails after a successful hand-off is recorded as a `failed`
+run and counted here as **dispatched** — the tick did its job, the work did
+not. **A tick in which every single AI call failed still answers**
+`{"success": true, "dispatched": N, "failed": 0}`.
+
+Monitor the two separately:
+
+| Question | Where to look |
+| --- | --- |
+| Did the tick run at all? | HTTP status. Anything but `200` |
+| Could every due worker be started? | `failed` in this response |
+| Did the work succeed? | **Not here.** The run history, per worker |
 
 Nothing due (`200`):
 
@@ -832,10 +860,10 @@ Nothing due (`200`):
 ```
 
 **A `200` with a non-zero `failed` is a partial success**, and the only signal
-that anything went wrong — the loop no longer stops at the first failure, so
-the status code stays `200` even when every worker throws. The causes are in
-the server log, one line per worker, with the id. `500` is now reserved for a
-tick that could not run at all.
+in this response that anything went wrong — the loop no longer stops at the
+first failure, so the status code stays `200` even when every hand-off throws.
+The causes are in the server log, one line per worker, with the id. `500` is
+reserved for a tick that could not run at all.
 
 ```json
 { "success": true, "dispatched": 2, "failed": 1 }
