@@ -1,6 +1,14 @@
 import { datePartsIn, zonedTimeToUtc } from "@/lib/datetime";
-import { getUserTimezone } from "@/lib/users";
-import type { Routine, RoutineFrequency } from "@/types";
+import type { RoutineFrequency } from "@/types";
+
+/**
+ * Scheduling arithmetic, and nothing else.
+ *
+ * Every function here is pure: the module reads no rows, so what it returns
+ * depends only on what it was handed. Callers resolve the owner's timezone and
+ * pass it in — the dashboard actions from the signed-in session, the dispatcher
+ * from the worker being advanced.
+ */
 
 /**
  * What a schedule is made of: how often, at what time of day, and whose clock
@@ -26,40 +34,10 @@ const DAYS_PER_WEEK = 7;
 const DAYS_PER_MONTH_MAX = 31;
 
 /**
- * Advances a worker's schedule by one interval.
- *
- * The next slot is measured from the slot that just ran — never from the clock
- * — so a cron tick that fires late does not drag the schedule with it. A worker
- * due at 09:00 and dispatched at 09:05 is next due at 09:00 the following day,
- * not 09:05.
- *
- * Takes the worker rather than its parts so the dispatcher hands over a
- * schedule and asks no questions about it: which fields matter, and where the
- * timezone comes from, are decided here. The arithmetic below stays pure and
- * separately testable; only this entry point reads anything.
- */
-export async function advanceNextRunAt(
-  worker: Routine,
-  currentNextRunAt: Date | null,
-): Promise<Date | null> {
-  if (currentNextRunAt === null) {
-    return null;
-  }
-
-  return calculateNextRunAt(
-    {
-      frequency: worker.frequency,
-      runAtMinutes: worker.runAtMinutes,
-      runAtWeekday: worker.runAtWeekday,
-      runAtDay: worker.runAtDay,
-      timezone: await getUserTimezone(worker.userId),
-    },
-    currentNextRunAt,
-  );
-}
-
-/**
  * Returns when a routine should next run, or null for manual routines.
+ *
+ * `from` is the slot being advanced, not the current time: passing the moment a
+ * cron tick happened to fire would drag the schedule along with it.
  *
  * With a `runAtMinutes` the interval is counted in calendar days *in the
  * owner's zone*, then that day's chosen time is converted back to UTC. Adding

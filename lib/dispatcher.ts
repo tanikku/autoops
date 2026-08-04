@@ -2,8 +2,10 @@ import "server-only";
 
 import { enqueueRoutine } from "@/lib/queue";
 import { setRoutineNextRunAt } from "@/lib/routines";
-import { advanceNextRunAt } from "@/lib/schedule";
+import { calculateNextRunAt } from "@/lib/schedule";
 import { getDueWorkers } from "@/lib/scheduler";
+import { getUserTimezone } from "@/lib/users";
+import type { Routine } from "@/types";
 
 /**
  * Hands the workers the scheduler selected to the queue, in order, then moves
@@ -30,15 +32,43 @@ export async function dispatchDueWorkers(now: Date): Promise<string[]> {
     await enqueueRoutine(worker.id);
     dispatched.push(worker.id);
 
-    // The whole schedule goes to the schedule module, which is the only place
-    // that knows what to do with it. Reading the owner's timezone happens
-    // there too: picking it apart here would be the dispatcher deciding
-    // something.
-    await setRoutineNextRunAt(
-      worker.id,
-      await advanceNextRunAt(worker, worker.nextRunAt),
-    );
+    await setRoutineNextRunAt(worker.id, await nextSlotFor(worker));
   }
 
   return dispatched;
+}
+
+/**
+ * Where the pending slot moves to once a worker has been handed off.
+ *
+ * Gathering the owner's timezone is the dispatcher's job because reading rows
+ * already is: it loads the workers and writes the result back. Handing the
+ * schedule module a complete `ScheduleInput` is what keeps that module free of
+ * the database and pure enough to reason about on its own.
+ *
+ * The next slot is measured from the slot that just ran — never from the clock
+ * — so a cron tick that fires late does not drag the schedule with it. A worker
+ * due at 09:00 and dispatched at 09:05 is next due at 09:00 the following day,
+ * not 09:05.
+ *
+ * A worker with no pending slot keeps none. The scheduler never returns one,
+ * since a null `nextRunAt` cannot be due; the guard stays because this function
+ * promises an answer for any worker, not only for the ones that arrive here
+ * today.
+ */
+async function nextSlotFor(worker: Routine): Promise<Date | null> {
+  if (worker.nextRunAt === null) {
+    return null;
+  }
+
+  return calculateNextRunAt(
+    {
+      frequency: worker.frequency,
+      runAtMinutes: worker.runAtMinutes,
+      runAtWeekday: worker.runAtWeekday,
+      runAtDay: worker.runAtDay,
+      timezone: await getUserTimezone(worker.userId),
+    },
+    worker.nextRunAt,
+  );
 }
