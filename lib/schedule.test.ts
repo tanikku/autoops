@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { calculateNextRunAt, type ScheduleInput } from "@/lib/schedule";
+import {
+  advanceSchedule,
+  calculateNextRunAt,
+  type ScheduleInput,
+} from "@/lib/schedule";
 
 /**
  * The public surface is one function, so that is what these exercise. The
@@ -31,6 +35,19 @@ function nextRun(
   return calculateNextRunAt(
     { ...anyWorker, ...overrides },
     new Date(from),
+  )?.toISOString();
+}
+
+/** Where a schedule lands once `slot` is taken at `now`, as an ISO string. */
+function advanced(
+  overrides: Partial<ScheduleInput>,
+  slot: string,
+  now: string,
+): string | undefined {
+  return advanceSchedule(
+    { ...anyWorker, ...overrides },
+    new Date(slot),
+    new Date(now),
   )?.toISOString();
 }
 
@@ -256,5 +273,106 @@ describe("calculateNextRunAt", () => {
         ),
       ).toBe("2026-11-01T07:30:00.000Z"); // 02:30 EST
     });
+  });
+});
+
+/**
+ * The question here is not where the next slot falls — that is settled above —
+ * but how many missed ones are worth replaying. The answer is none: one step
+ * forward if that reaches the future, and a fresh start from `now` if it does
+ * not.
+ */
+describe("advanceSchedule", () => {
+  const daily = { frequency: "daily", runAtMinutes: NINE_AM } as const;
+
+  describe("when one step reaches the future", () => {
+    it("advances by one slot, exactly as calculating from that slot would", () => {
+      // A tick five seconds late is still on time as far as the schedule is
+      // concerned, and must not be treated as a missed run.
+      const slot = "2026-08-04T09:00:00.000Z";
+      const result = advanced(daily, slot, "2026-08-04T09:00:05.000Z");
+
+      expect(result).toBe("2026-08-05T09:00:00.000Z");
+      expect(result).toBe(nextRun(daily, slot));
+    });
+
+    it("keeps the chosen time when the tick is hours late", () => {
+      // Late by three and a half hours, but the next slot is still ahead, so
+      // 09:00 survives rather than sliding to the time of the tick.
+      expect(
+        advanced(daily, "2026-08-04T09:00:00.000Z", "2026-08-04T12:30:00.000Z"),
+      ).toBe("2026-08-05T09:00:00.000Z");
+    });
+  });
+
+  describe("when one step does not reach the future", () => {
+    it("resumes from now instead of replaying the backlog", () => {
+      // Seven days of missed slots. Stepping through them one tick at a time
+      // would run the worker eight times; it lands in the same place either
+      // way, so the backlog buys nothing.
+      expect(
+        advanced(daily, "2026-07-28T09:00:00.000Z", "2026-08-04T12:00:00.000Z"),
+      ).toBe("2026-08-05T09:00:00.000Z");
+    });
+
+    it("lands where a punctual worker would", () => {
+      // The destination is what a worker that never missed a slot gets, which
+      // is what makes dropping the backlog safe: catching up costs one run.
+      const late = advanced(
+        daily,
+        "2026-07-28T09:00:00.000Z",
+        "2026-08-04T12:00:00.000Z",
+      );
+      const punctual = advanced(
+        daily,
+        "2026-08-04T09:00:00.000Z",
+        "2026-08-04T12:00:00.000Z",
+      );
+
+      expect(late).toBe(punctual);
+    });
+
+    it("counts a slot landing exactly on now as already missed", () => {
+      // The boundary: `now` is not the future, so this compresses rather than
+      // handing back a slot that is due the instant it is written.
+      expect(
+        advanced(daily, "2026-08-04T09:00:00.000Z", "2026-08-05T09:00:00.000Z"),
+      ).toBe("2026-08-06T09:00:00.000Z");
+    });
+
+    it("keeps the chosen day of the month while catching up", () => {
+      // Four months behind, and the 31st is still the intent: June is short,
+      // so it borrows the 30th the same way a punctual month would.
+      expect(
+        advanced(
+          { frequency: "monthly", runAtMinutes: NINE_AM, runAtDay: 31 },
+          "2026-01-31T09:00:00.000Z",
+          "2026-05-15T12:00:00.000Z",
+        ),
+      ).toBe("2026-06-30T09:00:00.000Z");
+    });
+
+    it("reads now in the owner's zone, not in UTC", () => {
+      // 15:30 UTC is already the next day in Tokyo, so the slot it resumes
+      // from is the 5th — a UTC reading would produce the 4th and be a day early.
+      expect(
+        advanced(
+          { frequency: "daily", runAtMinutes: NINE_AM, timezone: TOKYO },
+          "2026-07-28T00:00:00.000Z",
+          "2026-08-04T15:30:00.000Z",
+        ),
+      ).toBe("2026-08-06T00:00:00.000Z"); // 09:00 on the 6th in Tokyo
+    });
+  });
+
+  it("still never schedules a manual worker", () => {
+    // No slot to miss, so nothing to catch up on.
+    expect(
+      advanced(
+        { frequency: "manual" },
+        "2026-01-01T00:00:00.000Z",
+        "2026-08-04T12:00:00.000Z",
+      ),
+    ).toBeUndefined();
   });
 });

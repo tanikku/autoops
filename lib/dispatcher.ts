@@ -2,7 +2,7 @@ import "server-only";
 
 import { enqueueRoutine } from "@/lib/queue";
 import { claimRoutineSlot } from "@/lib/routines";
-import { calculateNextRunAt } from "@/lib/schedule";
+import { advanceSchedule } from "@/lib/schedule";
 import { getDueWorkers } from "@/lib/scheduler";
 import { getUserTimezone } from "@/lib/users";
 import type { Routine } from "@/types";
@@ -38,7 +38,7 @@ export async function dispatchDueWorkers(now: Date): Promise<string[]> {
   const dispatched: string[] = [];
 
   for (const worker of dueWorkers) {
-    if (!(await claimSlot(worker))) {
+    if (!(await claimSlot(worker, now))) {
       continue;
     }
 
@@ -58,24 +58,24 @@ export async function dispatchDueWorkers(now: Date): Promise<string[]> {
  * schedule module a complete `ScheduleInput` is what keeps that module free of
  * the database and pure enough to reason about on its own.
  *
- * The next slot is measured from the slot being claimed — never from the clock
- * — so a cron tick that fires late does not drag the schedule with it. A worker
- * due at 09:00 and dispatched at 09:05 is next due at 09:00 the following day,
- * not 09:05.
+ * Where the slot lands is the schedule module's call, including what to do
+ * about slots missed while the service was down. `now` is passed through for
+ * that decision rather than acted on here — a dispatcher that compared the two
+ * itself would be holding a scheduling policy.
  *
  * A worker with no pending slot has nothing to claim. The scheduler never
  * returns one, since a null `nextRunAt` cannot be due; the guard stays because
  * a slot that could be claimed twice is the one thing this function exists to
  * prevent.
  */
-async function claimSlot(worker: Routine): Promise<boolean> {
+async function claimSlot(worker: Routine, now: Date): Promise<boolean> {
   if (worker.nextRunAt === null) {
     return false;
   }
 
   const timezone = await getUserTimezone(worker.userId);
 
-  const nextRunAt = calculateNextRunAt(
+  const nextRunAt = advanceSchedule(
     {
       frequency: worker.frequency,
       runAtMinutes: worker.runAtMinutes,
@@ -84,6 +84,7 @@ async function claimSlot(worker: Routine): Promise<boolean> {
       timezone,
     },
     worker.nextRunAt,
+    now,
   );
 
   return claimRoutineSlot(worker.id, worker.nextRunAt, nextRunAt);

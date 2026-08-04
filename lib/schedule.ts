@@ -34,6 +34,48 @@ const DAYS_PER_WEEK = 7;
 const DAYS_PER_MONTH_MAX = 31;
 
 /**
+ * Where a schedule goes once `slot` has been taken, catching up at most once.
+ *
+ * One step forward is the normal answer, and it is the one a punctual tick
+ * always gets: a worker due at 09:00 and dispatched at 09:00:05 moves to 09:00
+ * tomorrow, not to 09:00:05.
+ *
+ * **When one step is not enough, the backlog is dropped rather than replayed.**
+ * A worker that was due seven times while the service was down would otherwise
+ * run seven times on the way back, and those seven runs would not be the seven
+ * that were missed: a prompt's date resolves when the run happens, so each one
+ * produces today's work. Seven identical results, seven times the cost, and an
+ * activity feed full of them. Resuming from `now` instead spends one run
+ * getting current and then keeps the ordinary cadence.
+ *
+ * Deciding that here rather than in the dispatcher is deliberate. What to do
+ * about a missed slot is a scheduling policy, and the dispatcher holds none —
+ * it asks this module when the next slot falls and writes down the answer.
+ *
+ * The one thing lost is the count: nothing records how many slots were skipped.
+ *
+ * Pure, like everything else here. `now` is passed in rather than read, so the
+ * decision is reproducible and the module keeps knowing nothing about clocks
+ * beyond what it is handed.
+ */
+export function advanceSchedule(
+  schedule: ScheduleInput,
+  slot: Date,
+  now: Date,
+): Date | null {
+  const oneStep = calculateNextRunAt(schedule, slot);
+
+  // A step that reaches the future is the whole schedule caught up. Anything
+  // else means the slot after this one is missed too, which is the case worth
+  // treating differently — a single late tick is not.
+  if (oneStep === null || oneStep > now) {
+    return oneStep;
+  }
+
+  return calculateNextRunAt(schedule, now);
+}
+
+/**
  * Returns when a routine should next run, or null for manual routines.
  *
  * `from` is the slot being advanced, not the current time: passing the moment a
