@@ -568,7 +568,9 @@ the next one, so a changed setting would appear to do nothing.
 - Scheduled Run — `daily`, `weekly` or `monthly`, at a chosen time of day, on a
   chosen weekday or day of the month
 - Scheduler — decides what is due
-- Dispatcher — hands off due workers and advances the schedule
+- Dispatcher — claims each due slot, then hands it off. One worker failing does
+  not stop the rest of the tick
+- Catch-up — an outage costs one run to get current, not one per missed slot
 - Queue — the hand-off boundary, inline for now
 - Cron API — `POST /api/cron/run`
 - Claude Provider — real AI execution when `ANTHROPIC_API_KEY` is set
@@ -598,6 +600,8 @@ the next one, so a changed setting would appear to do nothing.
 | Components | **shadcn/ui** (Base UI) | Note: Base UI, not Radix — buttons take `render`, not `asChild` |
 | Icons | **lucide-react** | |
 | AI | **Anthropic SDK** | Behind a provider interface; falls back to a stand-in without an API key |
+| Testing | **Vitest** | Covers `lib/schedule.ts` only — see [Backlog](#backlog) for what that leaves out |
+| CI | **GitHub Actions** | `.github/workflows/ci.yml` runs lint, types, tests and build. No secrets, no database |
 
 Two details bite anyone who assumes the usual defaults:
 
@@ -698,8 +702,14 @@ Everything else:
 ```bash
 pnpm lint
 pnpm exec tsc --noEmit            # types; `pnpm build` also checks them
+pnpm test                         # `pnpm test:watch` while working
 pnpm build
 ```
+
+These four are what CI runs on every push, and they need no database — the
+tests cover `lib/schedule.ts`, which reads none. **Scheduling behaviour that
+does touch the database is not covered by any of them**: claiming, catch-up and
+failure isolation are still verified by hand against a running app.
 
 Database:
 
@@ -851,7 +861,17 @@ For production, add the same path on your deployed origin.
 | Sprint 10 | Schedule derived from frequency, character counters, scroll to first error | Completed |
 | Sprint 11 | Timezones, a time of day for scheduled workers, settings | Completed |
 | Sprint 12 | A weekday for weekly workers, a day for monthly ones, month-end clamping | Completed |
-| Sprint 13 | Documentation sync | In Progress |
+| Sprint 13 | Documentation sync, and what a failed run does to its schedule | Completed |
+| Sprint 14 | PostgreSQL, with a Compose database for local development | Completed |
+| Sprint 15 | Documentation sync | Completed |
+| Sprint 16 | A schedule module with no database in it | Completed |
+| Sprint 17 | Vitest, and unit tests for schedule calculation | Completed |
+| Sprint 18 | Atomic slot claiming, so a worker cannot run twice | Completed |
+| Sprint 19 | Catch-up after an outage — one run to get current, not the backlog | Completed |
+| Sprint 20 | An edit that leaves the schedule alone can no longer undo a claim | Completed |
+| Sprint 21 | Worker-level failure isolation in the dispatcher | Completed |
+| Sprint 22 | Documentation sync | Completed |
+| Sprint 23 | Continuous integration on GitHub Actions | Completed |
 
 ## Backlog
 
@@ -867,6 +887,23 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
 - A worker with no chosen time of day drifts when it catches up: with no
   `runAtMinutes` to anchor to, it resumes at whatever time the recovery
   happened. Workers that have one keep it
+
+**Execution**
+
+- **A provider that hangs stops the tick.** Nothing in the call path sets a
+  timeout, and a request that never returns is not an exception, so neither the
+  per-worker catch nor `runRoutine` can end it. A failing provider is handled;
+  a silent one is not
+- A run can be left `running` for good. `runRoutine` records the outcome in a
+  second write, and if that write is the thing that fails there is nothing left
+  to record it with. The row is neither a success nor a failure, and the health
+  summary counts it as neither
+
+**Testing**
+
+- Only `lib/schedule.ts` has tests. Everything that touches the database —
+  claiming, catch-up, failure isolation — is verified by hand, so CI passing
+  says the arithmetic is right and nothing about the behaviour built on it
 
 **Concurrency**
 
@@ -888,7 +925,7 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
   | Environment variables | Where each of the six is set, and who holds the values |
   | `CRON_SECRET` | How the secret reaches both the app and whatever calls the cron endpoint |
   | Database hosting | Which managed PostgreSQL, and how its URL reaches the app. `compose.yaml` is a development convenience, not a deployment target |
-  | Cron execution | Which scheduler calls `POST /api/cron/run`, how often, and what happens when a tick is missed |
+  | Cron execution | Which scheduler calls `POST /api/cron/run`, and how often. What happens to a missed tick is settled — the schedule catches up once rather than replaying the gap |
 
 - `削除用/` — things moved aside rather than deleted, kept until Closed Beta
   starts: the database from before the tenant identity fix, the values the
