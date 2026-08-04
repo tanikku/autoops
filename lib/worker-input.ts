@@ -9,7 +9,7 @@ import {
  * Upper bounds for the free-text fields.
  *
  * Each is set by what the field has to survive downstream rather than by what
- * the column can hold — SQLite would take far more:
+ * the column can hold — the database would take far more:
  *
  * - `name` appears in cards, toasts and page titles, so it has to stay
  *   readable when truncated.

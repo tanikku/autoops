@@ -12,8 +12,8 @@ export type RoutineRecord = Awaited<
   ReturnType<typeof prisma.routine.findFirstOrThrow>
 >;
 
-// `status` and `frequency` are plain string columns in SQLite, so narrow them
-// at the boundary.
+// `status` and `frequency` are plain string columns, so narrow them at the
+// boundary — the database will accept anything the application does not.
 export function toRoutine(record: RoutineRecord): Routine {
   return {
     ...record,

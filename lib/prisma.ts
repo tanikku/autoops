@@ -1,4 +1,4 @@
-import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
+import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/lib/generated/prisma/client";
 import { databaseUrl } from "@/lib/db-url";
 
@@ -7,7 +7,9 @@ const globalForPrisma = globalThis as unknown as {
 };
 
 function createPrismaClient() {
-  const adapter = new PrismaBetterSqlite3({ url: databaseUrl });
+  // Prisma 7 requires a driver adapter; `pg` is pure JavaScript, so unlike its
+  // SQLite predecessor it needs no native build and no bundler exclusion.
+  const adapter = new PrismaPg({ connectionString: databaseUrl });
   return new PrismaClient({ adapter });
 }
 

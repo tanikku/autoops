@@ -15,7 +15,7 @@ const provider = createAIProvider();
 
 type RunRecord = Awaited<ReturnType<typeof prisma.runHistory.findFirstOrThrow>>;
 
-// `status` is a plain string column in SQLite, so narrow it at the boundary.
+// `status` is a plain string column, so narrow it at the boundary.
 function toRun(record: RunRecord): RunHistory {
   return {
     ...record,

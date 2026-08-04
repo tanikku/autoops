@@ -1,0 +1,34 @@
+# Local PostgreSQL for development.
+#
+# Exists so `pnpm dev` works offline and the database can be thrown away and
+# rebuilt without ceremony — the same reasons the project runs SQLite's
+# successor locally rather than pointing at a hosted instance.
+#
+#   docker compose up -d      start
+#   docker compose down       stop, keeping the data
+#   docker compose down -v    stop and delete the data
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: autoops-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: autoops
+      POSTGRES_PASSWORD: autoops
+      POSTGRES_DB: autoops
+    ports:
+      # 5432 is often already taken by a local install, so the host side is
+      # shifted. `DATABASE_URL` has to agree with this, not with the default.
+      - "5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # Compose reports the container healthy only once the server answers, so
+      # `up --wait` can be trusted before running migrations against it.
+      test: ["CMD-SHELL", "pg_isready -U autoops -d autoops"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:
