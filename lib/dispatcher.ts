@@ -7,6 +7,12 @@ import { getDueWorkers } from "@/lib/scheduler";
 import { getUserTimezone } from "@/lib/users";
 import type { Routine } from "@/types";
 
+/** What one tick did: the workers handed off, and how many could not be. */
+export type DispatchResult = {
+  dispatched: string[];
+  failed: number;
+};
+
 /**
  * Claims each worker the scheduler selected, then hands the ones it won to the
  * queue.
@@ -30,23 +36,43 @@ import type { Routine } from "@/types";
  * nothing should. Deciding whether a failure deserves another attempt is a
  * retry policy, and the dispatcher holds no policies.
  *
- * Returns the ids that were enqueued, which is the workers claimed rather than
- * the workers found.
+ * **One worker failing is one worker failing.** Anything thrown while claiming
+ * or handing off used to escape the loop and end the tick, so a single broken
+ * worker took every worker behind it with it — and they sort by `nextRunAt`,
+ * meaning the same ones lost every time. Catching per worker keeps the blast
+ * radius to the worker it belongs to.
+ *
+ * That is not a retry policy, and the distinction matters. Nothing here decides
+ * a failure deserves another attempt: a claimed slot stays claimed and the
+ * worker waits for its next one, exactly as it would if the process had died
+ * mid-run. The only decision is to carry on with the rest of the list.
+ *
+ * Returns the ids that were enqueued — the workers claimed rather than the
+ * workers found — alongside a count of the ones that threw, so a caller can
+ * tell "nothing was due" from "nothing worked".
  */
-export async function dispatchDueWorkers(now: Date): Promise<string[]> {
+export async function dispatchDueWorkers(now: Date): Promise<DispatchResult> {
   const dueWorkers = await getDueWorkers(now);
   const dispatched: string[] = [];
+  let failed = 0;
 
   for (const worker of dueWorkers) {
-    if (!(await claimSlot(worker, now))) {
-      continue;
-    }
+    try {
+      if (!(await claimSlot(worker, now))) {
+        continue;
+      }
 
-    await enqueueRoutine(worker.id);
-    dispatched.push(worker.id);
+      await enqueueRoutine(worker.id);
+      dispatched.push(worker.id);
+    } catch (error) {
+      // The id is the point of this line: without it the log says a worker
+      // failed and leaves you to guess which of them it was.
+      console.error("[dispatcher] worker failed", worker.id, error);
+      failed += 1;
+    }
   }
 
-  return dispatched;
+  return { dispatched, failed };
 }
 
 /**

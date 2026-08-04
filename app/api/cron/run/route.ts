@@ -41,8 +41,17 @@ export async function POST(request: Request) {
   }
 
   try {
-    const dispatched = await dispatchDueWorkers(new Date());
-    return NextResponse.json({ success: true, dispatched: dispatched.length });
+    const { dispatched, failed } = await dispatchDueWorkers(new Date());
+
+    // `failed` is additive: `dispatched` keeps its meaning and its type, so a
+    // cron service reading it carries on unchanged. Without the new field a
+    // tick where every worker threw is indistinguishable from a quiet one —
+    // both report zero and both return 200.
+    return NextResponse.json({
+      success: true,
+      dispatched: dispatched.length,
+      failed,
+    });
   } catch (error) {
     // The cause stays in the server log; the caller only learns that it failed.
     console.error("[cron] dispatch failed", error);
