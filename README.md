@@ -599,7 +599,7 @@ the next one, so a changed setting would appear to do nothing.
 | Styling | **Tailwind CSS v4** | Theme tokens in `app/globals.css` |
 | Components | **shadcn/ui** (Base UI) | Note: Base UI, not Radix — buttons take `render`, not `asChild` |
 | Icons | **lucide-react** | |
-| AI | **Anthropic SDK** | Behind a provider interface; falls back to a stand-in without an API key |
+| AI | **Anthropic SDK** | Behind a provider interface; falls back to a stand-in without an API key. Timeout and retries are set explicitly — see [Setup](#setup) |
 | Testing | **Vitest** | Covers `lib/schedule.ts` only — see [Backlog](#backlog) for what that leaves out |
 | CI | **GitHub Actions** | `.github/workflows/ci.yml` runs lint, types, tests and build. No secrets, no database |
 
@@ -748,6 +748,26 @@ When `ANTHROPIC_API_KEY` is set, workers run against the Claude API. Without it,
 AutoOps falls back to a stand-in provider that returns a fixed response — no key
 is required to run the app locally.
 
+**How long a request may take, and how often it is retried, are AutoOps'
+decisions rather than the SDK's.** `lib/ai/claude-provider.ts` passes both: ten
+minutes per request, and **no retries**. Neither value changes what the SDK
+would have done on its own by much — it defaults to the same ten minutes for
+this token count — but leaving them implicit meant the default also brought two
+automatic retries with it, which nobody chose and which bills a timed-out
+generation three times over. **`maxRetries: 0` is what switches the SDK's own
+retrying off**, and it puts this layer where the
+[dispatcher](#scheduling-engine) already stood: deciding that a failure deserves
+another attempt is a policy, and nothing in the pipeline holds one. A request
+that times out throws, is recorded as a `failed` run like any other failure, and
+the worker comes round again at its next slot.
+
+**The trade-off is real.** A rate limit or a passing `5xx` now fails the run
+outright, where the SDK would have retried and often succeeded on the second
+attempt. That is the price of the pipeline saying what it does: the failure
+lands in the run history and the [health summary](#worker-health), which is
+where an argument for a retry policy should come from — not from a default
+nobody read.
+
 ### Prompt Variables
 
 A prompt may contain `{{name}}` placeholders, substituted at the moment of each
@@ -890,14 +910,16 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
 
 **Execution**
 
-- **A provider that hangs stops the tick.** Nothing in the call path sets a
-  timeout, and a request that never returns is not an exception, so neither the
-  per-worker catch nor `runRoutine` can end it. A failing provider is handled;
-  a silent one is not
+- **A slow worker still holds up the ones behind it.** The dispatcher works
+  through due workers one at a time, so ten minutes spent waiting on a provider
+  is ten minutes nothing else runs. Per-worker timeouts bound one worker, not a
+  tick — that needs the runs to stop being sequential, which is the real queue
+  backend's job
 - A run can be left `running` for good. `runRoutine` records the outcome in a
   second write, and if that write is the thing that fails there is nothing left
   to record it with. The row is neither a success nor a failure, and the health
-  summary counts it as neither
+  summary counts it as neither. **Unrelated to timeouts** — a request that times
+  out throws, and a throw is recorded like any other failure
 
 **Testing**
 
