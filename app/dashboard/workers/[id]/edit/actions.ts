@@ -78,15 +78,25 @@ export async function updateRoutineAction(
     runAtWeekday !== existing.runAtWeekday ||
     runAtDay !== existing.runAtDay;
 
-  const nextRunAt = scheduleChanged
-    ? calculateNextRunAt({
-        frequency,
-        runAtMinutes,
-        runAtWeekday,
-        runAtDay,
-        timezone,
-      })
-    : existing.nextRunAt;
+  // **Only a changed schedule writes the column.** Writing back the value read
+  // at the top of this action would look harmless — it is the same value — but
+  // the dispatcher may have claimed that slot in between, and restoring the old
+  // one hands the worker a slot it has already been given. It would then run a
+  // second time for a slot that no longer exists, which is exactly what
+  // `claimRoutineSlot` was added to prevent. Leaving the field out of the
+  // update is what makes "editing a name never shifts the schedule" structural
+  // rather than merely intended.
+  const scheduleUpdate = scheduleChanged
+    ? {
+        nextRunAt: calculateNextRunAt({
+          frequency,
+          runAtMinutes,
+          runAtWeekday,
+          runAtDay,
+          timezone,
+        }),
+      }
+    : {};
 
   try {
     await updateRoutine(
@@ -100,7 +110,7 @@ export async function updateRoutineAction(
         runAtMinutes,
         runAtWeekday,
         runAtDay,
-        nextRunAt,
+        ...scheduleUpdate,
       },
       userId,
     );
