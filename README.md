@@ -753,9 +753,30 @@ cp .env.example .env
 | `AUTH_GOOGLE_ID` | Yes | Google OAuth client id |
 | `AUTH_GOOGLE_SECRET` | Yes | Google OAuth client secret |
 | `CRON_SECRET` | Yes | Bearer token for `POST /api/cron/run`. Unset means every request is rejected |
+| `AUTH_URL` | **In production** | The deployed origin, e.g. `https://autoops.example.com`. Leave it unset locally — see below |
 | `ANTHROPIC_API_KEY` | No | Real AI execution. Without it, a stand-in provider answers |
 
 `.env` is gitignored; `.env.example` is committed and holds no real values.
+
+### `AUTH_URL` is only needed once you deploy
+
+**Sign-in works locally without it and stops working in production without it**,
+which is an easy thing to be caught by. Auth.js decides whether to trust the
+`Host` header it is given, and with nothing configured it works the answer out:
+
+```ts
+trustHost ??= !!(AUTH_URL ?? AUTH_TRUST_HOST ?? VERCEL ?? CF_PAGES ??
+                 NODE_ENV !== "production")
+```
+
+Locally `NODE_ENV` is `development`, so the last term is `true` and the host is
+trusted. `next start` sets `NODE_ENV` to `production`, and on a host that is
+not Vercel or Cloudflare Pages none of the earlier terms are set either — so
+the host is **not** trusted and Google sign-in fails.
+
+Setting `AUTH_URL` to the deployed origin settles it, and also tells Auth.js
+the canonical URL to build OAuth callbacks from when it sits behind a proxy.
+`AUTH_TRUST_HOST=true` satisfies the same check but says less.
 
 When `ANTHROPIC_API_KEY` is set, workers run against the Claude API. Without it,
 AutoOps falls back to a stand-in provider that returns a fixed response. **That
@@ -764,10 +785,17 @@ scheduling, claiming, dispatch, run history — can be exercised locally, and
 against a live model only when you want to be.
 
 **It is also the one misconfiguration that does not announce itself.** A
-missing key in production is not an error. The stand-in answers, runs are
-recorded as successes, and the health summary stays green over work that never
-happened. Nothing downstream can tell: by the time a run is written, which
-provider produced it is no longer knowable.
+missing key in production is not an error:
+
+| | Without `ANTHROPIC_API_KEY` |
+| --- | --- |
+| Which provider runs | The stand-in, returning a fixed string |
+| What the run history records | **`completed`** — a success, like any other |
+| What the health summary shows | Green. No failures to count |
+| What tells you | **Only the startup log line below** |
+
+Nothing downstream can tell: by the time a run is written, which provider
+produced it is no longer knowable.
 
 The only signal is a line logged once per process when the fallback is chosen:
 
@@ -990,7 +1018,8 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
   | Decision | Open question |
   | --- | --- |
   | Hosting platform | Where the app runs, and whether its runtime supports the Node APIs the driver adapter needs |
-  | Environment variables | Where each of the six is set, and who holds the values |
+  | Environment variables | Where each is set, and who holds the values. `AUTH_URL` is the one that only matters once deployed |
+  | Applying migrations | Nothing runs `prisma migrate deploy` today. The likely answer is the platform's start command — `prisma migrate deploy && next start` — rather than a script, because *when* migrations run is a property of the deployment, not of the app. `package.json` stays as it is |
   | `CRON_SECRET` | How the secret reaches both the app and whatever calls the cron endpoint |
   | Database hosting | Which managed PostgreSQL, and how its URL reaches the app. `compose.yaml` is a development convenience, not a deployment target |
   | Cron execution | Which scheduler calls `POST /api/cron/run`, and how often. What happens to a missed tick is settled — the schedule catches up once rather than replaying the gap |
