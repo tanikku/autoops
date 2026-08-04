@@ -409,18 +409,24 @@ a permanently failing worker would otherwise re-run on every tick forever.
 Workers with `manual` frequency keep `nextRunAt` as `null` and are never due.
 So are `paused` and `draft` ones, which keep their slot but are not selected.
 
-`lib/schedule.ts` has two entry points, and they differ in one respect worth
-knowing before changing either:
+`lib/schedule.ts` calculates and nothing else. Every function in it is pure —
+the module reads no rows, so what comes back depends only on what was handed
+in. It has one entry point, `calculateNextRunAt(schedule, from)`, and two
+callers:
 
-| Function | Reads the database |
+| Caller | Where the timezone comes from |
 | --- | --- |
-| `calculateNextRunAt(schedule, from)` | **No.** Pure arithmetic over the values it is given |
-| `advanceNextRunAt(worker, currentNextRunAt)` | **Yes** — it looks up the owner's timezone before calling the above |
+| The hire and edit actions | The signed-in user, read once per submission |
+| The dispatcher | The owner of the worker being advanced |
 
-The second is what makes the module not the pure one it was designed as. It is
-recorded as [design debt](#design-debt) rather than left implicit: the
-arithmetic underneath stayed pure and separately testable, and separating the
-lookup properly reaches the dispatcher and the repository boundary together.
+`from` is the slot being advanced, never the clock. Passing the moment a cron
+tick happened to fire would drag the schedule along with it.
+
+**Resolving the timezone belongs to the caller, not to the module.** For the
+dispatcher that is no extra responsibility: it already loads the due workers
+and writes the new slot back, so reading one more column changes nothing about
+what it decides. Keeping the lookup out of `lib/schedule.ts` is what leaves the
+arithmetic testable on its own.
 
 ### Settings
 
@@ -754,21 +760,6 @@ For production, add the same path on your deployed origin.
 ## Backlog
 
 Known and deliberately deferred — none of these are bugs waiting on a fix.
-
-### Design debt
-
-- **`lib/schedule.ts` reads from the database.** `advanceNextRunAt` looks up
-  the owner's timezone, so the schedule layer has taken on a repository's job.
-  The arithmetic underneath stayed pure and separately testable, which is why
-  this was accepted rather than fixed: separating it properly reaches into the
-  dispatcher and the repository boundary at once, which was more than the
-  sprint that introduced it was scoped for.
-
-  What a split looks like: the timezone is resolved before the schedule module
-  is called, and `advanceNextRunAt` goes back to taking values rather than a
-  worker. Where that resolution lives — the dispatcher, or a repository that
-  returns workers with their owner's zone attached — is the open question, and
-  the dispatcher must not end up deciding anything as a result.
 
 ### Later
 
