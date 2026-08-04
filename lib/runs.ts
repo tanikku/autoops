@@ -10,7 +10,6 @@ import {
   type RunHistoryEntry,
 } from "@/types";
 
-const SIMULATED_RUN_MS = 1000;
 const provider = createAIProvider();
 
 type RunRecord = Awaited<ReturnType<typeof prisma.runHistory.findFirstOrThrow>>;
@@ -79,7 +78,13 @@ export async function getRun(
 }
 
 /**
- * Executes a routine. Execution is simulated until real AI runs land.
+ * Executes a routine.
+ *
+ * **How long this takes is the provider's business, not this function's.**
+ * `ClaudeProvider` takes as long as the model does — seconds, occasionally
+ * minutes, and at most the ten it is given. The stand-in returns immediately,
+ * and a run that finishes in no measurable time is the honest signal that no
+ * model was called.
  *
  * The run inherits the routine's owner, so both the manual and the dispatched
  * path record it without the caller having to pass a user through.
@@ -99,8 +104,6 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
   const run = await prisma.runHistory.create({
     data: { routineId, userId: routine.userId, status: "running" },
   });
-
-  await new Promise((resolve) => setTimeout(resolve, SIMULATED_RUN_MS));
 
   try {
     const prompt = renderPrompt(routine.prompt, promptVariables());
