@@ -47,6 +47,19 @@
   編集が必要なら PowerShell の `System.IO.File`(BOM 保持に注意)か、ユーザーに依頼する。
 - `.env.example` は先頭に **UTF-8 BOM** があり、末尾に改行がない。grep が1行目を取りこぼす。
 - ファイル削除は許可制。削除せず `削除用/` へ移動する(自分がその場で作った中間ファイルは除く)。
+- **`gh` CLI が入っていない環境がある。** その場合でも public リポジトリなら
+  GitHub REST API の Actions Runs API を読めば、認証なしで結果が分かる:
+
+  ```
+  https://api.github.com/repos/<owner>/<repo>/actions/runs?per_page=5
+  ```
+
+  見るのは **`head_sha` と `conclusion` の2つ**。`conclusion` が `success` でも、
+  それが今の HEAD の SHA でなければ、今のコードは検証されていない。
+
+  **これは環境の話であって AutoOps の制約ではない。** `gh` が使える環境では
+  `gh run list` でよく、どちらで確認したかはリポジトリに影響しない。
+  「`gh` がないから CI は確認できない」で止めないこと。
 
 ## 決定済み — 蒸し返さない
 
