@@ -59,6 +59,8 @@
 | `lib/repositories/` を**新設しない** | `routines.ts` / `runs.ts` / `users.ts` / `scheduler.ts` が既に Repository。二重化になる |
 | dispatcher は retry 方針を**持たない** | Sprint 25 で SDK 側の暗黙リトライも `maxRetries: 0` で無効化済み |
 | Cloudflare Workers は**採用しない** | `pg` が Node の `net` を要求するため現構成では動かない |
+| Node は **22.x**。CI も本番に合わせる(逆は**しない**) | 揃える先は動いている方。CI を最新に上げると、誰も動かさないランタイムについて緑になる。`package.json` の `engines.node` が唯一の宣言で、Railpack も CI もそこから読む |
+| pnpm のバージョンは **`packageManager` だけ**が持つ。`ci.yml` に `version:` を**書かない** | `pnpm/action-setup` は両方に書かれていると「どちらの意味か」を推測せずエラーにする。実際 Sprint 28 でこれが起き、CI は Day 4 まで赤のままだった |
 | 「stuck」は `RunHistory.status` の値では**ない** | `status` は `running`/`completed`/`failed` のまま変えない。`running` が長時間続いている状態は表示側(`lib/health.ts`)が `startedAt` と現在時刻から都度導出する派生状態。本当に実行中のケースと区別がつかないため、断定的な表現(「stuck」「failed」)ではなく "Running for longer than expected" と表示する |
 | stuck検知は Prisma schema 変更**なし**で実現する | `WorkerHealth.stuck` は読み取り時の計算のみ。DBに新しいカラム・ステータス値・バッチ処理を追加しない。Sprint 31 Day 2の監視設計調査で「UIだけで対応可能」と判断した方針をそのまま採用 |
 | Scheduled overdue detection uses existing `nextRunAt` data. It is a derived UI state and does not represent Cron service failure. No schema change is required | `nextRunAt`はclaim成功時にのみ前進する(手動実行では動かない)ため、activeワーカーの`nextRunAt`が過去のままという事実だけは既存データから安全に読み取れる。ただし「なぜ」claimされていないか(Cron停止・claim失敗・直前に成功等)は区別できないため、UI文言は原因を断定しない("overdue"のみ) |
@@ -68,12 +70,16 @@
 **ここに commit hash は書きません** — このファイル自体が git 管理下にあるため、書いた瞬間に1つ古くなります。
 進捗の実際は git が持っています(冒頭の手順2)。
 
-**現在地点: Sprint 32 Day 3(Documentation Review)完了。**
+**現在地点: Sprint 33 Day 5(次スプリントの優先順位づけ)完了。**
 
 完了済み:
 
 - Sprint 31 — stuck derived state(`lib/health.ts`)、`nextRunAt` overdue detection(`lib/overview.ts`)
 - Sprint 32 — Execution Reliability Review、Error Boundary Review、Documentation Review(いずれも調査のみ、コード変更なし)
+- Sprint 33 — Production Readiness / Security / Dependency & CI のレビュー。
+  そこで見つかった Node・pnpm のバージョン不一致を直した(上の「決定済み」2行)。
+  **CI は Sprint 28 以降ずっと赤で、誰も結果を見ていなかった。** Day 4 で復旧。
+  push したら Actions の結果まで見ること — 緑を確認して初めて検証されたと言える。
 
 ### Sprint 28 — Railway への初回デプロイ、完了
 
