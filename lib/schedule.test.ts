@@ -70,10 +70,28 @@ describe("calculateNextRunAt", () => {
     });
 
     it("keeps the existing time of day when none was chosen", () => {
-      // Without a chosen time the interval is added to the instant itself, so
-      // the result carries whatever time the slot already had.
+      // Without a chosen time the slot keeps the one it already had, read on
+      // the owner's clock. In UTC the two readings agree.
       expect(
         nextRun({ frequency: "daily" }, "2026-08-04T03:21:00.000Z"),
+      ).toBe("2026-08-05T03:21:00.000Z");
+    });
+
+    it("keeps it in a zone ahead of UTC too", () => {
+      // 12:21 in Tokyo. A fixed-offset zone moves the reading and the result
+      // together, so this lands on the same instant as the UTC case above —
+      // which is why stepping the instant directly went unnoticed for so long.
+      expect(
+        nextRun({ frequency: "daily", timezone: TOKYO }, "2026-08-04T03:21:00.000Z"),
+      ).toBe("2026-08-05T03:21:00.000Z");
+    });
+
+    it("drops the seconds a slot arrived with", () => {
+      // A slot is built from a date and minutes into the day, so anything
+      // finer is not carried. Worth pinning: rows created before this were
+      // seeded from `new Date()` and kept the second they were created on.
+      expect(
+        nextRun({ frequency: "daily" }, "2026-08-04T03:21:37.500Z"),
       ).toBe("2026-08-05T03:21:00.000Z");
     });
   });
@@ -104,6 +122,13 @@ describe("calculateNextRunAt", () => {
       expect(
         nextRun({ frequency: "weekly", runAtMinutes: NINE_AM }, TUESDAY),
       ).toBe("2026-08-11T09:00:00.000Z");
+    });
+
+    it("keeps the weekday and the time when neither was chosen", () => {
+      // Tuesday 03:21 to the Tuesday after, at 03:21.
+      expect(
+        nextRun({ frequency: "weekly" }, "2026-08-04T03:21:00.000Z"),
+      ).toBe("2026-08-11T03:21:00.000Z");
     });
   });
 
@@ -153,6 +178,76 @@ describe("calculateNextRunAt", () => {
           "2028-01-15T00:00:00.000Z",
         ),
       ).toBe("2028-02-29T09:00:00.000Z");
+    });
+
+    /**
+     * The same four cases without a chosen time, which used to be a separate
+     * route through the module and got none of this. It stepped the UTC
+     * instant with `setMonth`, so the 31st of January rolled through February
+     * into the 3rd of March — and the 3rd then became the basis for the next
+     * step, so the worker ran on the 3rd for good. It also never saw
+     * `runAtDay`, so choosing a day of the month did nothing without a time.
+     *
+     * Both routes are one route now, and these pin that: every expectation
+     * below matches its counterpart above.
+     */
+    describe("with no chosen time", () => {
+      it("borrows the last day of a month too short for the chosen one", () => {
+        expect(
+          nextRun(
+            { frequency: "monthly", runAtDay: 31 },
+            "2026-01-31T09:00:00.000Z",
+          ),
+        ).toBe("2026-02-28T09:00:00.000Z");
+      });
+
+      it("returns to the chosen day the month after borrowing", () => {
+        expect(
+          nextRun(
+            { frequency: "monthly", runAtDay: 31 },
+            "2026-02-28T09:00:00.000Z",
+          ),
+        ).toBe("2026-03-31T09:00:00.000Z");
+      });
+
+      it("rolls the year over from December", () => {
+        expect(
+          nextRun(
+            { frequency: "monthly", runAtDay: 10 },
+            "2026-12-10T09:00:00.000Z",
+          ),
+        ).toBe("2027-01-10T09:00:00.000Z");
+      });
+
+      it("uses the 29th in a leap February", () => {
+        expect(
+          nextRun(
+            { frequency: "monthly", runAtDay: 31 },
+            "2028-01-31T09:00:00.000Z",
+          ),
+        ).toBe("2028-02-29T09:00:00.000Z");
+      });
+
+      it("clamps to the end of a short month with no day chosen either", () => {
+        // Nothing here but the slot: the 31st of January is both the day to
+        // keep and the day February cannot hold. The old route answered the
+        // 3rd of March.
+        expect(
+          nextRun({ frequency: "monthly" }, "2026-01-31T09:00:00.000Z"),
+        ).toBe("2026-02-28T09:00:00.000Z");
+      });
+
+      it("cannot return to the 31st once it has borrowed, without a runAtDay", () => {
+        // **Clamping is lossy when nothing recorded the intent.** With a
+        // `runAtDay` the 31st comes back; without one the borrowed 28th is
+        // all there is left to read, and the worker keeps the 28th.
+        //
+        // This is the reason a drifted worker cannot be repaired by
+        // recalculating it — the day it meant is not in the database.
+        expect(
+          nextRun({ frequency: "monthly" }, "2026-02-28T09:00:00.000Z"),
+        ).toBe("2026-03-28T09:00:00.000Z");
+      });
     });
   });
 
@@ -273,6 +368,34 @@ describe("calculateNextRunAt", () => {
         ),
       ).toBe("2026-11-01T07:30:00.000Z"); // 02:30 EST
     });
+
+    /**
+     * **This one is a deliberate change of behaviour, not a pinned quirk.**
+     *
+     * A worker with no chosen time used to keep the time of the stored UTC
+     * instant. Across a daylight-saving change that holds the instant still
+     * while the owner's clock moves, so a worker they last saw run at 09:00
+     * starts running at 10:00 — the exact failure the chosen-time path was
+     * built to avoid, left in place for workers that never chose one.
+     *
+     * `runAtMinutes = null` has always been documented as keeping the time the
+     * slot already had, and a time of day is something a person reads off
+     * their own clock. So the null case now keeps the *local* time, and the
+     * stored instant moves by the offset instead.
+     *
+     * Nothing changes in a zone with a fixed offset, which is why this needs a
+     * zone that observes the change to be visible at all.
+     */
+    it("keeps the local time of an unscheduled worker across the change", () => {
+      // 09:00 EST on the day before clocks go forward. The day after, 09:00
+      // is EDT — one hour earlier in UTC.
+      expect(
+        nextRun(
+          { frequency: "daily", timezone: NEW_YORK },
+          "2026-03-07T14:00:00.000Z",
+        ),
+      ).toBe("2026-03-08T13:00:00.000Z");
+    });
   });
 });
 
@@ -348,6 +471,21 @@ describe("advanceSchedule", () => {
           { frequency: "monthly", runAtMinutes: NINE_AM, runAtDay: 31 },
           "2026-01-31T09:00:00.000Z",
           "2026-05-15T12:00:00.000Z",
+        ),
+      ).toBe("2026-06-30T09:00:00.000Z");
+    });
+
+    it("keeps clamping when the worker catching up chose no time", () => {
+      // The catch-up branch recalculates from `now`, so it used to reach the
+      // old instant-stepping route and produce a rolled date on the way back
+      // from an outage — the recovery itself was what broke the schedule.
+      // Resuming in May, the 31st is intact; June is short and borrows the
+      // 30th, exactly as the timed worker above does.
+      expect(
+        advanced(
+          { frequency: "monthly", runAtDay: 31 },
+          "2026-01-31T09:00:00.000Z",
+          "2026-05-15T09:00:00.000Z",
         ),
       ).toBe("2026-06-30T09:00:00.000Z");
     });

@@ -2,8 +2,15 @@
  * Rendering timestamps in a user's zone.
  *
  * Every stored `DateTime` is UTC, which is what makes them comparable and what
- * the scheduler relies on. Only the reading changes here: nothing in this file
- * is used to decide when a worker runs.
+ * the scheduler relies on. A zone changes how an instant reads, never what is
+ * stored.
+ *
+ * **Three of these are also read when deciding *when* a worker runs.**
+ * `lib/schedule.ts` steps through the calendar in the owner's zone rather than
+ * through UTC, so it asks here for the date (`datePartsIn`), the time of day
+ * (`minutesIntoDayIn`), and the instant a local time lands on
+ * (`zonedTimeToUtc`). Changing what any of the three answers changes what gets
+ * dispatched, not only what a page displays.
  *
  * Built on `Intl.DateTimeFormat`, so IANA zone rules — including daylight
  * saving — come from the platform rather than from arithmetic of our own.
@@ -118,6 +125,22 @@ export function zonedTimeToUtc(
   return new Date(
     naive - offsetMinutes(firstGuess, timezone) * 60_000,
   );
+}
+
+/**
+ * The time of day in a zone, as minutes into the day.
+ *
+ * The inverse of what `runAtMinutes` stores, and read for the same purpose: a
+ * worker with no chosen time keeps the time its pending slot already had, and
+ * that time means the one on the owner's clock. Reading the UTC instant instead
+ * would hold the stored value still while their wall clock moved.
+ *
+ * Seconds are dropped, so a slot advanced from one carrying them comes back on
+ * the minute.
+ */
+export function minutesIntoDayIn(value: Date, timezone: string): number {
+  const { hour, minute } = partsIn(value, timezone);
+  return Number(hour) * 60 + Number(minute);
 }
 
 /** The calendar date in a zone, as the parts a date is built from. */

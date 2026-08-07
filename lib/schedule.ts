@@ -1,4 +1,4 @@
-import { datePartsIn, zonedTimeToUtc } from "@/lib/datetime";
+import { datePartsIn, minutesIntoDayIn, zonedTimeToUtc } from "@/lib/datetime";
 import type { RoutineFrequency } from "@/types";
 
 /**
@@ -81,15 +81,20 @@ export function advanceSchedule(
  * `from` is the slot being advanced, not the current time: passing the moment a
  * cron tick happened to fire would drag the schedule along with it.
  *
- * With a `runAtMinutes` the interval is counted in calendar days *in the
- * owner's zone*, then that day's chosen time is converted back to UTC. Adding
- * 24 hours would be wrong across a daylight-saving change: the stored instant
- * would stay put while the wall clock moved, and "every day at 09:00" would
- * quietly become 10:00 for half the year.
+ * The interval is counted in calendar days *in the owner's zone*, then the
+ * day's time is converted back to UTC. Adding 24 hours would be wrong across a
+ * daylight-saving change: the stored instant would stay put while the wall
+ * clock moved, and "every day at 09:00" would quietly become 10:00 for half the
+ * year.
  *
- * Without one, the interval is added to the instant directly and whatever time
- * of day the worker already had is preserved — the behaviour every worker had
- * before times could be chosen, and what rows created then still get.
+ * **Every frequency takes this route, with or without a chosen time.** There
+ * used to be a second one for workers with no `runAtMinutes`, stepping the UTC
+ * instant directly. It carried its own month arithmetic, and that copy never
+ * received the month-end clamping the calendar path has: a monthly worker due
+ * on the 31st of January moved to the 3rd of March and stayed on the 3rd for
+ * good. It also read `runAtDay` from nowhere, so choosing a day of the month
+ * did nothing unless a time was chosen too, and it stepped through the server's
+ * zone rather than the owner's. One route cannot disagree with itself.
  */
 export function calculateNextRunAt(
   schedule: ScheduleInput,
@@ -101,9 +106,11 @@ export function calculateNextRunAt(
     return null;
   }
 
-  if (runAtMinutes === null) {
-    return addInterval(frequency, from);
-  }
+  // No chosen time means the slot keeps the one it already had — read on the
+  // owner's clock, which is where a time of day was ever chosen. Reading the
+  // UTC instant instead would hold the stored value still while their wall
+  // clock moved, which is the same mistake as adding 24 hours.
+  const minutesIntoDay = runAtMinutes ?? minutesIntoDayIn(from, timezone);
 
   // Step through the calendar in the owner's zone: the same date arithmetic,
   // but applied to the local day rather than to a UTC instant.
@@ -131,7 +138,7 @@ export function calculateNextRunAt(
     local.getUTCFullYear(),
     local.getUTCMonth() + 1,
     local.getUTCDate(),
-    clampToDay(runAtMinutes),
+    clampToDay(minutesIntoDay),
     timezone,
   );
 }
@@ -174,10 +181,11 @@ function daysInMonth(year: number, month: number): number {
  * date is only a consequence of it, so February borrows the 28th without March
  * inheriting it — the 31st comes back the following month.
  *
- * With no `runAtDay`, the day of the slot being advanced plays that role. It
- * is clamped the same way, which is a change from what this did before: it
- * used to roll, and a monthly worker created on the 31st would drift to the
- * 3rd and stay there.
+ * With no `runAtDay`, the day of the slot being advanced plays that role, and
+ * is clamped the same way. **The intent is not recovered afterwards, because
+ * nothing recorded it.** A slot that borrowed the 28th of February becomes the
+ * 28th of March, since the 28th is now all there is to read. Only `runAtDay`
+ * says a worker meant the 31st, and only a worker with one returns to it.
  */
 function advanceMonth(local: Date, runAtDay: number | null): void {
   const targetDay =
@@ -193,26 +201,6 @@ function advanceMonth(local: Date, runAtDay: number | null): void {
     nextMonth,
     Math.min(targetDay, daysInMonth(year, nextMonth)),
   );
-}
-
-/** Adds one interval to an instant, leaving its time of day alone. */
-function addInterval(
-  frequency: Exclude<RoutineFrequency, "manual">,
-  from: Date,
-): Date {
-  const next = new Date(from);
-
-  switch (frequency) {
-    case "daily":
-      next.setDate(next.getDate() + 1);
-      return next;
-    case "weekly":
-      next.setDate(next.getDate() + 7);
-      return next;
-    case "monthly":
-      next.setMonth(next.getMonth() + 1);
-      return next;
-  }
 }
 
 /**
