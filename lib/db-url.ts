@@ -1,11 +1,15 @@
 /**
  * Where the database is.
  *
- * `DATABASE_URL` is the answer everywhere it is set — hosting platforms inject
- * it, and `schema.prisma` reads it directly through `env()`. This module only
- * covers the case where it is not: a local checkout with `compose.yaml`
- * running, where requiring the variable would mean every developer setting the
- * same value by hand.
+ * **Both readers come through here.** `schema.prisma` carries no `url` at all —
+ * Prisma 7 rejects the schema outright if it finds one (`P1012`) — so the CLI
+ * takes it from `prisma.config.ts` and the application from `lib/prisma.ts`,
+ * and each of those imports this module.
+ *
+ * `DATABASE_URL` is the answer wherever it is set, which is everywhere the app
+ * is hosted. The fallback below only covers a local checkout with
+ * `compose.yaml` running, where requiring the variable would mean every
+ * developer setting the same value by hand.
  *
  * The fallback matches `compose.yaml`. Changing the port or credentials there
  * means changing them here too — a small duplication, kept because the
