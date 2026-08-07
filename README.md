@@ -985,6 +985,8 @@ For production, add the same path on your deployed origin.
 | Sprint 22 | Documentation sync | Completed |
 | Sprint 23 | Continuous integration on GitHub Actions | Completed |
 | Sprint 28 | First production deployment, on Railway (Web Service, PostgreSQL, Cron Service) | Completed |
+| Sprint 30 | Worker Status explanation on the create/edit form | Completed |
+| Sprint 31 | Long-running execution detection, scheduled-run overdue detection | Completed |
 
 ## Backlog
 

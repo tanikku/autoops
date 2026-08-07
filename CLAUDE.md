@@ -68,6 +68,13 @@
 **ここに commit hash は書きません** — このファイル自体が git 管理下にあるため、書いた瞬間に1つ古くなります。
 進捗の実際は git が持っています(冒頭の手順2)。
 
+**現在地点: Sprint 32 Day 3(Documentation Review)完了。**
+
+完了済み:
+
+- Sprint 31 — stuck derived state(`lib/health.ts`)、`nextRunAt` overdue detection(`lib/overview.ts`)
+- Sprint 32 — Execution Reliability Review、Error Boundary Review、Documentation Review(いずれも調査のみ、コード変更なし)
+
 ### Sprint 28 — Railway への初回デプロイ、完了
 
 構成は **Web Service + Cron Service + PostgreSQL**(Railway)。詳細は README の
@@ -96,3 +103,17 @@ Roadmap / Backlog(Deployment)を参照。
   **AI 実行の失敗はレスポンスに現れない**(README の Cron API 参照)。
 
 > このセクションは作業が進むたびに古くなります。スプリント完了時に更新してください。
+
+### 将来検討 — Execution 結果分類の拡張
+
+**今のスプリントの実装対象ではありません。** Execution Event なり structured
+logging なりを入れるときに、まとめて設計し直す前提の課題です。
+
+Sprint 32 Day 2 で確認した事実: `runRoutine` の catch 節で `status:"failed"`
+を書く update 自体が失敗した場合、例外は dispatcher まで伝播し hand-off 失敗
+として `failed` に数えられます — 実際には hand-off は成功していたケースです。
+行は `running` のまま残り、15分後に stuck 表示が拾います。
+
+つまり **persistence failure だけが専用の表現を持たず**、hand-off failure と
+同じカウンタに合流します。これを分けるには `failed` という語の再定義が要る
+ため、単独では直せません。発生条件も限定的です。
