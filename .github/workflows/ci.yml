@@ -24,15 +24,19 @@ jobs:
       - uses: actions/checkout@v4
 
       # Before setup-node, which needs pnpm on PATH to find the store it is
-      # asked to cache. The version is pinned here rather than in
-      # `package.json`, which this workflow deliberately leaves alone.
+      # asked to cache. Only the major version is given here, because the
+      # action needs one before anything is installed; the exact version lives
+      # in `packageManager`, which is what Corepack installs from on Railway.
       - uses: pnpm/action-setup@v4
         with:
           version: 11
 
+      # Matches `engines.node`, and through it the runtime Railway builds on.
+      # Testing on a newer Node than production ships would leave the checks
+      # green about a runtime nothing actually runs.
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22
           cache: pnpm
 
       # `--frozen-lockfile` fails rather than quietly resolving something the
