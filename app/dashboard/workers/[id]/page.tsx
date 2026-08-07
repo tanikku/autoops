@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { TriangleAlert } from "lucide-react";
 import { DashboardNav } from "@/components/dashboard-nav";
 import { DeleteWorkerButton } from "@/components/delete-worker-button";
 import { RunRoutineButton } from "@/components/run-routine-button";
@@ -10,6 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { WorkerHealthSummary } from "@/components/worker-health";
 import { formatDateTimeWithSeconds } from "@/lib/datetime";
 import { summarizeRuns } from "@/lib/health";
+import { isRunOverdue } from "@/lib/overview";
 import { getRoutine } from "@/lib/routines";
 import { listRunsForWorker } from "@/lib/runs";
 import { requireUserId } from "@/lib/session";
@@ -47,7 +49,13 @@ const frequencyLabels: Record<RoutineFrequency, string> = {
 };
 
 
-function Detail({ label, value }: { label: string; value: string }) {
+function Detail({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}) {
   return (
     <div className="flex flex-col gap-1 py-3 first:pt-0 last:pb-0 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
       <dt className="text-sm text-muted-foreground">{label}</dt>
@@ -78,6 +86,7 @@ export default async function WorkerDetailPage({
     getUserTimezone(userId),
   ]);
   const health = summarizeRuns(runs);
+  const overdue = isRunOverdue(worker);
 
   return (
     <div className="flex flex-1 flex-col bg-background">
@@ -124,9 +133,22 @@ export default async function WorkerDetailPage({
                 <Detail
                   label="Next Run"
                   value={
-                    worker.nextRunAt
-                      ? formatDateTimeWithSeconds(worker.nextRunAt, timezone)
-                      : "Manual"
+                    worker.nextRunAt ? (
+                      <span className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
+                        {formatDateTimeWithSeconds(worker.nextRunAt, timezone)}
+                        {overdue ? (
+                          <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                            <TriangleAlert
+                              className="size-3.5 shrink-0"
+                              aria-hidden
+                            />
+                            Scheduled run is overdue
+                          </span>
+                        ) : null}
+                      </span>
+                    ) : (
+                      "Manual"
+                    )
                   }
                 />
                 <Detail

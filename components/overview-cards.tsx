@@ -1,8 +1,17 @@
+import { TriangleAlert } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatDateTime } from "@/lib/datetime";
 import type { WorkerOverview } from "@/lib/overview";
 
-function SummaryCard({ label, value }: { label: string; value: string }) {
+function SummaryCard({
+  label,
+  value,
+  warning,
+}: {
+  label: string;
+  value: string;
+  warning?: string;
+}) {
   return (
     <Card>
       <CardContent>
@@ -10,6 +19,12 @@ function SummaryCard({ label, value }: { label: string; value: string }) {
         <p className="mt-1 truncate text-lg font-semibold tracking-tight">
           {value}
         </p>
+        {warning ? (
+          <p className="mt-1 flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+            <TriangleAlert className="size-3.5 shrink-0" aria-hidden />
+            {warning}
+          </p>
+        ) : null}
       </CardContent>
     </Card>
   );
@@ -33,6 +48,11 @@ export function OverviewCards({
           overview.nextScheduledRun
             ? formatDateTime(overview.nextScheduledRun, timezone)
             : "None scheduled"
+        }
+        warning={
+          overview.nextScheduledRunOverdue
+            ? "Scheduled run is overdue"
+            : undefined
         }
       />
       <SummaryCard

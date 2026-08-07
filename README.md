@@ -243,6 +243,14 @@ Last Execution.
 keep a `nextRunAt`, but the scheduler ignores them, so counting them would
 advertise a run that never happens.
 
+When that soonest slot has already passed, the card adds "Scheduled run is
+overdue". This is a **derived UI state, not a stored one and not a diagnosis**:
+`nextRunAt` only advances when the dispatcher claims it, so a slot still in the
+past says the claim has not happened since then — nothing more. It does not
+distinguish a quiet cron service from a claim that keeps failing from one that
+succeeded a moment ago, so the wording never names a cause. The same check runs
+per worker on its detail page, against that worker's own `nextRunAt`.
+
 The summaries are a fold over rows the page already loads, not a second set of
 queries. The dashboard reads workers and run history once each, and neither the
 number of cards nor the number of summaries changes that.
