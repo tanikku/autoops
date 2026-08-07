@@ -966,6 +966,7 @@ For production, add the same path on your deployed origin.
 | Sprint 21 | Worker-level failure isolation in the dispatcher | Completed |
 | Sprint 22 | Documentation sync | Completed |
 | Sprint 23 | Continuous integration on GitHub Actions | Completed |
+| Sprint 28 | First production deployment, on Railway (Web Service, PostgreSQL, Cron Service) | Completed |
 
 ## Backlog
 
@@ -1011,18 +1012,23 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
 
 **Operational**
 
-- **Deployment.** AutoOps has only ever run locally, so there is no deployment
-  section above and this entry deliberately does not invent one — what follows
-  is the list of decisions still open, not a plan. Needed before Closed Beta:
+- **Deployment.** Resolved in Sprint 28 — AutoOps now runs on Railway (Web
+  Service, PostgreSQL, Cron Service), verified end to end:
 
-  | Decision | Open question |
+  | Decision | Resolution |
   | --- | --- |
-  | Hosting platform | Where the app runs, and whether its runtime supports the Node APIs the driver adapter needs |
-  | Environment variables | Where each is set, and who holds the values. `AUTH_URL` is the one that only matters once deployed |
-  | Applying migrations | Nothing runs `prisma migrate deploy` today. The likely answer is the platform's start command — `prisma migrate deploy && next start` — rather than a script, because *when* migrations run is a property of the deployment, not of the app. `package.json` stays as it is |
-  | `CRON_SECRET` | How the secret reaches both the app and whatever calls the cron endpoint |
-  | Database hosting | Which managed PostgreSQL, and how its URL reaches the app. `compose.yaml` is a development convenience, not a deployment target |
-  | Cron execution | Which scheduler calls `POST /api/cron/run`, and how often. What happens to a missed tick is settled — the schedule catches up once rather than replaying the gap |
+  | Hosting platform | Railway. The driver adapter's Node APIs work there without changes |
+  | Environment variables | Set in the Railway dashboard, per service. `AUTH_URL` is set to the issued domain |
+  | Applying migrations | The Web Service's start command is `prisma migrate deploy && next start`, exactly as anticipated. `package.json` was left unchanged |
+  | `CRON_SECRET` | Set on both the Web Service and the Cron Service as separate environment variables with the same value |
+  | Database hosting | Railway's managed PostgreSQL plugin |
+  | Cron execution | A Railway Cron Service, on a 5-minute schedule (Railway's minimum interval — the 1-minute interval originally planned is not available), calling `POST /api/cron/run` |
+
+  One deployment-specific pitfall surfaced and was fixed: a service sourced
+  from a Docker image (the Cron Service) runs its start command in **exec
+  form**, which does not expand `$CRON_SECRET`. The command needs an explicit
+  shell — `/bin/sh -c "..."` — to expand it. Services built from this repo via
+  Railpack are unaffected; they already run in a shell.
 
 - `削除用/` — things moved aside rather than deleted, kept until Closed Beta
   starts: the database from before the tenant identity fix, the values the

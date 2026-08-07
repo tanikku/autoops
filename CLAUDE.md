@@ -65,21 +65,31 @@
 **ここに commit hash は書きません** — このファイル自体が git 管理下にあるため、書いた瞬間に1つ古くなります。
 進捗の実際は git が持っています(冒頭の手順2)。
 
-### 次のタスク — Railway への初回デプロイ
+### Sprint 28 — Railway への初回デプロイ、完了
 
-構成は **Web Service + Cron Service + PostgreSQL**(README の Backlog / Deployment を参照)。
+構成は **Web Service + Cron Service + PostgreSQL**(Railway)。詳細は README の
+Roadmap / Backlog(Deployment)を参照。
 
-実施前に必要なもの:
+実測で確認・解消済み:
 
-1. **`AUTH_URL` を本番に設定する。** 未設定だと Auth.js が Host を信頼せず、
-   Google サインインが必ず失敗する(ローカルは `NODE_ENV=development` なので通る)。
-2. **`prisma migrate deploy` を走らせる仕組みを決める。**
-   推奨は Railway の start コマンド前置 — `prisma migrate deploy && next start`。
-   `package.json` は変えない(実行タイミングはデプロイの性質であってアプリの責務ではない)。
-3. **要確認**: `prisma` は devDependency。本番ビルドで devDeps が除去されると
-   `postinstall`(`prisma generate`)が失敗する可能性がある。初回デプロイのログで確認する。
+- `AUTH_URL` を本番ドメインに設定し、Google サインインを本番で実測確認した。
+- `prisma migrate deploy && next start` を Web Service の Start Command に設定し、
+  マイグレーションが正常に適用されることを確認した。`package.json` は変更していない。
+- `prisma` が devDependency のままでも問題ないことを確認した。Railway のビルドは
+  devDependencies を含めてインストールするため、`postinstall`(`prisma generate`)は
+  成功する。
+- pnpm のバージョンを `package.json` の `packageManager` で固定した(実際に固定なしで
+  ビルドが失敗し、修正した)。
+- Cron Service(Dockerイメージ直接指定)は Start Command が exec form で実行され、
+  `$CRON_SECRET` が展開されないという Railway 固有の落とし穴があった。
+  `/bin/sh -c "..."` でシェルを明示的に挟んで解消した。
+- E2E(Routine作成 → Cron dispatch → RunHistory / Worker Health / Dashboard 反映)を
+  実測確認した。
 
-デプロイ後に設定する監視は3点 — HTTP ≠ 200 / `failed > 0` / `dispatched` が常時 0。
-**AI 実行の失敗はレスポンスに現れない**(README の Cron API 参照)。
+未着手:
+
+- デプロイ後の監視(HTTP ≠ 200 / `failed > 0` / `dispatched` が常時 0)は、
+  仕組みとしてはまだ設定していない。今回は手動でログを確認しただけ。
+  **AI 実行の失敗はレスポンスに現れない**(README の Cron API 参照)。
 
 > このセクションは作業が進むたびに古くなります。スプリント完了時に更新してください。
