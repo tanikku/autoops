@@ -1,4 +1,10 @@
-import { CircleAlert, CircleCheck, CircleDashed, Loader } from "lucide-react";
+import {
+  CircleAlert,
+  CircleCheck,
+  CircleDashed,
+  Loader,
+  TriangleAlert,
+} from "lucide-react";
 import { formatDateTime } from "@/lib/datetime";
 import type { WorkerHealth } from "@/lib/health";
 import type { RunStatus } from "@/types";
@@ -54,6 +60,13 @@ export function WorkerHealthSummary({
           </span>
         ) : null}
       </p>
+
+      {health.stuck ? (
+        <p className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+          <TriangleAlert className="size-3.5 shrink-0" aria-hidden />
+          Running for longer than expected
+        </p>
+      ) : null}
 
       <p className="text-muted-foreground">
         {health.totalRuns} run{health.totalRuns === 1 ? "" : "s"} ·{" "}

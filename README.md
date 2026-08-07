@@ -344,6 +344,16 @@ is what makes the failure count meaningful. The manual run action reads the
 recorded status: a failure that was caught and stored is still a failure, and is
 reported as one.
 
+**A run can still be left at `running` for good** — see
+[Backlog](#backlog) — and nothing rewrites its status when that happens. The
+Health section adds one more line rather than a new status: a worker whose
+latest run is `running` and started more than fifteen minutes ago — comfortably
+past the ten minutes a single Claude request is allowed — reads "Running for
+longer than expected". This is computed at read time from `status` and
+`startedAt`, not stored, and it is deliberately not called "stuck" or "failed":
+the row looks identical to one that is genuinely still in progress, and only
+time distinguishes them.
+
 The dashboard derives health for every worker from the run history it already
 loaded, in a single pass. The number of cards never drives the number of
 queries.
