@@ -32,6 +32,12 @@ const frequencyLabels: Record<RoutineFrequency, string> = {
   monthly: "Monthly",
 };
 
+const statusDescriptions: Record<RoutineStatus, string> = {
+  draft: "Draft workers are not scheduled. Set Status to Active to run automatically.",
+  active: "Runs automatically according to its schedule.",
+  paused: "Scheduled runs are paused. Manual runs still work.",
+};
+
 const selectClassName =
   "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30";
 
@@ -222,6 +228,13 @@ export function WorkerFields({
     values.frequency ?? "manual",
   );
 
+  // Controlled for the same reason as frequency: the description below the
+  // select has to track whatever is currently chosen, not just what the form
+  // was initialised with.
+  const [status, setStatus] = useState<RoutineStatus>(
+    values.status ?? "draft",
+  );
+
   return (
     <>
       <CountedField
@@ -335,15 +348,19 @@ export function WorkerFields({
         <select
           id="status"
           name="status"
-          defaultValue={values.status ?? "draft"}
+          value={status}
+          onChange={(event) => setStatus(event.target.value as RoutineStatus)}
           className={selectClassName}
         >
-          {routineStatuses.map((status) => (
-            <option key={status} value={status}>
-              {statusLabels[status]}
+          {routineStatuses.map((option) => (
+            <option key={option} value={option}>
+              {statusLabels[option]}
             </option>
           ))}
         </select>
+        <p className="text-xs text-muted-foreground">
+          {statusDescriptions[status]}
+        </p>
       </div>
     </>
   );
