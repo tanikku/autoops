@@ -1,5 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { AIProvider } from "@/lib/ai/provider";
+import {
+  type AIProvider,
+  ProviderError,
+  type ProviderErrorKind,
+} from "@/lib/ai/provider";
 
 const MODEL = "claude-opus-5";
 const MAX_TOKENS = 16000;
@@ -35,6 +39,50 @@ const TIMEOUT_MS = 600_000;
  */
 const MAX_RETRIES = 0;
 
+/**
+ * Sorts what the SDK throws into the kinds the rest of AutoOps knows about.
+ *
+ * **Reading `status` rather than matching every error class is deliberate.**
+ * The SDK has a class per status and adds more over time; a `switch` on the
+ * number covers the ones that do not exist yet and cannot drift out of date.
+ * The two connection classes carry no status at all, which is why they are
+ * checked first — and the timeout before its parent, since
+ * `APIConnectionTimeoutError` extends `APIConnectionError` and the wrong order
+ * would silently collapse the two.
+ *
+ * A `429` is separated from the other 4xx because it is the one client error
+ * that says nothing about the request: the same call succeeds later. That
+ * distinction is the whole reason this function exists.
+ */
+function classify(error: unknown): ProviderErrorKind {
+  if (error instanceof Anthropic.APIConnectionTimeoutError) {
+    return "timeout";
+  }
+
+  if (error instanceof Anthropic.APIConnectionError) {
+    return "unreachable";
+  }
+
+  if (!(error instanceof Anthropic.APIError) || error.status === undefined) {
+    return "unknown";
+  }
+
+  switch (error.status) {
+    case 401:
+    case 403:
+      return "unauthorized";
+    case 400:
+    case 404:
+    case 413:
+    case 422:
+      return "invalid-request";
+    case 429:
+      return "rate-limited";
+    default:
+      return error.status >= 500 ? "unavailable" : "unknown";
+  }
+}
+
 export class ClaudeProvider implements AIProvider {
   private readonly client: Anthropic;
 
@@ -47,14 +95,41 @@ export class ClaudeProvider implements AIProvider {
   }
 
   async execute(prompt: string): Promise<string> {
-    const message = await this.client.messages.create({
-      model: MODEL,
-      max_tokens: MAX_TOKENS,
-      messages: [{ role: "user", content: prompt }],
-    });
+    let message;
 
+    try {
+      message = await this.client.messages.create({
+        model: MODEL,
+        max_tokens: MAX_TOKENS,
+        messages: [{ role: "user", content: prompt }],
+      });
+    } catch (error) {
+      // Anything that is not an `Error` is rethrown untouched: there is no
+      // message to carry forward and nothing to classify, and passing it
+      // through unchanged is what keeps `runRoutine`'s own fallback the thing
+      // that handles it — exactly as before this wrapping existed.
+      if (!(error instanceof Error)) {
+        throw error;
+      }
+
+      // The SDK's error type goes no further than this line, but **its message
+      // does**: `message` is passed through unchanged, so the string a failed
+      // run records is the one it would have recorded before. The classified
+      // `kind` rides alongside it, and the original stays as `cause`.
+      throw new ProviderError(classify(error), error.message, { cause: error });
+    }
+
+    // A refusal arrives as a successful response, so it is a separate check
+    // rather than a caught error — and it is the one failure here that is
+    // about the prompt rather than about the provider.
+    //
+    // The wording is the one this threw before it had a kind to carry, and it
+    // is kept verbatim for the same reason as above.
     if (message.stop_reason === "refusal") {
-      throw new Error("Claude declined to answer this prompt.");
+      throw new ProviderError(
+        "refused",
+        "Claude declined to answer this prompt.",
+      );
     }
 
     return message.content

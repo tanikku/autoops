@@ -56,6 +56,15 @@ model Routine {
   runs        RunHistory[]
 
   @@index([userId])
+  /// The scheduler's only query: `status = 'active' AND nextRunAt <= now()`,
+  /// ordered by `nextRunAt`. Equality first and the range second is what lets
+  /// one index serve both the filter and the ordering — reversed, the range
+  /// column would stop the scan from using `status` to narrow anything.
+  ///
+  /// Every tick runs this across all tenants, so without an index the cost
+  /// grows with the number of workers on the platform rather than with the
+  /// number that are due.
+  @@index([status, nextRunAt])
 }
 
 model RunHistory {

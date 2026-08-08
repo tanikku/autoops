@@ -420,6 +420,18 @@ timezone. **A schedule means nothing to it** — all of that is resolved into
 `nextRunAt` before it gets there, which is why four sprints of scheduling work
 left this file untouched.
 
+`Routine` carries an index on `(status, nextRunAt)` for exactly this query.
+The column order is the query's shape: the equality first so it narrows, the
+range second so the same index also satisfies `ORDER BY nextRunAt`. Reversed,
+the range column would end the usable part of the scan and `status` would
+filter nothing.
+
+**It is indexed because the query is system-wide.** Every other read in
+AutoOps is scoped to one account, so it touches one tenant's rows; this one
+runs across all of them on every tick. Without the index its cost grows with
+the number of workers on the platform rather than with the number that are
+actually due.
+
 Keep it that way. A condition added here is a decision moved out of the module
 that owns it, and the next kind of schedule would then need changing in two
 places instead of one.
@@ -865,6 +877,34 @@ attempt. That is the price of the pipeline saying what it does: the failure
 lands in the run history and the [health summary](#worker-health), which is
 where an argument for a retry policy should come from — not from a default
 nobody read.
+
+### What kind of failure it was
+
+`lib/ai/provider.ts` names the ways a provider can fail — `timeout`,
+`rate-limited`, `unavailable`, `unreachable`, `unauthorized`,
+`invalid-request`, `refused` — and `ClaudeProvider` sorts what the SDK throws
+into them, so **the SDK's own error type never leaves `lib/ai/`**. What crosses
+the boundary is a `ProviderError` carrying a kind, the provider's own message,
+and the original as its `cause`.
+
+The kinds exist because they lead somewhere different. A rate limit is the one
+client error that says nothing about the request — the same call succeeds
+later — while a refusal is a property of the prompt and will not. That is the
+distinction a retry policy would be built on, and until now nothing recorded
+it: every failure became one `failed` row carrying one string.
+
+**The row is still exactly that.** The kind is written to the server log and
+nowhere else, and what a failed run stores is the provider's own message,
+byte for byte what it stored before. Naming a column means deciding what
+`failed` means, and that question is [still open](#backlog) — an observation
+that rewrote the rows it observed would be worth nothing. What changed is that
+the evidence for answering it now exists.
+
+A `ProviderError` also carries `safeMessage`: the same failure said without
+naming a status code, a model, or an SDK. **Nothing reads it yet.** It is there
+so the wording exists before anything decides where it belongs — the run detail
+page currently shows the stored message, which is written for whoever is
+debugging the provider rather than for the person whose worker failed.
 
 ### Prompt Variables
 

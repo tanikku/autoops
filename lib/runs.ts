@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createAIProvider } from "@/lib/ai/factory";
+import { providerErrorKind } from "@/lib/ai/provider";
 import { prisma } from "@/lib/prisma";
 import { promptVariables, renderPrompt } from "@/lib/prompt";
 import {
@@ -118,7 +119,19 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
   } catch (error) {
     // Without this the row stays "running" forever and the failure is
     // invisible to the health summary.
-    console.error("[worker] run failed", error);
+    //
+    // **The kind is logged, not stored.** Every failure is still one `failed`
+    // row carrying one string, exactly as before — deciding what a column
+    // should be called means deciding what `failed` means, and that is not
+    // settled. What this line buys is the evidence to settle it with: until
+    // now nothing anywhere recorded whether a run died of a rate limit or of
+    // a refusal.
+    console.error(
+      "[worker] run failed —",
+      providerErrorKind(error),
+      "—",
+      error,
+    );
 
     const failed = await prisma.runHistory.update({
       where: { id: run.id },
