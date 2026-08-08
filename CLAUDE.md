@@ -77,13 +77,22 @@
 | 「stuck」は `RunHistory.status` の値では**ない** | `status` は `running`/`completed`/`failed` のまま変えない。`running` が長時間続いている状態は表示側(`lib/health.ts`)が `startedAt` と現在時刻から都度導出する派生状態。本当に実行中のケースと区別がつかないため、断定的な表現(「stuck」「failed」)ではなく "Running for longer than expected" と表示する |
 | stuck検知は Prisma schema 変更**なし**で実現する | `WorkerHealth.stuck` は読み取り時の計算のみ。DBに新しいカラム・ステータス値・バッチ処理を追加しない。Sprint 31 Day 2の監視設計調査で「UIだけで対応可能」と判断した方針をそのまま採用 |
 | Scheduled overdue detection uses existing `nextRunAt` data. It is a derived UI state and does not represent Cron service failure. No schema change is required | `nextRunAt`はclaim成功時にのみ前進する(手動実行では動かない)ため、activeワーカーの`nextRunAt`が過去のままという事実だけは既存データから安全に読み取れる。ただし「なぜ」claimされていないか(Cron停止・claim失敗・直前に成功等)は区別できないため、UI文言は原因を断定しない("overdue"のみ) |
+| `calculateNextRunAt` の計算経路は **1本だけ**。frequency 別・時刻の有無別に実装を分けない | 分岐していた頃、時刻なしの経路だけが月末クランプを受け取っておらず、1/31 が 3/3 に固定される不具合を生んだ(Sprint 35 P0-A)。同じ方針を2箇所に書けば、片方だけ直る日が必ず来る |
+| `runAtMinutes = null` は「**オーナーの時計上の時刻**を保つ」。UTC インスタントの時刻ではない | スキーマのコメントが最初からそう定義していたのに、実装だけが UTC の時刻を保っていた。固定オフセットの zone では一致するため DST 境界でしか露見しない。時刻は人が自分の時計で読むもの |
+| 時刻未指定でも `runAtDay` は**効く** | 以前は時刻を選ばない限り月の日付指定が無視されていた。経路が1本になったことで意図が常に読まれる |
+| ドリフトした `nextRunAt` は**自動復元しない** | `runAtDay` がない worker では「本来の日」がどこにも記録されていない。クランプは不可逆で、再計算しても戻らない。**記録されていない意図は復元できない** — 直せるのは編集か `runAtDay` の設定だけ |
+| provider SDK の型・例外・文言は **`lib/ai/` の外へ出さない** | 境界の外に `APIError` が漏れれば、全呼び出し元がどの SDK を使っているかを知ることになる。分類は境界で行い、外へ出るのは `ProviderError`(kind + 元の message + `cause`)だけ |
+| 失敗の分類(`ProviderErrorKind`)と `RunHistory.status` は**別の概念**。`failed` の意味を拙速に広げない | `status` は `running`/`completed`/`failed` の3値のまま。`failed` は dispatcher の hand-off 失敗にも使われており、語の再定義なしに値を増やせば3つ目の意味が増えるだけ。Sprint 36 第1段階が kind をログに出すのは、その再定義を**データに基づいて**行うため |
+| retry 方針は**観測データと失敗の語彙が揃うまで決めない** | 上の「dispatcher は retry 方針を持たない」を撤回するものではない。再試行に意味がある失敗(429 / 5xx / timeout)と無意味な失敗(拒否 / 認証)を区別できるようになって初めて、方針を根拠付きで選べる |
+| scheduler の index は **`(status, nextRunAt)` の順**。逆にしない | 等値を先・範囲を後に置くのが B-tree の原則で、この順なら `ORDER BY nextRunAt` も同じ index で満たせる。逆順では範囲条件から先の列が絞り込みに使えない |
+| Queue 契約・並行度(take / batch)・実行ロックは**まとめて決める** | 3つとも cron API か手動実行 UI のどちらかに波及する。個別に入れると契約を3回変えることになる |
 
 ## 現在地
 
 **ここに commit hash は書きません** — このファイル自体が git 管理下にあるため、書いた瞬間に1つ古くなります。
 進捗の実際は git が持っています(冒頭の手順2)。
 
-**現在地点: Sprint 33 Day 5(次スプリントの優先順位づけ)完了。**
+**現在地点: Sprint 36 完了。CI 緑。**
 
 完了済み:
 
@@ -93,6 +102,70 @@
   そこで見つかった Node・pnpm のバージョン不一致を直した(上の「決定済み」2行)。
   **CI は Sprint 28 以降ずっと赤で、誰も結果を見ていなかった。** Day 4 で復旧。
   push したら Actions の結果まで見ること — 緑を確認して初めて検証されたと言える。
+- Sprint 34 — `app/error.tsx` / `app/not-found.tsx` の追加と、`/api/cron/run` が
+  **なぜ**拒否したかを4種類に分けて記録するログ。401 の3経路(ヘッダなし / Bearer
+  でない / 値の不一致)とレスポンスの同一性、秘密情報が出ないことを実測確認した。
+- Sprint 35 — **monthly の月末ドリフト(P0-A)を修正。** `calculateNextRunAt` が
+  `runAtMinutes` の有無で2経路に分かれており、時刻なしの経路は月末クランプも
+  `runAtDay` も持たないまま UTC インスタントを進めていた。1/31 が 3/3 へ移り、
+  以後 3日に固定される。経路を1本に統合し、`addInterval` を削除した。
+  再発防止は `runAtDay` の有無それぞれをテストで固定してある(26 → 37 件)。
+- Sprint 36 — **P1-D 第1段階**と **P1-A**。詳細は下の2節。
+
+### Sprint 36 — 失敗の分類(第1段階)と scheduler の index、完了
+
+**P1-D 第1段階 — 観測だけを足した。**
+
+- `lib/ai/provider.ts` に `ProviderErrorKind`(`timeout` / `rate-limited` /
+  `unavailable` / `unreachable` / `unauthorized` / `invalid-request` /
+  `refused` / `unknown`)と `ProviderError` を定義。
+- `ClaudeProvider` が SDK の例外を分類する。判定は**エラークラスの列挙ではなく
+  `status`** で行い、接続系2クラスだけ先に見る(`APIConnectionTimeoutError` は
+  `APIConnectionError` の子なので順序が逆だと潰れる)。
+- **kind は現時点でログにしか出ない。** `RunHistory` の schema も保存契約も
+  変更していない。
+- `ProviderError.message` は **SDK の `error.message` をそのまま**保持する。
+  `RunHistory.output` に入る文字列は従来と byte 単位で同一 — 拒否時の
+  `"Claude declined to answer this prompt."` も、Error でない値の rethrow も
+  そのために維持している。**観測が観測対象を書き換えては意味がない。**
+- `safeMessage` は kind から導出して持つが、**DB にも UI にも使っていない**。
+  置き場所(列 / 画面 / どちらでもない)を決める前に文言だけ用意してある状態。
+
+**P1-A — scheduler のクエリに index を付けた。**
+
+- `Routine` に `@@index([status, nextRunAt])` と対応する migration。
+- scheduler の `where { status, nextRunAt }` は**全テナント横断**で毎ティック
+  走る唯一のクエリで、index がなければコストが「due な worker 数」ではなく
+  「存在する worker 数」に比例していた。
+- テーブルが小さいうちに入れたのは意図的。Web Service の起動は
+  `prisma migrate deploy` を挟むため、行が増えてからの index 構築は起動を待たせる。
+
+### Sprint 36 時点で未着手の P1 項目
+
+Sprint 36 Pre-Sprint Review で洗い出し、**着手していない**もの。優先順位も
+そのとき決めたまま:
+
+- **P1-D 第2段階** — `errorKind` / `errorMessage` 等の schema 設計。
+  第1段階のログから「実際に起きている失敗」を見てから列を決める前提。
+- **P1-B** — scheduler の `take` / 1ティックの上限。
+- **P1-E** — 実行ロック(manual と scheduled の重複実行対策)。
+- **P1-C** — Queue 契約(`enqueueRoutine` の戻り値)。
+- retry policy。
+- manual / scheduled 重複対策(P1-E と同じ問題の別の面)。
+
+後ろの4つは互いに波及するため、上の「決定済み」のとおり**まとめて決める**。
+
+### 未確認 — 別途扱う
+
+CI が緑でも検証されていないもの。**「動作確認済み」と言わないこと。**
+
+- `classify()` の実 API による挙動(401 / 429 等)。型と SDK のクラス階層を
+  実物のファイルで確認しただけで、実際の応答は受けていない。
+- 本番 DB への migration 適用と、本番での index 実測。ローカルの
+  `compose.yaml` の PostgreSQL では `pg_indexes` まで確認済み。
+- DST の他 zone。`America/New_York` のみ実測。
+- 本番 DB に残っている可能性のある monthly drift worker の監査。
+  **修正しても過去は戻らない**(上の「決定済み」参照)ので、まず有無の確認から。
 
 ### Sprint 28 — Railway への初回デプロイ、完了
 
@@ -136,3 +209,8 @@ Sprint 32 Day 2 で確認した事実: `runRoutine` の catch 節で `status:"fa
 つまり **persistence failure だけが専用の表現を持たず**、hand-off failure と
 同じカウンタに合流します。これを分けるには `failed` という語の再定義が要る
 ため、単独では直せません。発生条件も限定的です。
+
+Sprint 36 の `ProviderErrorKind` は**この課題を解いていません。** あれが名前を
+与えたのは provider の失敗だけで、persistence failure は `runRoutine` の catch
+節そのものが失敗するケース — provider の外側です。両方を1つの語彙に載せるかは
+第2段階(`errorKind` 列の設計)で決めることになります。
