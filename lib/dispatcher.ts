@@ -3,9 +3,8 @@ import "server-only";
 import { enqueueRoutine } from "@/lib/queue";
 import { claimRoutineSlot } from "@/lib/routines";
 import { advanceSchedule } from "@/lib/schedule";
-import { getDueWorkers } from "@/lib/scheduler";
+import { type DueWorker, getDueWorkers } from "@/lib/scheduler";
 import { getUserTimezone } from "@/lib/users";
-import type { Routine } from "@/types";
 
 /** What one tick did: the workers handed off, and how many could not be. */
 export type DispatchResult = {
@@ -94,7 +93,7 @@ export async function dispatchDueWorkers(now: Date): Promise<DispatchResult> {
  * a slot that could be claimed twice is the one thing this function exists to
  * prevent.
  */
-async function claimSlot(worker: Routine, now: Date): Promise<boolean> {
+async function claimSlot(worker: DueWorker, now: Date): Promise<boolean> {
   if (worker.nextRunAt === null) {
     return false;
   }

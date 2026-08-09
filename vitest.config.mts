@@ -18,10 +18,27 @@ const rootDir = dirname(fileURLToPath(import.meta.url));
  * `.mts` rather than `.ts`: this file is ESM, and `package.json` declares no
  * `"type"`, so a `.ts` extension makes the loader parse it as CommonJS first.
  */
+/**
+ * What Next.js resolves `server-only` to, restated for Vitest.
+ *
+ * The package exports two files and picks between them by condition: under
+ * `react-server` it is `empty.js`, and under anything else it is `index.js`,
+ * which throws on import. Next.js compiles server modules with that condition
+ * set, so `import "server-only"` costs nothing there; Vitest does not, so the
+ * seven modules carrying that line — the scheduler, dispatcher, queue and the
+ * repositories — could not be imported by a test at all.
+ *
+ * **This points at the real `empty.js` rather than a stub of our own.** The
+ * file it names is the one Next.js already uses, so the two cannot disagree
+ * about what neutralising `server-only` means.
+ */
+const serverOnlyUnderReactServer = `${rootDir}/node_modules/server-only/empty.js`;
+
 export default defineConfig({
   resolve: {
     alias: {
       "@/": `${rootDir}/`,
+      "server-only": serverOnlyUnderReactServer,
     },
   },
 });
