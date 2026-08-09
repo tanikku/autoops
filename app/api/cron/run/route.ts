@@ -39,6 +39,27 @@ const rejectionMessages: Record<Rejection, string> = {
 };
 
 /**
+ * How long a tick may take before the log says so, in milliseconds.
+ *
+ * Railway's edge closes a request that has transferred no data for **five
+ * minutes**, and this endpoint transfers nothing until the dispatcher returns —
+ * so a tick that runs past 300s is one the cron service never hears the end of.
+ * Half of that is the threshold because the dispatcher works through due
+ * workers **one at a time**: a tick is a sum, not an average, so a single
+ * worker taking 150s is a tick that breaches the moment a second worker is
+ * hired. The same 300s is also the cron interval, so the two problems — a
+ * severed response and a tick still running when the next one starts — arrive
+ * together rather than one giving warning of the other.
+ *
+ * **It is a warning value, not a policy.** Nothing here times a tick out,
+ * retries it, records it, or changes what runs. The only thing it decides is
+ * whether the line below is a `warn` or not — the same standing
+ * `STUCK_THRESHOLD_MS` has in `lib/health.ts`, which likewise changes a display
+ * and nothing else.
+ */
+const TICK_WARN_THRESHOLD_MS = 150_000;
+
+/**
  * Checks the shared secret supplied by the cron service, and says what was
  * wrong when it does not check out. Null means the request may proceed.
  *
@@ -92,7 +113,28 @@ export async function POST(request: Request) {
   }
 
   try {
+    const startedAtMs = Date.now();
     const { dispatched, failed } = await dispatchDueWorkers(new Date());
+    const durationMs = Date.now() - startedAtMs;
+
+    // How long a tick took is knowable today only by subtracting the cron
+    // container's start time from the `date` header of its response, a reading
+    // no finer than a second and available only by hand. One line here puts the
+    // number on the side that measured it.
+    //
+    // **The line is all that was added.** The call above is untouched, and so
+    // is the response below: what a tick reports to its caller is the queue
+    // contract, and that changes with `take` and the execution lock or not at
+    // all.
+    const summary = `[cron] tick finished — duration_ms=${durationMs} dispatched=${dispatched.length} failed=${failed}`;
+
+    if (durationMs >= TICK_WARN_THRESHOLD_MS) {
+      console.warn(
+        `${summary} — over ${TICK_WARN_THRESHOLD_MS}ms, half of the five minutes Railway allows a response to take.`,
+      );
+    } else {
+      console.log(summary);
+    }
 
     // `failed` is additive: `dispatched` keeps its meaning and its type, so a
     // cron service reading it carries on unchanged. Without the new field a
