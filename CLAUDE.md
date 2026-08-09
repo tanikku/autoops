@@ -86,13 +86,15 @@
 | retry 方針は**観測データと失敗の語彙が揃うまで決めない** | 上の「dispatcher は retry 方針を持たない」を撤回するものではない。再試行に意味がある失敗(429 / 5xx / timeout)と無意味な失敗(拒否 / 認証)を区別できるようになって初めて、方針を根拠付きで選べる |
 | scheduler の index は **`(status, nextRunAt)` の順**。逆にしない | 等値を先・範囲を後に置くのが B-tree の原則で、この順なら `ORDER BY nextRunAt` も同じ index で満たせる。逆順では範囲条件から先の列が絞り込みに使えない |
 | Queue 契約・並行度(take / batch)・実行ロックは**まとめて決める** | 3つとも cron API か手動実行 UI のどちらかに波及する。個別に入れると契約を3回変えることになる |
+| 実行は **inline のまま**。常駐 Worker 化(B0)は**保留**であって却下ではない | Sprint 37 の判断。B0 が解く問題(実行が HTTP request lifecycle に縛られる)は本番で発生実績ゼロ、B0 が作る問題(graceful shutdown)は導入した瞬間から確定する。この非対称が理由のすべて。再検討の条件は下の Sprint 37 の節にある |
+| `duration_ms` は **観測であって policy ではない** | 閾値を超えても実行を止めず、retry せず、DB に書かず、B0 へ自動で切り替えない。決めるのは `console.warn` か `console.log` かだけ。`lib/health.ts` の `STUCK_THRESHOLD_MS` と同じ立場 — **観測が観測対象を書き換えては意味がない** |
 
 ## 現在地
 
 **ここに commit hash は書きません** — このファイル自体が git 管理下にあるため、書いた瞬間に1つ古くなります。
 進捗の実際は git が持っています(冒頭の手順2)。
 
-**現在地点: Sprint 36 完了。CI 緑。**
+**現在地点: Sprint 37 完了。CI 緑。**
 
 完了済み:
 
@@ -111,6 +113,8 @@
   以後 3日に固定される。経路を1本に統合し、`addInterval` を削除した。
   再発防止は `runAtDay` の有無それぞれをテストで固定してある(26 → 37 件)。
 - Sprint 36 — **P1-D 第1段階**と **P1-A**。詳細は下の2節。
+- Sprint 37 — **Execution Architecture の決定**(A 採用 / B0 保留)と、
+  tick duration の観測。詳細は下の節。
 
 ### Sprint 36 — 失敗の分類(第1段階)と scheduler の index、完了
 
@@ -155,17 +159,105 @@ Sprint 36 Pre-Sprint Review で洗い出し、**着手していない**もの。
 
 後ろの4つは互いに波及するため、上の「決定済み」のとおり**まとめて決める**。
 
+### Sprint 37 — Execution Architecture の決定と tick duration の観測、完了
+
+**決定: A(inline execution)を正式採用。B0(常駐 Worker 化)は保留。**
+
+論点は「Queue を導入するかどうか」ではなく、**「AI execution を HTTP request
+lifecycle から切り離すかどうか」**だった。切り離す形態として B0 — 既存の
+scheduler / dispatcher / `runRoutine` をそのまま維持し、実行主体だけを常駐
+プロセスへ移す構成、Queue ライブラリなし — を検討し、**今は採らないと決めた**。
+
+理由は非対称性の一点に尽きる。**B0 が解く問題は本番で発生実績がゼロで、B0 が
+作る問題は導入した瞬間から確定する。** 後者の中身は下の Railway 実測にある
+graceful shutdown で、猶予は 0 秒。
+
+#### B0 を再検討する条件
+
+**「execution が存在するようになったこと」は理由にならない。** 条件は
+**「HTTP 実行方式が実際に制約になったこと」**であって、実行の有無ではない。
+
+| 段階 | 条件 |
+|---|---|
+| **警戒**(再検討を始める) | tick duration ≥ 150秒 / 単一 execution ≥ 150秒 |
+| **導入検討**(必要と判断する) | 単一 execution ≥ 300秒 / cron の HTTP が失敗する(200 以外・レスポンス欠落) / HTTP lifecycle が実際の制約になった |
+
+150秒(=300秒の半分)である理由は、単なる割合ではない。dispatcher は due な
+worker を**1件ずつ順に**処理するので、**tick duration は平均ではなく和**になる。
+1件で150秒かかっているなら、2件目を迎えた瞬間に300秒へ届く。300秒は cron の
+interval でもあるため、**レスポンス切断とティックの重複が同時に始まる**。
+
+再検討する日が来たら、**B0-a(独立 Worker Service)から評価する。** B0-b
+(`instrumentation.ts` 内で常駐)は Next.js の SIGTERM ハンドラが
+`server.close()` の後に `process.exit(0)` を呼ぶため、**実行中の AI 呼び出しを
+待つ設計が原理的に作れない**(公開の cleanup API も存在しない)。B0-b の利点は
+監視のしやすさだが、監視は設計で解ける — `process.exit(0)` は解けない。
+
+#### tick duration logging
+
+`/api/cron/run` が **1ティックにつき1行**、`duration_ms` / `dispatched` /
+`failed` をログに出す。150,000ms 以上なら `warn`、未満は通常ログ。
+
+- 計測は **`app/api/cron/run/route.ts` の中だけ**。自分が呼んだ処理の所要時間を
+  自分で測っている。
+- **`lib/dispatcher.ts` は変更していない。** `DispatchResult` に duration を
+  足せば「Queue 契約はまとめて決める」に反し、契約を単独で1回変えることになる。
+- **レスポンスの JSON 形状は変更していない。** `duration_ms` はログにしか出ない。
+- **これは observability であって policy ではない**(上の「決定済み」参照)。
+
+Sprint 34(拒否の理由をログへ)、Sprint 36(失敗の kind をログへ)と同じ形。
+**観測を足すときは、観測対象を書き換えない。**
+
+#### Railway 実測 — 2026-08-09 時点
+
+| 値 | 出どころ |
+|---|---|
+| **edge idle timeout = 300秒** | Railway 公式(無通信のまま300秒で切断。通信が続けば最大15分) |
+| **provider timeout = 600秒** | `lib/ai/claude-provider.ts`。**edge 制限の2倍**で、1回の呼び出しだけで切断されうる |
+| **`drainingSeconds = null`** | Railway のデフォルトは猶予 **0秒**。SIGTERM の直後に SIGKILL |
+| **`numReplicas = 1`** | `healthcheckPath` も `overlapSeconds` も null |
+| cron interval = 300秒 | `*/5 * * * *`。**edge の制限と同じ値** |
+
+`/api/cron/run` は dispatcher が返るまで1バイトも送らないので、**300秒は
+「1 worker あたり」ではなく「そのティックの合計」**にかかる。
+
+#### Production 実測 — 2026-08-09 時点
+
+| 項目 | 実測 |
+|---|---|
+| tick duration | **median 約35ms / max 111ms**(45ティック。max はデプロイ直後の初回) |
+| `dispatched` / `failed` | 45ティックすべて **0 / 0** |
+| warn の発火 | **0件** |
+| `Routine` | **0件**(active も 0) |
+| `RunHistory` | **0件**。本番で execution が発生した実績はない |
+| `User` | 1件 |
+
+median 35ms は警戒閾値の **0.023%**、edge 制限の **0.012%**。桁が4つ違う。
+**A を維持する判断は、推測ではなくこの数値に基づく。**
+
+**この表は 2026-08-09 時点の値であって、現在の値ではない。** 再確認するなら
+`railway logs --service autoops --deployment` の `tick finished` 行と、
+Postgres への read-only 照会から。
+
 ### 未確認 — 別途扱う
 
 CI が緑でも検証されていないもの。**「動作確認済み」と言わないこと。**
 
 - `classify()` の実 API による挙動(401 / 429 等)。型と SDK のクラス階層を
   実物のファイルで確認しただけで、実際の応答は受けていない。
-- 本番 DB への migration 適用と、本番での index 実測。ローカルの
-  `compose.yaml` の PostgreSQL では `pg_indexes` まで確認済み。
+- **`ANTHROPIC_API_KEY` の有効性。** 本番の Web Service には設定されていて、
+  stand-in の警告も出ていない — つまり `ClaudeProvider` を使う構成にはなって
+  いる。ただし**成功した API 呼び出しが1件もない**ので、キーが通るかは不明。
+- **`duration_ms` の warn 分岐(150,000ms 以上)。** 発火条件そのものが本番に
+  存在しないため、実行が起きるまで検証できない。型検査とビルドは通っている。
 - DST の他 zone。`America/New_York` のみ実測。
-- 本番 DB に残っている可能性のある monthly drift worker の監査。
-  **修正しても過去は戻らない**(上の「決定済み」参照)ので、まず有無の確認から。
+- 本番 index の**実効性能**。`Routine_status_nextRunAt_idx` が本番に実在する
+  ことは 2026-08-09 に `pg_indexes` で確認したが、行が0件なので効いているか
+  どうかは測っていない。migration の適用も同時に確認済み(`_prisma_migrations`
+  の `20260807235724_add_scheduler_due_index` が rolled back なしで完了)。
+- 本番 DB に残っている可能性のある monthly drift worker の監査は、2026-08-09
+  時点では**該当なし**(`Routine` が0件)。worker が作られたら改めて要確認 —
+  **修正しても過去は戻らない**(上の「決定済み」参照)。
 
 ### Sprint 28 — Railway への初回デプロイ、完了
 

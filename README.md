@@ -92,6 +92,13 @@ and nothing reads them after a worker exists.
 The queue exists as a seam rather than an implementation. Swapping the inline
 call for a real backend should not require changes above or below it.
 
+**Running inline is a decision, not a placeholder.** Moving execution off the
+HTTP request — a resident worker process, with or without a queue library —
+was evaluated in Sprint 37 and deliberately deferred. The problem it solves has
+not happened yet; the problem it introduces starts on the day it ships. The
+conditions that would reopen it are in the [Backlog](#backlog), and how close
+production currently is to them is in [Cron API](#cron-api).
+
 ### Worker Lifecycle
 
 A worker is created from the dashboard and managed from its **detail page**,
@@ -988,6 +995,38 @@ Failure (`500`) — the cause is written to the server log only:
 { "success": false, "error": "Internal Server Error" }
 ```
 
+#### How long a tick took
+
+Every completed tick writes one line to the server log:
+
+```
+[cron] tick finished — duration_ms=35 dispatched=0 failed=0
+```
+
+**It is not in the response**, and that is the point. What a tick reports to
+its caller is the queue contract, which changes when `take`, concurrency and
+the execution lock are decided — all at once, or not at all. A number that only
+an operator reads belongs in the log, the same place a rejected request's
+reason and the [provider failure kinds](#what-kind-of-failure-it-was) already
+live.
+
+The measurement wraps the dispatcher call inside the route. **The dispatcher is
+not involved and does not know it is being timed** — it decides what a tick
+does, and how long that took is not one of its decisions.
+
+A tick over **150 seconds** is logged at `warn` instead. The threshold is half
+of the five minutes Railway's edge allows a response that has sent no data, and
+half rather than most of it because **a tick is a sum, not an average**: due
+workers run one at a time, so a single worker taking 150 seconds is a tick that
+breaches the moment a second worker is hired. Five minutes is also the cron
+interval, so a severed response and a tick still running when the next one
+starts arrive together rather than one warning of the other.
+
+**Nothing acts on the threshold.** It does not stop a tick, retry it, record
+it, or change what runs — it chooses `warn` over `log` and nothing else, the
+same standing the fifteen minutes in [Worker Health](#worker-health) has.
+Deciding what to do about a slow tick is a decision for whoever reads the line.
+
 ### Authentication
 
 The dashboard is behind Google sign-in (**Auth.js v5**, JWT sessions, **no
@@ -1048,6 +1087,7 @@ For production, add the same path on your deployed origin.
 | Sprint 28 | First production deployment, on Railway (Web Service, PostgreSQL, Cron Service) | Completed |
 | Sprint 30 | Worker Status explanation on the create/edit form | Completed |
 | Sprint 31 | Long-running execution detection, scheduled-run overdue detection | Completed |
+| Sprint 37 | Execution architecture decided — inline stays, and a tick now says how long it took | Completed |
 
 ## Backlog
 
@@ -1076,6 +1116,34 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
   to record it with. The row is neither a success nor a failure, and the health
   summary counts it as neither. **Unrelated to timeouts** — a request that times
   out throws, and a throw is recorded like any other failure
+
+- **Execution stays on the HTTP request, deferred rather than dismissed.**
+  Moving it to a resident worker process was evaluated in Sprint 37 and not
+  adopted. Two facts decided it: a tick has never had anything to dispatch in
+  production, and Railway sends `SIGTERM` with **zero seconds** of grace before
+  `SIGKILL`, so a resident worker would lose an in-flight run on every deploy
+  from its first day. The problem to be solved is hypothetical; the problem to
+  be created is not.
+
+  **Its return is not conditional on execution happening — it is conditional on
+  the request lifecycle actually getting in the way:**
+
+  | Stage | Condition |
+  | --- | --- |
+  | Watch | A tick, or a single execution, reaches **150 seconds** |
+  | Reconsider | A single execution reaches **300 seconds**, a cron call fails or goes unanswered, or the request lifecycle constrains something real |
+
+  A tick already reports its duration, so the first row is observable today —
+  see [How long a tick took](#how-long-a-tick-took). **The second row is
+  reached without any growth in the number of workers**: one request may take
+  ten minutes, which is twice what the edge allows a silent response, so a
+  single slow run breaches it on its own.
+
+  When it is reconsidered, the **separate process** is the one to look at
+  first. Running inside the Next.js server needs no extra service and no extra
+  dependency, and cannot shut down cleanly: the framework's own `SIGTERM`
+  handler closes the HTTP server and calls `process.exit(0)`, which a worker
+  waiting on a model has no way to delay
 
 **Testing**
 
@@ -1110,6 +1178,14 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
   form**, which does not expand `$CRON_SECRET`. The command needs an explicit
   shell — `/bin/sh -c "..."` — to expand it. Services built from this repo via
   Railpack are unaffected; they already run in a shell.
+
+- **The Claude API has never been called in production.** `ANTHROPIC_API_KEY`
+  is set on the Web Service and the startup line announcing the stand-in does
+  not appear, so the deployed app is configured to use the real provider — but
+  no worker has ever run there, so **nothing has proved the key itself works**.
+  A wrong or expired key would look exactly like this until the first
+  execution. Verifying it means running a worker against the live model, which
+  is a deliberate act rather than something to discover by accident.
 
 - `削除用/` — things moved aside rather than deleted, kept until Closed Beta
   starts: the database from before the tenant identity fix, the values the
