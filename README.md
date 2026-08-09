@@ -494,6 +494,19 @@ waits for its next one. Claiming afterwards would turn the same crash into a
 duplicate run instead — and a duplicate bills an API and produces real output
 twice, so losing a slot is the safer direction.
 
+**What is claimed is the slot, not the worker.** The condition is on
+`nextRunAt`, so what a dispatcher wins is the right to spend one scheduled
+slot — and a run with no slot in play never meets the check at all. A manual
+run is exactly that: it goes straight to the queue without reading or writing
+`nextRunAt`, so it neither takes a slot nor notices one being taken. A
+scheduled run and a hand-started one can therefore overlap, and so can two
+hand-started ones.
+
+That is the boundary of what this mechanism covers, stated because the two are
+easy to read as one: it makes a scheduled slot dispatch once, and it is not a
+lock on executing a worker. Whether concurrent execution should be prevented,
+and by what, is a different question and is not answered here.
+
 #### Missed slots are dropped, not replayed
 
 A week of downtime leaves a daily worker seven slots behind. Advancing one
@@ -1078,7 +1091,7 @@ For production, add the same path on your deployed origin.
 | Sprint 15 | Documentation sync | Completed |
 | Sprint 16 | A schedule module with no database in it | Completed |
 | Sprint 17 | Vitest, and unit tests for schedule calculation | Completed |
-| Sprint 18 | Atomic slot claiming, so a worker cannot run twice | Completed |
+| Sprint 18 | Atomic slot claiming, so a scheduled slot cannot be dispatched twice | Completed |
 | Sprint 19 | Catch-up after an outage — one run to get current, not the backlog | Completed |
 | Sprint 20 | An edit that leaves the schedule alone can no longer undo a claim | Completed |
 | Sprint 21 | Worker-level failure isolation in the dispatcher | Completed |
