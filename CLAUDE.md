@@ -28,9 +28,15 @@
 
 ## 検証のしかた
 
-- スケジュール計算(`lib/schedule.ts`)は純粋関数なので Vitest で検証できる。
-  **それ以外(claim / catch-up / 失敗分離)は実 DB と実 cron が必要で、CI では検証されない。**
-  CI が緑でも「全部動く」とは言えない。
+- 純粋関数(`lib/schedule.ts` / `lib/health.ts` / `lib/overview.ts`)は Vitest で
+  そのまま検証できる。`lib/scheduler.ts` と `lib/dispatcher.ts` も Sprint 38 から
+  検証できる — `server-only` の alias(下の Sprint 38 の節)と `vi.mock` で、
+  **依存も DB も足さずに**届くようになった。
+- **ただし届くのは「どう振る舞うか」までで、「本当に排他できているか」ではない。**
+  `claimRoutineSlot` が atomic であること、catch-up が実データでどう動くかは
+  実 DB と実 cron が要り、**CI では検証されない**。dispatcher のテストが押さえて
+  いるのは claim の**結果への反応**(勝者だけ hand-off する、1件の失敗が後続を
+  止めない)であって、claim そのものではない。CI が緑でも「全部動く」とは言えない。
 - 変更の効果は**変更前後で実測して比較する**。`git stash` で旧コードに戻して測り、
   復元後に差分の md5 が一致することを確認する。
 - 検証用データは必ず削除する(`User` 行は実アカウントなので残す)。
@@ -88,13 +94,17 @@
 | Queue 契約・並行度(take / batch)・実行ロックは**まとめて決める** | 3つとも cron API か手動実行 UI のどちらかに波及する。個別に入れると契約を3回変えることになる |
 | 実行は **inline のまま**。常駐 Worker 化(B0)は**保留**であって却下ではない | Sprint 37 の判断。B0 が解く問題(実行が HTTP request lifecycle に縛られる)は本番で発生実績ゼロ、B0 が作る問題(graceful shutdown)は導入した瞬間から確定する。この非対称が理由のすべて。再検討の条件は下の Sprint 37 の節にある |
 | `duration_ms` は **観測であって policy ではない** | 閾値を超えても実行を止めず、retry せず、DB に書かず、B0 へ自動で切り替えない。決めるのは `console.warn` か `console.log` かだけ。`lib/health.ts` の `STUCK_THRESHOLD_MS` と同じ立場 — **観測が観測対象を書き換えては意味がない** |
+| `claimRoutineSlot` は **slot lock であって execution lock ではない** | 条件は `nextRunAt` にかかるので、保証されるのは「同じ scheduled slot が二度 dispatch されない」ことだけ。手動実行は `nextRunAt` を読み書きせず claim を通らないため、scheduled と手動、手動同士は重なりうる。**これを許容すると決めたわけではない** — execution exclusion の方針は未決 |
+| 実行の重複を **`RunHistory.status === "running"` の事前確認で防ぐ方式(E-2)は採らない** | check-then-act の隙間が残るうえ、2回目の write が失敗して `running` のまま残った行が1つあれば、その worker は二度と実行できなくなる。README Backlog の既知項目と正面衝突する。E-3(部分 unique index)/ advisory lock / lease は**未決** |
+| enqueue 時に `RunHistory` を作って id を返す方式(C2)は、**現行の `RunHistory` semantics のままでは採らない** | 行は execution 開始時に作られ、`startedAt` は実行開始時刻。Rendered Prompt の再構成(`promptVariables(run.startedAt)`)、実行時間の表示、stuck 判定の3つがすべてその意味に依存している。前倒しすれば3つが同時にずれる。**`RunHistory` 自体を将来再設計することを禁じるものではない** |
+| `take` は **未採用**。ただし scheduler に置くことを永久に禁じたわけでもない | 本番 Routine 0件で行数の実害がなく、catch-up と組み合わせるとバックログが1 interval を超えた時点でスロットを静かに失う。tenant fairness の論点も未解決。**根拠が揃うまで入れない**、が理由のすべて |
 
 ## 現在地
 
 **ここに commit hash は書きません** — このファイル自体が git 管理下にあるため、書いた瞬間に1つ古くなります。
 進捗の実際は git が持っています(冒頭の手順2)。
 
-**現在地点: Sprint 37 完了。CI 緑。**
+**現在地点: Sprint 38 Day 3 まで完了。CI 緑。**
 
 完了済み:
 
@@ -115,6 +125,8 @@
 - Sprint 36 — **P1-D 第1段階**と **P1-A**。詳細は下の2節。
 - Sprint 37 — **Execution Architecture の決定**(A 採用 / B0 保留)と、
   tick duration の観測。詳細は下の節。
+- Sprint 38 — **P1-B の分解**、`getDueWorkers` の query shape 改善(P1-B1a)、
+  `server-only` を含むモジュールのテスト境界の確立。詳細は下の節。
 
 ### Sprint 36 — 失敗の分類(第1段階)と scheduler の index、完了
 
@@ -151,7 +163,9 @@ Sprint 36 Pre-Sprint Review で洗い出し、**着手していない**もの。
 
 - **P1-D 第2段階** — `errorKind` / `errorMessage` 等の schema 設計。
   第1段階のログから「実際に起きている失敗」を見てから列を決める前提。
-- **P1-B** — scheduler の `take` / 1ティックの上限。
+- **P1-B** — 1ティックの上限。**この一行は当時「scheduler の `take`」と書いて
+  いたが、Sprint 38 でそれが問題の名前として不正確だと分かった。**
+  現在の整理は下の Sprint 38 の節にある。
 - **P1-E** — 実行ロック(manual と scheduled の重複実行対策)。
 - **P1-C** — Queue 契約(`enqueueRoutine` の戻り値)。
 - retry policy。
@@ -238,6 +252,106 @@ median 35ms は警戒閾値の **0.023%**、edge 制限の **0.012%**。桁が4�
 **この表は 2026-08-09 時点の値であって、現在の値ではない。** 再確認するなら
 `railway logs --service autoops --deployment` の `tick finished` 行と、
 Postgres への read-only 照会から。
+
+### Sprint 38 — P1-B の分解、query shape の改善、テスト境界の確立
+
+#### P1-B は1つの問題ではなかった
+
+「P1-B = scheduler の `take`」は**問題の名前として不正確だった**。実際には別々の
+2問題が1つの名前に入っていて、**片方の道具でもう片方は解けない**。
+
+| | 問題 | 状態 |
+|---|---|---|
+| **P1-B1** | due result set / query volume | ↓ さらに2つに分かれる |
+| **P1-B1a** | 使わない列まで取得する query shape | **Sprint 38 で改善済み** |
+| **P1-B1b** | due 行数そのものが無制限 | **保留**(`take` 未採用 — 上の「決定済み」参照) |
+| **P1-B2** | inline execution による tick duration | **保留**。下記 |
+
+**`take` は tick duration を bound しない。** 5件 × 各10分 = 50分。件数の上限は
+所要時間の上限にならない。
+
+**dispatcher の time budget も hard limit にはならない。** 「経過が閾値を超えたら
+新規着手をやめる」は soft limit で、保証されるのは *新しく始めない* ことだけ。
+最悪の tick は `budget + 最後に始めた1件` ≒ budget + 600秒(provider timeout)に
+なる。**provider timeout が edge の 300秒を上回っている限り、budget をいくつに
+しても 300秒は保証できない。** よって P1-B2 は単独課題ではなく、provider timeout
+/ cancellation / execution ownership と同じ **P1-D の execution lifecycle** 側で
+扱う。
+
+**150秒は observability の閾値であって、execution control の値ではない。**
+同じ数を両方に使うと、`warn` が出るティックは常に切り詰められたティックになり、
+「遅かった」と「切り詰めた」がログ上で区別できなくなる。
+
+#### P1-B1a — `getDueWorkers` の query shape、完了
+
+- 変更前は `Routine` の全列。dispatcher が使わない `prompt`(上限1万文字)まで、
+  due な worker の数だけ毎ティック読んでいた。
+- 変更後は dispatcher が実際に読む7列だけ — `id` / `userId` / `nextRunAt` /
+  `frequency` / `runAtMinutes` / `runAtWeekday` / `runAtDay`。
+  全参照行を列挙して確定した最小集合で、過不足はない。
+- 戻り値は `DueWorker` — **`Routine` の `Pick` projection**。独立した型にすると
+  同じ列が2箇所で別の型に書かれうる。`as` も `any` も使っていない。
+- **変えていないもの:** `where`(`status = "active"` / `nextRunAt <= now`)、
+  `orderBy`(`nextRunAt` 昇順)、schedule semantics、claim semantics、
+  dispatcher の実行順序、API 契約。**取得する列だけが変わった。**
+- `prompt` は execution が実行時に自分で読み直すので、dispatch 経路では最初から
+  一度も参照されていなかった。
+
+#### Queue 契約 — 変更していない
+
+`enqueueRoutine(routineId): Promise<RunHistory>` のまま。inline 実行の**完了結果**
+を返しており、同期実行では成立するが、**transport queue や Worker Service へ
+そのまま移送できる契約ではない**(完了済みの run を transport は返せない)。
+
+- Queue identity と `RunHistory` identity を**分けるのが有力な方向**。ただし
+  実装方式は**未決**。
+- **retry / attempt / 冪等キーを Queue 契約に先に載せない。** 載せた時点で
+  retry policy を暗黙に決めたことになる。
+- C2(enqueue 時に行を作る)を採らない理由は上の「決定済み」に書いた。
+
+なお **scheduled 側は今日この時点でも契約変更に耐える** — dispatcher は
+`enqueueRoutine` の戻り値を捨てている。依存しているのは手動実行だけで、
+そちらは `status` を読んでトーストを出し分けている。
+
+#### retry — 変わっていない
+
+dispatcher は retry 方針を持たない。SDK は `maxRetries: 0`。`ProviderErrorKind`
+は今も observability 専用。**本番の provider failure は依然0件**で、方針を
+根拠付きで選ぶための材料がない。claim 後の失敗がスロットを消費する既定も維持。
+
+#### テスト境界 — `server-only` は障害ではなくなった
+
+**追加依存も DB も CI 変更もなしに、`server-only` を持つモジュールを Vitest から
+テストできる。** `vitest.config.mts` で
+
+```
+server-only → node_modules/server-only/empty.js
+```
+
+に alias するだけ。**自作スタブではなく、Next.js が `react-server` 条件で実際に
+解決するファイルそのもの**を指しているので、両者が食い違わない。
+
+これで scheduler / dispatcher / health / overview が届くようになった
+(Test Files 5 / Tests 85)。押さえたのは due query の契約(status / 範囲 / 順序 /
+select 列)、claim の勝者と敗者、claim → hand-off の順序、worker 単位の失敗隔離、
+`dispatched` と `failed` の意味、stuck と overdue の境界値。
+
+**worker 間の逐次性は契約として固定していない。** 結果の集合は逐次でも並行でも
+同じで、二重実行を防いでいるのは claim であって順番ではない。固定すれば、
+並行度を検討する日にまずテストを壊さないと議論が始められなくなる。
+**一方、1 worker 内の claim → enqueue の順序は契約なのでテストしてある** —
+逆にすると「実行中のクラッシュ」が「重複実行」に変わる。
+
+#### 小さな負債 — frequency の fallback が2箇所にある
+
+`toRoutine` と `getDueWorkers` の両方に `isRoutineFrequency(...)` で読めなければ
+`"manual"`、という fallback がある。**認識しているが今は共通化しない** — 値域
+判定自体は `isRoutineFrequency` に集約済みで、重複しているのは適用側だけ。
+共通化すると `types` / `routines` / `scheduler` に変更が広がる。
+
+**恒久的に許容すると決めたわけではない。** 3箇所目が必要になったとき、
+`"manual"` という fallback の意味を変えるとき、DB の string → ドメイン型の変換を
+体系的に整理するとき、同種の projection が増えたときに再評価する。
 
 ### 未確認 — 別途扱う
 
