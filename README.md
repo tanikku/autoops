@@ -548,6 +548,46 @@ over keeps its claim. That is also what makes a lost process recoverable: a
 lease left behind by a process that died lapses on its own, and nothing has to
 sweep it up.
 
+#### When the outcome cannot be written
+
+Recording what a run did is a second write, and it can fail on its own. **That
+is not the run failing**, and it is not stored as one.
+
+The execution and the writing of its result sit in different places now. What
+can go wrong inside the run — a prompt, a model — becomes a `failed` row with
+the reason in `errorMessage`, exactly as before. What can go wrong afterwards
+leaves as a `RunPersistenceError`:
+
+```
+create the row      failure → the run never started; the tick counts it as failed
+  │
+run it              failure → a `failed` row, with the reason
+  │
+write the outcome   failure → nothing further is written; the error is raised
+```
+
+**Nothing writes a `failed` row after a run has succeeded.** It used to: the
+write that stores a success shared a `try` with the execution, so a database
+that refused it sent a working run down the failure path and stored the
+database's complaint where the model's answer belonged. The answer was gone
+and the two causes were indistinguishable afterwards.
+
+What is left instead is the row as it last stood — the `running` it was created
+with. A row sitting there long enough is what [Worker Health](#worker-health)
+already reads as running longer than expected, so this surfaces without a
+status of its own. **It is one of the ways that can happen, not the only one**,
+and the two are not distinguishable from the row.
+
+**Whether anything was written is genuinely unknown.** A driver that throws
+after reaching the server may be reporting a lost response rather than a
+rejected statement, so the row may be `running` or may be exactly what the
+write intended. Nothing reads it back to find out, and nothing tries the write
+again — **there is no retry**, and see the [Backlog](#backlog) for why one is
+not obviously right.
+
+A tick counts such a worker as **dispatched**: it was started, which is what
+that number means. The event is in the server log, with the worker's id.
+
 #### Missed slots are dropped, not replayed
 
 A week of downtime leaves a daily worker seven slots behind. Advancing one
@@ -610,6 +650,7 @@ number:
 | Could not hand the worker off | `failed` | The tick's result, and a log line with the worker's id |
 | The run itself failed | `dispatched` | A `failed` row in the run history, and the [health summary](#worker-health) |
 | The worker was already running | **neither** | A log line with the worker's id, and nothing else — see [One run at a time](#one-run-at-a-time) |
+| Its outcome could not be written down | `dispatched` | A log line with the worker's id — see [When the outcome cannot be written](#when-the-outcome-cannot-be-written) |
 
 **The third row is the one that leaves no trace in the numbers.** A worker
 already running was not handed off and did not go wrong, so counting it as
@@ -1200,14 +1241,13 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
   summary counts it as neither. **Unrelated to timeouts** — a request that times
   out throws, and a throw is recorded like any other failure
 
-- **A run that worked can be recorded as one that failed.** The write that
-  stores a success sits inside the same `try` as the execution, so if that
-  write is what fails, the `catch` runs and stores a `failed` run instead —
-  carrying the database's complaint as its reason, with the model's answer
-  gone. The two outcomes are indistinguishable afterwards: a failure of the
-  provider and a failure to write down a success both arrive as a `failed` row.
-  **Separating them means deciding what `failed` means**, which is the same
-  question `errorKind` waits on, so both are still open
+- **A run whose outcome could not be written down leaves no record of what it
+  did.** The failure is reported rather than stored — see [When the outcome
+  cannot be written](#when-the-outcome-cannot-be-written) — so the row keeps
+  whatever was last written to it, which is the `running` it was created with.
+  Nothing writes it down later: **there is no retry of the write**, and adding
+  one raises questions of its own, since a write that threw may have landed
+  and repeating it would be guessing which
 
 - Nothing about a failed run says what *kind* of failure it was. The kind is
   worked out at the provider boundary and written to the log; storing it means

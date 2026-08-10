@@ -448,10 +448,44 @@ dispatcher は消えた worker を `failed` に数える設計なので、それ
   値域も retryability も観測なしに固定できない。「`errorMessage` を足すなら
   ついでに `errorKind` も」は**禁止された思考**。
 - **retry も未決。** 上の既存決定をすべて維持。
-- **completed 書き込み失敗の問題は解決していない。** 成功した実行の書き込みが
-  失敗すると catch に入り、**`failed` 行に DB のエラーが入り、モデルの出力は
-  失われる**。今回 try/catch の範囲を変えていないため**挙動は変わっていない**。
-  Sprint 39 の別 Day で明示的に扱う。
+- **completed 書き込み失敗**は Day 2 時点では未解決だった。**Sprint 39 Day 4 で
+  境界を分離した**(下の節)。
+
+### Sprint 39 — execution result と persistence result の分離
+
+**「実行が失敗した」と「結果を書けなかった」を別の事象として扱う。**
+
+以前は `update(completed)` が実行と同じ `try` の中にあり、DB がそれを拒否すると
+catch に落ちて **`failed` 行に DB の苦情が入り、モデルの出力は消えていた**。
+2つの原因は事後に区別できなかった。
+
+```
+create(running)   失敗 → 実行は始まっていない。tick は failed に数える(既存どおり)
+run               失敗 → failed 行 + errorMessage(既存どおり)
+write outcome     失敗 → 何も書かず RunPersistenceError を投げる
+```
+
+| | 実装 |
+|---|---|
+| 型 | `RunPersistenceError`(`phase` は `"completed"` / `"failed"`、`runId`、`cause`)と `isRunPersistenceError`。**`ExecutionSuppressedError` と同じ最小構成**。framework は作っていない |
+| **成功後の書き込み失敗** | **`failed` 行を一切書かない。** 投げるだけ |
+| 失敗の書き込み失敗 | 同じく投げる。**`failed` 行が無いのに `failed` を返すことはしない**。実行失敗のログは先に出ているので**両方が追える** |
+| 残る行 | 最後に確実に書けた状態 = **`running`**。`STUCK_THRESHOLD_MS` の既存導出が拾いうる |
+| dispatcher | **`dispatched` に入れる**(start はできたため)。`failed` の意味は拡張しない。`DispatchResult` の形も Cron API も未変更 |
+| `nextRunAt` | **戻さない**(Sprint 18 の決定を維持) |
+| manual | 「started, but its outcome could not be recorded.」`ActionResult` の形は未変更 |
+| ログ | **`ProviderErrorKind` は provider の失敗にしか使わない。** DB のエラーを `kind=unknown` として記録していた問題は解消 |
+
+**書けたかどうかは判定できない。** サーバに到達してから応答を失った場合、
+`UPDATE` は適用済みかもしれない(Prisma の P1002 は "reached but timed out")。
+**読み直して確かめる recovery も、書き込みの retry も入れていない。**
+
+- **stuck = persistence failure ではない。** persistence failure は `running` が
+  残る**原因の1つ**にすぎず、行からは区別できない。
+- **DB persistence retry は Backlog。** 一度 throw した書き込みが実は成功して
+  いた可能性があるため、単純な再試行は「どちらか分からないものを上書きする」
+  ことになる。
+- `errorKind` の永続化、retry policy、`output` の保全はいずれも**未決のまま**。
 
 ### 未確認 — 別途扱う
 
