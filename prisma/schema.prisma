@@ -50,6 +50,27 @@ model Routine {
   /// pending slot already falls on.
   runAtDay    Int?
   nextRunAt   DateTime?
+  /// Who currently holds the right to execute this worker, as an opaque token
+  /// minted per acquisition. Null means nobody does.
+  ///
+  /// **Execution ownership, not the scheduled slot.** `nextRunAt` says which
+  /// slot has been taken; this says whether a run is already under way, and it
+  /// applies to hand-started runs as much as to scheduled ones.
+  ///
+  /// It is neither a job id nor an execution id, and nothing outside the lease
+  /// primitive reads it — a run is identified by its `RunHistory` row.
+  executionOwner      String?
+  /// When the current holder's claim lapses, after which another may take it.
+  ///
+  /// **Expiry is what keeps a lost process from blocking a worker forever.** A
+  /// run that dies without releasing leaves the columns set; the next attempt
+  /// takes over once this instant has passed. Nothing sweeps them.
+  ///
+  /// The consequence is that this is *not* an unconditional guarantee of one
+  /// execution at a time: a run outliving its lease can overlap with the one
+  /// that takes over. What is guaranteed is that the older holder cannot
+  /// release the newer one's claim — see `lib/execution-lease.ts`.
+  executionLeaseUntil DateTime?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)

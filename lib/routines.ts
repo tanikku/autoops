@@ -12,15 +12,39 @@ export type RoutineRecord = Awaited<
   ReturnType<typeof prisma.routine.findFirstOrThrow>
 >;
 
-// `status` and `frequency` are plain string columns, so narrow them at the
-// boundary — the database will accept anything the application does not.
+/**
+ * Turns a stored row into the worker the rest of the application sees.
+ *
+ * Two things happen here. `status` and `frequency` are plain string columns,
+ * so they are narrowed — the database will accept anything the application
+ * does not. And every field is named rather than spread, which decides what a
+ * row is allowed to carry outwards.
+ *
+ * **The naming is what keeps execution ownership off the wire.** `Routine`
+ * reaches client components, so a spread would send `executionOwner` and
+ * `executionLeaseUntil` to the browser the moment those columns existed —
+ * internal execution state travelling with a worker that has no use for it.
+ * Listing the fields makes exposure something a column opts into: a new one
+ * stays server-side until somebody adds it here, and a field `Routine`
+ * requires but this omits is a type error rather than an absence noticed later.
+ */
 export function toRoutine(record: RoutineRecord): Routine {
   return {
-    ...record,
+    id: record.id,
+    userId: record.userId,
+    name: record.name,
+    description: record.description,
+    prompt: record.prompt,
     status: isRoutineStatus(record.status) ? record.status : "draft",
     frequency: isRoutineFrequency(record.frequency)
       ? record.frequency
       : "manual",
+    runAtMinutes: record.runAtMinutes,
+    runAtWeekday: record.runAtWeekday,
+    runAtDay: record.runAtDay,
+    nextRunAt: record.nextRunAt,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
   };
 }
 
