@@ -135,7 +135,19 @@ export default async function RunDetailPage({
 
         <Block label="Prompt" value={run.routinePrompt} />
         <Block label="Rendered Prompt" value={renderedPrompt} />
-        <Block label="Output" value={run.output} />
+        {/*
+          A failed run has no output, and calling its reason one was the older
+          shape of this page: the two shared a column, so the heading described
+          whichever had been written. They are separate now, and this is the
+          one screen the diagnostic belongs on — it is the provider's wording,
+          or a driver's, and it is read by someone who came here to find out
+          what went wrong. The activity list deliberately shows neither.
+        */}
+        {run.status === "failed" ? (
+          <Block label="Error" value={run.errorMessage ?? ""} />
+        ) : (
+          <Block label="Output" value={run.output} />
+        )}
       </main>
     </div>
   );

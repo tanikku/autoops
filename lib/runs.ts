@@ -20,11 +20,25 @@ const provider = createAIProvider();
 
 type RunRecord = Awaited<ReturnType<typeof prisma.runHistory.findFirstOrThrow>>;
 
-// `status` is a plain string column, so narrow it at the boundary.
+/**
+ * Turns a stored row into the run the rest of the application sees.
+ *
+ * `status` is a plain string column, so it is narrowed here — the database
+ * will accept anything the application does not. Every other field is named
+ * rather than spread, for the same reason `toRoutine` names its own: a run
+ * reaches client components, so what a column carries outwards should be
+ * something it opts into rather than something it gets by default.
+ */
 function toRun(record: RunRecord): RunHistory {
   return {
-    ...record,
+    id: record.id,
+    routineId: record.routineId,
+    userId: record.userId,
     status: isRunStatus(record.status) ? record.status : "running",
+    startedAt: record.startedAt,
+    finishedAt: record.finishedAt,
+    output: record.output,
+    errorMessage: record.errorMessage,
   };
 }
 
@@ -167,7 +181,12 @@ async function execute(
 
     const finished = await prisma.runHistory.update({
       where: { id: run.id },
-      data: { status: "completed", finishedAt: new Date(), output },
+      data: {
+        status: "completed",
+        finishedAt: new Date(),
+        output,
+        errorMessage: null,
+      },
     });
 
     return toRun(finished);
@@ -175,12 +194,10 @@ async function execute(
     // Without this the row stays "running" forever and the failure is
     // invisible to the health summary.
     //
-    // **The kind is logged, not stored.** Every failure is still one `failed`
-    // row carrying one string, exactly as before — deciding what a column
-    // should be called means deciding what `failed` means, and that is not
-    // settled. What this line buys is the evidence to settle it with: until
-    // now nothing anywhere recorded whether a run died of a rate limit or of
-    // a refusal.
+    // **The kind is logged, not stored.** What is stored is the message; the
+    // kind stays in the log, because naming a column for it means deciding
+    // what `failed` means and that is not settled. Until a production failure
+    // has actually happened there is nothing to decide it against.
     console.error(
       "[worker] run failed —",
       providerErrorKind(error),
@@ -188,12 +205,20 @@ async function execute(
       error,
     );
 
+    // **The reason goes in its own column, and `output` stays empty.** It used
+    // to hold whichever of the two the run happened to produce, which meant
+    // neither could be read without checking `status` first — and neither
+    // place that reads it did. Nothing about the string itself changed: it is
+    // the same message this recorded before, still the failure's own wording
+    // rather than something written for the worker's owner.
     const failed = await prisma.runHistory.update({
       where: { id: run.id },
       data: {
         status: "failed",
         finishedAt: new Date(),
-        output: error instanceof Error ? error.message : "Execution failed.",
+        output: "",
+        errorMessage:
+          error instanceof Error ? error.message : "Execution failed.",
       },
     });
 

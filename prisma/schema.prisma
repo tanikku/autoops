@@ -96,7 +96,18 @@ model RunHistory {
   status     String    @default("running")
   startedAt  DateTime  @default(now())
   finishedAt DateTime?
+  /// What the model produced. **Only ever that** — a run that failed leaves it
+  /// empty rather than borrowing it for a reason.
   output     String    @default("")
+  /// Why a run failed, for whoever is looking into it. Null on every run that
+  /// did not fail, which is what makes the two columns readable without
+  /// consulting `status` first.
+  ///
+  /// **A diagnostic, not a message written for the person whose worker it
+  /// is.** It carries whatever the failure said — a provider's own wording, or
+  /// a database driver's — so it belongs on the execution's own page and not
+  /// in a list someone is scanning.
+  errorMessage String?
   routine    Routine   @relation(fields: [routineId], references: [id], onDelete: Cascade)
   user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 

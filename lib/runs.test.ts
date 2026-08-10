@@ -56,7 +56,13 @@ const RUN_ROW = {
   startedAt: new Date("2026-08-10T12:00:00.000Z"),
   finishedAt: null,
   output: "",
+  errorMessage: null,
 };
+
+/** What the outcome write was asked to store. */
+function written() {
+  return mocks.update.mock.calls[mocks.update.mock.calls.length - 1][0].data;
+}
 
 beforeEach(() => {
   mocks.acquire.mockReset().mockResolvedValue(LEASE);
@@ -129,8 +135,88 @@ describe("runRoutine — lease acquired", () => {
   it("does not touch the schedule", async () => {
     await runRoutine("worker-1");
 
-    const written = mocks.create.mock.calls[0][0].data;
-    expect(written).not.toHaveProperty("nextRunAt");
+    const created = mocks.create.mock.calls[0][0].data;
+    expect(created).not.toHaveProperty("nextRunAt");
+  });
+});
+
+/**
+ * Which column carries what, and the rule underneath it: `output` is the
+ * model's, `errorMessage` is the failure's, and neither has to be read through
+ * `status` to know which it is. They shared a column until Sprint 39, and both
+ * screens that read it rendered whichever had been written as output.
+ */
+describe("runRoutine — what a run records", () => {
+  it("stores the model's answer and no error when it worked", async () => {
+    mocks.execute.mockResolvedValue("the answer");
+
+    await runRoutine("worker-1");
+
+    expect(written()).toMatchObject({
+      status: "completed",
+      output: "the answer",
+      errorMessage: null,
+    });
+  });
+
+  it("stores the reason and no output when the provider failed", async () => {
+    mocks.execute.mockRejectedValue(new Error("rate limited"));
+
+    await runRoutine("worker-1");
+
+    expect(written()).toMatchObject({
+      status: "failed",
+      output: "",
+      errorMessage: "rate limited",
+    });
+  });
+
+  /**
+   * A refusal arrives as an ordinary `Error`, so its wording travels the same
+   * path — unchanged, as it has since Sprint 36.
+   */
+  it("keeps a refusal's own wording", async () => {
+    mocks.execute.mockRejectedValue(
+      new Error("Claude declined to answer this prompt."),
+    );
+
+    await runRoutine("worker-1");
+
+    expect(written().errorMessage).toBe(
+      "Claude declined to answer this prompt.",
+    );
+  });
+
+  /**
+   * Something thrown that is not an `Error` has no message to carry, so the
+   * fallback stands in — now in the column meant for it.
+   */
+  it("falls back for something thrown that is not an Error", async () => {
+    mocks.execute.mockRejectedValue("not an error");
+
+    await runRoutine("worker-1");
+
+    expect(written()).toMatchObject({
+      output: "",
+      errorMessage: "Execution failed.",
+    });
+  });
+
+  /**
+   * A run in progress has produced neither. The row is created without either
+   * column, so the schema's own default answers for `output` and `NULL` for
+   * `errorMessage` — which is what makes "empty" mean the same thing on a run
+   * that is still going and one that failed.
+   */
+  it("creates a run carrying neither an answer nor a reason", async () => {
+    await runRoutine("worker-1");
+
+    const created = mocks.create.mock.calls[0][0].data;
+    expect(created).toEqual({
+      routineId: "worker-1",
+      userId: "user-1",
+      status: "running",
+    });
   });
 });
 

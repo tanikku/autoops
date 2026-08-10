@@ -47,6 +47,7 @@ function entry(startedAt: Date): RunHistoryEntry {
     startedAt,
     finishedAt: startedAt,
     output: "",
+    errorMessage: null,
     routineName: "Worker",
   };
 }

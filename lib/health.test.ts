@@ -29,6 +29,7 @@ function run(overrides: Partial<RunHistory> = {}): RunHistory {
     startedAt: new Date("2026-08-10T11:59:00.000Z"),
     finishedAt: new Date("2026-08-10T11:59:30.000Z"),
     output: "",
+    errorMessage: null,
     ...overrides,
   };
 }

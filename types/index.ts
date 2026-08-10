@@ -114,7 +114,16 @@ export type RunHistory = {
   status: RunStatus;
   startedAt: Date;
   finishedAt: Date | null;
+  /** What the model produced. Empty on a run that failed or is still going. */
   output: string;
+  /**
+   * Why a run failed, or null when it did not.
+   *
+   * Kept apart from `output` so neither has to be read through `status` to
+   * know what it is. It is a diagnostic — a provider's wording, or a driver's
+   * — which is why it belongs on one execution's page rather than in a list.
+   */
+  errorMessage: string | null;
 };
 
 /** A run joined with the name of the routine it belongs to. */
