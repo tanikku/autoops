@@ -797,6 +797,20 @@ worker needs no cleanup code.
 narrows them at the boundary and falls back to `draft` / `manual` on anything
 unrecognised. The same applies to `RunHistory.status`.
 
+What a run records is split so that neither half has to be read through
+`status` to know what it is:
+
+| Column | Type | Holds |
+| --- | --- | --- |
+| `RunHistory.output` | `String` (default `""`) | What the model produced, and only that. Empty on a run that failed or is still going |
+| `RunHistory.errorMessage` | `String?` | Why a run failed. Null on every run that did not |
+
+**They used to be one column.** A failed run put its reason in `output`, so the
+same field meant two things and the reader had to know which — and neither
+screen that showed it checked. The reason is a diagnostic in whatever wording
+the failure arrived with, so it belongs on one execution's page rather than in
+a list; the activity feed shows output alone.
+
 **Every stored `DateTime` is UTC**, which is what makes them comparable and
 what the scheduler relies on. A timezone changes how they are read, never what
 is stored.
@@ -960,18 +974,23 @@ later — while a refusal is a property of the prompt and will not. That is the
 distinction a retry policy would be built on, and until now nothing recorded
 it: every failure became one `failed` row carrying one string.
 
-**The row is still exactly that.** The kind is written to the server log and
-nowhere else, and what a failed run stores is the provider's own message,
-byte for byte what it stored before. Naming a column means deciding what
-`failed` means, and that question is [still open](#backlog) — an observation
-that rewrote the rows it observed would be worth nothing. What changed is that
-the evidence for answering it now exists.
+**The kind is still written to the server log and nowhere else.** Naming a
+column for it means deciding what `failed` means, and that question is [still
+open](#backlog) — and nothing has happened in production to answer it with,
+since no run has ever failed there. What changed is that the evidence for
+answering it would now exist.
+
+**The message itself is stored, and it is stored on its own.** A failed run
+records the failure's own wording — the same string as before, unchanged — in
+`errorMessage`, while `output` stays empty. The two used to share one column,
+which meant neither could be read without checking `status` first, and neither
+of the two screens that read it did.
 
 A `ProviderError` also carries `safeMessage`: the same failure said without
-naming a status code, a model, or an SDK. **Nothing reads it yet.** It is there
-so the wording exists before anything decides where it belongs — the run detail
-page currently shows the stored message, which is written for whoever is
-debugging the provider rather than for the person whose worker failed.
+naming a status code, a model, or an SDK. **Nothing reads it yet**, and
+separating the columns did not change that. What is stored is a diagnostic
+written for whoever is debugging the provider, which is why one execution's own
+page shows it and the activity list does not.
 
 ### Prompt Variables
 
@@ -1180,6 +1199,20 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
   to record it with. The row is neither a success nor a failure, and the health
   summary counts it as neither. **Unrelated to timeouts** — a request that times
   out throws, and a throw is recorded like any other failure
+
+- **A run that worked can be recorded as one that failed.** The write that
+  stores a success sits inside the same `try` as the execution, so if that
+  write is what fails, the `catch` runs and stores a `failed` run instead —
+  carrying the database's complaint as its reason, with the model's answer
+  gone. The two outcomes are indistinguishable afterwards: a failure of the
+  provider and a failure to write down a success both arrive as a `failed` row.
+  **Separating them means deciding what `failed` means**, which is the same
+  question `errorKind` waits on, so both are still open
+
+- Nothing about a failed run says what *kind* of failure it was. The kind is
+  worked out at the provider boundary and written to the log; storing it means
+  fixing a set of values and what each implies, and **no run has ever failed in
+  production**, so there is nothing to fix them against yet
 
 - **Execution stays on the HTTP request, deferred rather than dismissed.**
   Moving it to a resident worker process was evaluated in Sprint 37 and not

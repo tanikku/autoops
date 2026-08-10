@@ -106,7 +106,7 @@
 **ここに commit hash は書きません** — このファイル自体が git 管理下にあるため、書いた瞬間に1つ古くなります。
 進捗の実際は git が持っています(冒頭の手順2)。
 
-**現在地点: Sprint 38 Day 3 まで完了。CI 緑。**
+**現在地点: Sprint 38 完了、Sprint 39 進行中。CI 緑。**
 
 完了済み:
 
@@ -128,7 +128,10 @@
 - Sprint 37 — **Execution Architecture の決定**(A 採用 / B0 保留)と、
   tick duration の観測。詳細は下の節。
 - Sprint 38 — **P1-B の分解**、`getDueWorkers` の query shape 改善(P1-B1a)、
-  `server-only` を含むモジュールのテスト境界の確立。詳細は下の節。
+  `server-only` を含むモジュールのテスト境界の確立、**P1-E execution lease**。
+  詳細は下の節。
+- Sprint 39 — **`RunHistory` の失敗データを `output` から分離**(`errorMessage`)。
+  詳細は下の節。
 
 ### Sprint 36 — 失敗の分類(第1段階)と scheduler の index、完了
 
@@ -140,12 +143,14 @@
 - `ClaudeProvider` が SDK の例外を分類する。判定は**エラークラスの列挙ではなく
   `status`** で行い、接続系2クラスだけ先に見る(`APIConnectionTimeoutError` は
   `APIConnectionError` の子なので順序が逆だと潰れる)。
-- **kind は現時点でログにしか出ない。** `RunHistory` の schema も保存契約も
-  変更していない。
+- **kind は今もログにしか出ない。** Sprint 36 時点では `RunHistory` の schema も
+  保存契約も変更していない(**列の分離は Sprint 39。下の節を参照**)。
 - `ProviderError.message` は **SDK の `error.message` をそのまま**保持する。
-  `RunHistory.output` に入る文字列は従来と byte 単位で同一 — 拒否時の
-  `"Claude declined to answer this prompt."` も、Error でない値の rethrow も
-  そのために維持している。**観測が観測対象を書き換えては意味がない。**
+  当時 `RunHistory.output` に入っていた文字列は従来と byte 単位で同一だった —
+  拒否時の `"Claude declined to answer this prompt."` も、Error でない値の
+  rethrow もそのために維持している。**観測が観測対象を書き換えては意味がない。**
+  **その文字列自体は今も同じで、Sprint 39 で入る列が変わっただけ**
+  (`output` → `errorMessage`)。
 - `safeMessage` は kind から導出して持つが、**DB にも UI にも使っていない**。
   置き場所(列 / 画面 / どちらでもない)を決める前に文言だけ用意してある状態。
 
@@ -405,6 +410,48 @@ dispatcher は消えた worker を `failed` に数える設計なので、それ
 **恒久的に許容すると決めたわけではない。** 3箇所目が必要になったとき、
 `"manual"` という fallback の意味を変えるとき、DB の string → ドメイン型の変換を
 体系的に整理するとき、同種の projection が増えたときに再評価する。
+
+### Sprint 39 — `RunHistory` の失敗データを `output` から分離
+
+**`errorMessage String?` を追加した。** `output` は `String @default("")` のまま
+— **nullable にしていない**。
+
+| status | `output` | `errorMessage` |
+|---|---|---|
+| `running` | `""`(schema default) | `null` |
+| `completed` | モデルの生成結果 | `null` |
+| `failed` | **`""`** | 失敗の文言 |
+
+**分離した理由は「1列が2つの意味を持つから」だけではない。** 読み手が2箇所
+(Activity 一覧と Execution 詳細)あり、**どちらも `status` を見ずに描画していた**。
+失敗した run では SDK 由来の診断文が一覧にインライン表示され、詳細では見出し
+"Output" の下に出ていた。**意味は誰も解釈していなかった。**
+
+- **保存する文字列は変えていない。** `error instanceof Error ? error.message :
+  "Execution failed."` のまま。入る列が変わっただけ。
+- **`safeMessage` は今回も使っていない。** DB 保存用に切り替えていない。
+  provider-facing / user-facing の文言設計は**別判断として未決**。
+- **`ProviderErrorKind` は保存していない。** ログのみ継続。
+- 表示は **Activity には出さず、Execution 詳細だけに出す**。診断文は一覧性の
+  ための場所ではない。`status === "failed"` のとき見出しは "Error"。
+- **Activity のコードは1行も変えていない。** 失敗時の `output` が `""` になった
+  ことで、既存の `run.output ? ... : null` が自動的に何も出さなくなる。
+- `toRun` を `toRoutine` と同じく**全フィールド名指し**にした。列の公開を
+  opt-in にするため。
+
+**本番 `RunHistory` は0件だったので backfill も dual-read も不要だった。**
+この機会は行が生まれた時点で失われる。
+
+#### 今回解決していないこと(重要)
+
+- **`errorKind` の永続化は未決。** 本番の失敗が**1件も起きていない**ので、
+  値域も retryability も観測なしに固定できない。「`errorMessage` を足すなら
+  ついでに `errorKind` も」は**禁止された思考**。
+- **retry も未決。** 上の既存決定をすべて維持。
+- **completed 書き込み失敗の問題は解決していない。** 成功した実行の書き込みが
+  失敗すると catch に入り、**`failed` 行に DB のエラーが入り、モデルの出力は
+  失われる**。今回 try/catch の範囲を変えていないため**挙動は変わっていない**。
+  Sprint 39 の別 Day で明示的に扱う。
 
 ### 未確認 — 別途扱う
 
