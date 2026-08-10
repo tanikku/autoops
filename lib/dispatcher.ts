@@ -61,6 +61,21 @@ export type DispatchResult = {
  */
 export async function dispatchDueWorkers(now: Date): Promise<DispatchResult> {
   const dueWorkers = await getDueWorkers(now);
+
+  // **How many were due, before anything is decided about them.** The tick's
+  // own line says how many were handed off, and the two are not the same
+  // number: a slot lost to another tick, a worker already running, and a
+  // hand-off that threw all leave `dispatched` lower than this without any of
+  // them being wrong. Reading one without the other, a quiet platform and a
+  // dispatcher that has stopped working look identical.
+  //
+  // **It says nothing about whether that is a problem**, and nothing here
+  // decides. Zero is the ordinary answer on a platform with no scheduled
+  // workers, which is why it is written on every tick rather than only when
+  // there is something to report — "nothing was due" and "the tick did not run"
+  // are different, and only a line that always appears can tell them apart.
+  console.log(`[dispatcher] due workers — count=${dueWorkers.length}`);
+
   const dispatched: string[] = [];
   let failed = 0;
 
