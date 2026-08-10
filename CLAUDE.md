@@ -97,6 +97,8 @@
 | `claimRoutineSlot` は **slot lock であって execution lock ではない** | 条件は `nextRunAt` にかかるので、保証されるのは「同じ scheduled slot が二度 dispatch されない」ことだけ。手動実行は `nextRunAt` を読み書きせず claim を通らないため、scheduled と手動、手動同士は重なりうる。**これを許容すると決めたわけではない** — execution exclusion の方針は未決 |
 | 実行の重複を **`RunHistory.status === "running"` の事前確認で防ぐ方式(E-2)は採らない** | check-then-act の隙間が残るうえ、2回目の write が失敗して `running` のまま残った行が1つあれば、その worker は二度と実行できなくなる。README Backlog の既知項目と正面衝突する。E-3(部分 unique index)/ advisory lock / lease は**未決** |
 | enqueue 時に `RunHistory` を作って id を返す方式(C2)は、**現行の `RunHistory` semantics のままでは採らない** | 行は execution 開始時に作られ、`startedAt` は実行開始時刻。Rendered Prompt の再構成(`promptVariables(run.startedAt)`)、実行時間の表示、stuck 判定の3つがすべてその意味に依存している。前倒しすれば3つが同時にずれる。**`RunHistory` 自体を将来再設計することを禁じるものではない** |
+| **execution ownership は correctness state**。observability ではないので DB に持ってよい | 判定基準は「読まれ方」。`stuck` は表示のためだけに読まれ、何の分岐にも使われないから DB に持たない。execution ownership は**実行するかしないかの分岐に使われる**。書いた値が振る舞いを変えるものは状態であって観測ではない |
+| **execution lease は無条件の at-most-once を保証しない** | 保証するのは「execution が lease TTL より長引かない限り、同一 Routine の同時実行を抑止する」まで。TTL を超えて生き残った実行と、乗っ取った実行は**現に重なる**。総実行時間に理論上の上界がない(接続待ちが無期限)以上、定数では保証できない。**owner token が守るのは「古い所有者が新しい所有者の lease を消さない」ことだけ** — ここを at-most-once と誤読して上に何かを積むと、再現しにくい形で壊れる |
 | `take` は **未採用**。ただし scheduler に置くことを永久に禁じたわけでもない | 本番 Routine 0件で行数の実害がなく、catch-up と組み合わせるとバックログが1 interval を超えた時点でスロットを静かに失う。tenant fairness の論点も未解決。**根拠が揃うまで入れない**、が理由のすべて |
 
 ## 現在地
@@ -253,7 +255,7 @@ median 35ms は警戒閾値の **0.023%**、edge 制限の **0.012%**。桁が4�
 `railway logs --service autoops --deployment` の `tick finished` 行と、
 Postgres への read-only 照会から。
 
-### Sprint 38 — P1-B の分解、query shape の改善、テスト境界の確立
+### Sprint 38 — P1-B の分解、query shape の改善、テスト境界、execution lease
 
 #### P1-B は1つの問題ではなかった
 
@@ -341,6 +343,57 @@ select 列)、claim の勝者と敗者、claim → hand-off の順序、worker �
 並行度を検討する日にまずテストを壊さないと議論が始められなくなる。
 **一方、1 worker 内の claim → enqueue の順序は契約なのでテストしてある** —
 逆にすると「実行中のクラッシュ」が「重複実行」に変わる。
+
+#### P1-E — execution lease(`runRoutine` に統合済み)
+
+**方式は E-5(Routine lease)を採用した。** 候補から外したのは E-2(`RunHistory.status`
+の事前確認)、E-3A(部分 unique index)、E-4(advisory lock)、E-7(Queue backend 単独)。
+E-6(別テーブル)は第二候補として残っている。
+
+**`runRoutine` が lease を取ってから実行する。** scheduled と manual の唯一の
+合流点がそこなので、**両経路が同じ lease を共有する** — 片方だけに掛けたのでは
+「scheduled × manual」の穴が閉じない。
+
+```
+scheduled: claimRoutineSlot → enqueueRoutine → runRoutine → acquire → 実行
+manual:    所有者確認        → enqueueRoutine → runRoutine → acquire → 実行
+```
+
+| 場面 | 挙動 |
+|---|---|
+| lease 取得成功 | `RunHistory` を `running` で作り、実行し、`completed`/`failed` に更新し、`finally` で release |
+| **lease 競合** | `ExecutionSuppressedError` を投げる。**`RunHistory` を作らず、provider も呼ばず、retry もしない** |
+| **dispatcher から見た競合** | **`dispatched` にも `failed` にも入れない。** ログのみ。「hand-off できなかった」でも「実行が失敗した」でもないため |
+| **競合時の scheduled slot** | **消費済みのまま。** claim は lease より前に済んでおり、`nextRunAt` を戻すことはしない |
+| **manual から見た競合** | 「既に実行中」として区別して伝える。`ActionResult` の形は変えていない |
+| release の失敗 | 実行結果を上書きしない。lease は失効で自己回復する |
+
+**`runRoutine` は Routine の読み取りを lease 取得より前に行う。** 削除済みの
+worker は acquire でも `count === 0` になり、**競合と区別がつかなくなる**ため。
+dispatcher は消えた worker を `failed` に数える設計なので、それが黙って
+「何も起きなかった」に変わってはいけない。
+
+| | |
+|---|---|
+| schema | `Routine` に nullable 2列。`executionOwner String?` / `executionLeaseUntil DateTime?`。**default なし**(NULL が「誰も持っていない」を正しく表す)、index なし |
+| owner token | acquire ごとの `randomUUID()`。**job identity でも execution id でもない。** UI にも `RunHistory` にも出さない |
+| acquire | `updateMany`(`id` 一致 かつ `leaseUntil` が NULL または `now` より前)→ `count === 1` が成功。`claimRoutineSlot` と同じ形。**transaction なし** |
+| release | `updateMany`(`id` と **`executionOwner` の両方**が一致)→ `count === 0` はエラーではなくログ対象。**例外を投げない** |
+| TTL | `EXECUTION_LEASE_MS = 900_000`。**provider timeout からは導出しない** — あちらは1つの provider の1リクエストの方針、こちらはプラットフォームの1実行の方針 |
+| heartbeat | **なし。** 理由は「失効が起きないから」ではなく、起きても owner token が状態を守るから |
+
+**失効判定には app clock を使う。** DB clock なら raw SQL が要り、AutoOps にはまだ
+1つもない。差が出るのは**書き込むプロセスが2つ以上あるとき**で、今は1つ。
+**Worker Service か replica 追加の前に再検討すること** — 時計がずれる相手と
+失効時刻を比べることになる。「app clock が永久に正解」と決めたわけではない。
+
+**`STUCK_THRESHOLD_MS`(`lib/health.ts`)と同じ15分だが、共有しない。** 片方は
+画面の文言を決め、もう片方は実行するかを決める。一度値が一致しただけの2つを
+同じ定数にすると、表示の都合で下げた閾値が実行を変える。
+
+**`toRoutine` は全フィールドを名指しで組み立てる。** スプレッドのままだと
+`executionOwner` / `executionLeaseUntil` が `Routine` に乗ってクライアントまで
+届く。名指しなら**列の公開は opt-in** になり、足し忘れは型エラーになる。
 
 #### 小さな負債 — frequency の fallback が2箇所にある
 

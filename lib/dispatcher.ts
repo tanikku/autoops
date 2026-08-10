@@ -1,5 +1,6 @@
 import "server-only";
 
+import { isExecutionSuppressed } from "@/lib/execution-lease";
 import { enqueueRoutine } from "@/lib/queue";
 import { claimRoutineSlot } from "@/lib/routines";
 import { advanceSchedule } from "@/lib/schedule";
@@ -46,6 +47,13 @@ export type DispatchResult = {
  * worker waits for its next one, exactly as it would if the process had died
  * mid-run. The only decision is to carry on with the rest of the list.
  *
+ * **A worker already running counts as neither.** Execution ownership is held
+ * per worker rather than per slot (`lib/execution-lease.ts`), so a slot can be
+ * won for a worker a hand-started run is in the middle of. Nothing is handed
+ * off and nothing goes wrong, so the tick reports neither — the event is in
+ * the log. **The slot is still spent**: it was claimed before any of this, and
+ * nothing here gives it back.
+ *
  * Returns the ids that were enqueued — the workers claimed rather than the
  * workers found — alongside a count of the ones that threw, so a caller can
  * tell "nothing was due" from "nothing worked".
@@ -64,6 +72,18 @@ export async function dispatchDueWorkers(now: Date): Promise<DispatchResult> {
       await enqueueRoutine(worker.id);
       dispatched.push(worker.id);
     } catch (error) {
+      // A worker that was already running is neither. Nothing was handed off,
+      // so it is not dispatched; nothing went wrong, so it is not failed. The
+      // slot it cost is spent either way — the claim above happened, and this
+      // does not undo it.
+      if (isExecutionSuppressed(error)) {
+        console.warn(
+          "[dispatcher] worker was already running — slot spent, nothing started",
+          worker.id,
+        );
+        continue;
+      }
+
       // The id is the point of this line: without it the log says a worker
       // failed and leaves you to guess which of them it was.
       console.error("[dispatcher] worker failed", worker.id, error);

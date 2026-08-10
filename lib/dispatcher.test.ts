@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ExecutionSuppressedError } from "@/lib/execution-lease";
 import type { DueWorker } from "@/lib/scheduler";
 
 /**
@@ -186,6 +187,63 @@ describe("dispatchDueWorkers", () => {
         dispatched: [],
         failed: 2,
       });
+    });
+  });
+
+  /**
+   * A worker already running is neither handed off nor broken, so it belongs
+   * in neither number. The tick sees it because execution ownership is held
+   * per worker while a slot is claimed per schedule — a hand-started run can
+   * be in progress on a worker whose slot just came due.
+   */
+  describe("a worker that was already running", () => {
+    it("is not counted as dispatched", async () => {
+      mocks.getDueWorkers.mockResolvedValue([due("busy")]);
+      mocks.enqueueRoutine.mockRejectedValue(
+        new ExecutionSuppressedError("busy"),
+      );
+
+      expect((await dispatchDueWorkers(NOW)).dispatched).toEqual([]);
+    });
+
+    it("is not counted as failed", async () => {
+      mocks.getDueWorkers.mockResolvedValue([due("busy")]);
+      mocks.enqueueRoutine.mockRejectedValue(
+        new ExecutionSuppressedError("busy"),
+      );
+
+      expect((await dispatchDueWorkers(NOW)).failed).toBe(0);
+    });
+
+    it("does not stop the workers behind it", async () => {
+      mocks.getDueWorkers.mockResolvedValue([due("busy"), due("free")]);
+      mocks.enqueueRoutine.mockRejectedValueOnce(
+        new ExecutionSuppressedError("busy"),
+      );
+
+      expect(await dispatchDueWorkers(NOW)).toEqual({
+        dispatched: ["free"],
+        failed: 0,
+      });
+    });
+
+    /**
+     * The claim happened before the hand-off, and nothing here gives it back.
+     * A worker that was busy has still spent the slot it was due for.
+     */
+    it("has already spent its slot, and nothing restores it", async () => {
+      mocks.getDueWorkers.mockResolvedValue([due("busy")]);
+      mocks.enqueueRoutine.mockRejectedValue(
+        new ExecutionSuppressedError("busy"),
+      );
+
+      await dispatchDueWorkers(NOW);
+
+      expect(mocks.claimRoutineSlot).toHaveBeenCalledTimes(1);
+      // The only write is the claim: the slot moved forward and stayed there.
+      expect(mocks.claimRoutineSlot.mock.calls[0][2]).toEqual(
+        new Date("2026-08-11T09:00:00.000Z"),
+      );
     });
   });
 

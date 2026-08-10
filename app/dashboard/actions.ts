@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { isExecutionSuppressed } from "@/lib/execution-lease";
 import { enqueueRoutine } from "@/lib/queue";
 import { deleteRoutine, getRoutine } from "@/lib/routines";
 import { requireUserId } from "@/lib/session";
@@ -58,6 +59,19 @@ export async function runRoutineAction(
   try {
     run = await enqueueRoutine(routineId);
   } catch (error) {
+    // Already running is not a failure — nothing was attempted, so there is
+    // nothing that went wrong. Saying so is the difference between "try again"
+    // and "wait": the run this button would have started is happening.
+    //
+    // Nothing else changes. The schedule is untouched, no run is recorded, and
+    // the worker is not queued behind the one in progress.
+    if (isExecutionSuppressed(error)) {
+      return {
+        status: "error",
+        message: `"${routine.name}" is already running.`,
+      };
+    }
+
     console.error("[worker] manual run failed", error);
     return { status: "error", message: `"${routine.name}" failed to run.` };
   }

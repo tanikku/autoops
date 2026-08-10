@@ -504,8 +504,49 @@ hand-started ones.
 
 That is the boundary of what this mechanism covers, stated because the two are
 easy to read as one: it makes a scheduled slot dispatch once, and it is not a
-lock on executing a worker. Whether concurrent execution should be prevented,
-and by what, is a different question and is not answered here.
+lock on executing a worker. Preventing two runs of the same worker at once is
+a separate mechanism, held per worker rather than per slot — see [One run at a
+time](#one-run-at-a-time).
+
+#### One run at a time
+
+A slot is claimed per schedule; the right to *execute* is held per worker, and
+the two are not the same thing. A hand-started run takes no slot, so nothing in
+the claim above notices it — which is exactly the case where the same worker
+could otherwise be running twice.
+
+**Execution holds a lease on the worker itself.** `runRoutine` takes it before
+it records anything and gives it back in the cleanup, and both paths into
+execution go through there, so a scheduled run and a hand-started one compete
+for the same thing:
+
+```
+scheduled   claim slot ──► hand off ──► take lease ──► run ──► release
+manual                     hand off ──► take lease ──► run ──► release
+```
+
+A second arrival finds the lease held and stops **before anything exists to
+describe it** — no run is recorded, no model is called, and nothing is retried.
+For a cron tick that is neither a hand-off nor a failure, so the tick counts it
+as neither; for someone pressing the button it reads as *already running*
+rather than as a failure. **The slot a scheduled run claimed is spent either
+way** — it was taken before the lease was asked for.
+
+**The lease lasts fifteen minutes and nothing renews it.** That is comfortably
+longer than the ten a single request is allowed, with the rest covering what
+happens around it. It is an allowance rather than a bound, and the difference
+matters:
+
+> **This is not an unconditional guarantee of one run at a time.** A run that
+> outlives its own lease no longer holds it, and the next attempt may take over
+> while the first is still going.
+
+What holds regardless is that the older run cannot undo the newer one. A lease
+is released only while the token that took it still matches, so a run tidying
+up after it has already lost its lease writes nothing, and the run that took
+over keeps its claim. That is also what makes a lost process recoverable: a
+lease left behind by a process that died lapses on its own, and nothing has to
+sweep it up.
 
 #### Missed slots are dropped, not replayed
 
@@ -568,6 +609,12 @@ number:
 | --- | --- | --- |
 | Could not hand the worker off | `failed` | The tick's result, and a log line with the worker's id |
 | The run itself failed | `dispatched` | A `failed` row in the run history, and the [health summary](#worker-health) |
+| The worker was already running | **neither** | A log line with the worker's id, and nothing else — see [One run at a time](#one-run-at-a-time) |
+
+**The third row is the one that leaves no trace in the numbers.** A worker
+already running was not handed off and did not go wrong, so counting it as
+either would say something untrue. Its slot is spent all the same: the claim
+happened before the hand-off, and nothing gives it back.
 
 #### `lib/schedule.ts` computes and nothing else
 
@@ -985,6 +1032,10 @@ Nothing due (`200`):
 ```json
 { "success": true, "dispatched": 0, "failed": 0 }
 ```
+
+**The same two zeroes also describe a tick whose due workers were all already
+running.** Neither outcome is counted, so the response cannot tell them apart —
+the log can, one line per worker.
 
 **A `200` with a non-zero `failed` is a partial success**, and the only signal
 in this response that anything went wrong — the loop no longer stops at the
