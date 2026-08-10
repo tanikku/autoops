@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { isExecutionSuppressed } from "@/lib/execution-lease";
 import { enqueueRoutine } from "@/lib/queue";
 import { deleteRoutine, getRoutine } from "@/lib/routines";
+import { isRunPersistenceError } from "@/lib/runs";
 import { requireUserId } from "@/lib/session";
 import type { ActionResult } from "@/types";
 
@@ -69,6 +70,18 @@ export async function runRoutineAction(
       return {
         status: "error",
         message: `"${routine.name}" is already running.`,
+      };
+    }
+
+    // The run reached a provider; what could not be written is what it did.
+    // **The wording stops short of saying the outcome was lost** — a driver
+    // that throws may be reporting a lost response rather than a rejected
+    // write, so whether the activity feed will show this run is not something
+    // this knows.
+    if (isRunPersistenceError(error)) {
+      return {
+        status: "error",
+        message: `"${routine.name}" started, but its outcome could not be recorded.`,
       };
     }
 

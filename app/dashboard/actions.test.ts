@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ExecutionSuppressedError } from "@/lib/execution-lease";
+import { RunPersistenceError } from "@/lib/runs";
 
 /**
  * What the button says back, and what it leaves alone.
@@ -81,6 +82,32 @@ describe("runRoutineAction", () => {
       status: "error",
       message: '"Daily digest" is already running.',
     });
+  });
+
+  /**
+   * The run reached a provider, so "failed to run" would be wrong — and so
+   * would claiming the result was lost, since a write that throws may have
+   * landed anyway. The sentence says what is known and stops there.
+   */
+  it("says the outcome could not be recorded rather than that the run failed", async () => {
+    mocks.enqueueRoutine.mockRejectedValue(
+      new RunPersistenceError("completed", "run-1"),
+    );
+
+    expect(await runRoutineAction(null, form("worker-1"))).toEqual({
+      status: "error",
+      message: '"Daily digest" started, but its outcome could not be recorded.',
+    });
+  });
+
+  it("says the same when a failure was the thing that could not be recorded", async () => {
+    mocks.enqueueRoutine.mockRejectedValue(
+      new RunPersistenceError("failed", "run-1"),
+    );
+
+    expect(
+      (await runRoutineAction(null, form("worker-1")))?.message,
+    ).toContain("could not be recorded");
   });
 
   it("still reports an ordinary failure as one", async () => {

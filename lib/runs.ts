@@ -21,6 +21,54 @@ const provider = createAIProvider();
 type RunRecord = Awaited<ReturnType<typeof prisma.runHistory.findFirstOrThrow>>;
 
 /**
+ * Which write could not be made — the record of a success, or of a failure.
+ *
+ * It exists for the log, where the two read very differently: one says a run
+ * that worked may not be written down, the other says a run that did not work
+ * may not be either. Nothing branches on it.
+ */
+type PersistencePhase = "completed" | "failed";
+
+/**
+ * The run happened; writing down what it did is what failed.
+ *
+ * **Not an execution failure, and the whole point is not to record it as
+ * one.** Until Sprint 39 the write that stores a success sat inside the same
+ * `try` as the execution, so a database that would not take it sent the run
+ * through the failure path — and a run that had worked was stored as `failed`,
+ * carrying the database's complaint where the model's answer should have been.
+ * The answer was gone and the two causes were indistinguishable afterwards.
+ *
+ * **What it does not claim is that nothing was written.** A driver that throws
+ * after reaching the server may be reporting a lost response rather than a
+ * rejected statement, and nothing here can tell which — so the row may be
+ * `running`, or may be exactly what the write intended. Reading it back to
+ * find out is recovery, and there is none.
+ *
+ * Deliberately unrelated to `ProviderErrorKind`: no model call went wrong.
+ */
+export class RunPersistenceError extends Error {
+  readonly runId: string;
+  readonly phase: PersistencePhase;
+
+  constructor(
+    phase: PersistencePhase,
+    runId: string,
+    options?: { cause?: unknown },
+  ) {
+    super(`Could not record the ${phase} state of run ${runId}.`, options);
+    this.name = "RunPersistenceError";
+    this.runId = runId;
+    this.phase = phase;
+  }
+}
+
+/** Whether a rejection means the outcome could not be written down. */
+export function isRunPersistenceError(error: unknown): boolean {
+  return error instanceof RunPersistenceError;
+}
+
+/**
  * Turns a stored row into the run the rest of the application sees.
  *
  * `status` is a plain string column, so it is narrowed here — the database
@@ -171,16 +219,54 @@ async function execute(
   userId: string,
   routinePrompt: string,
 ): Promise<RunHistory> {
+  // **Outside everything below**, because a run that has no row has not
+  // started. The dispatcher counts a worker it could not start as `failed`,
+  // and this is one of the ways that happens — it is not the same event as a
+  // run that ran and could not be written down.
   const run = await prisma.runHistory.create({
     data: { routineId, userId, status: "running" },
   });
 
+  // **Only the execution is inside this `try`.** The write that records a
+  // success used to be in here too, which meant a database that refused it
+  // sent a working run down the failure path. What can fail here is the
+  // prompt and the model, and both of those are results a run can have.
+  let output: string;
   try {
     const prompt = renderPrompt(routinePrompt, promptVariables());
-    const output = await provider.execute(prompt);
+    output = await provider.execute(prompt);
+  } catch (error) {
+    // **The kind is logged, not stored**, and it is logged only here — this is
+    // the one place the failure is a provider's. Naming a column for it means
+    // deciding what `failed` means, and that is not settled.
+    console.error(
+      "[worker] run failed —",
+      providerErrorKind(error),
+      "—",
+      error,
+    );
 
+    return recordFailure(run.id, error);
+  }
+
+  return recordSuccess(run.id, output);
+}
+
+/**
+ * Writes down that the run worked.
+ *
+ * A refusal from the database here says nothing about the run, which is why it
+ * leaves rather than turning into one. **Nothing writes a `failed` row after
+ * this point** — doing so would replace what happened with what could not be
+ * saved, and lose the answer on the way.
+ */
+async function recordSuccess(
+  runId: string,
+  output: string,
+): Promise<RunHistory> {
+  try {
     const finished = await prisma.runHistory.update({
-      where: { id: run.id },
+      where: { id: runId },
       data: {
         status: "completed",
         finishedAt: new Date(),
@@ -191,37 +277,52 @@ async function execute(
 
     return toRun(finished);
   } catch (error) {
-    // Without this the row stays "running" forever and the failure is
-    // invisible to the health summary.
-    //
-    // **The kind is logged, not stored.** What is stored is the message; the
-    // kind stays in the log, because naming a column for it means deciding
-    // what `failed` means and that is not settled. Until a production failure
-    // has actually happened there is nothing to decide it against.
     console.error(
-      "[worker] run failed —",
-      providerErrorKind(error),
-      "—",
+      "[worker] could not record a completed run — the run itself succeeded",
+      runId,
       error,
     );
 
-    // **The reason goes in its own column, and `output` stays empty.** It used
-    // to hold whichever of the two the run happened to produce, which meant
-    // neither could be read without checking `status` first — and neither
-    // place that reads it did. Nothing about the string itself changed: it is
-    // the same message this recorded before, still the failure's own wording
-    // rather than something written for the worker's owner.
+    throw new RunPersistenceError("completed", runId, { cause: error });
+  }
+}
+
+/**
+ * Writes down that the run failed, and why.
+ *
+ * **The reason goes in its own column and `output` stays empty.** The string
+ * is the failure's own wording, unchanged — a provider's message, a refusal's
+ * sentence, or the stand-in for something thrown that was not an `Error`.
+ *
+ * When even this cannot be written, the failure leaves as a persistence error
+ * rather than as a `failed` run: there is no row saying so, and returning one
+ * would be describing a record that does not exist. **Both halves are in the
+ * log** — the execution failure was written above before this was attempted.
+ */
+async function recordFailure(
+  runId: string,
+  cause: unknown,
+): Promise<RunHistory> {
+  try {
     const failed = await prisma.runHistory.update({
-      where: { id: run.id },
+      where: { id: runId },
       data: {
         status: "failed",
         finishedAt: new Date(),
         output: "",
         errorMessage:
-          error instanceof Error ? error.message : "Execution failed.",
+          cause instanceof Error ? cause.message : "Execution failed.",
       },
     });
 
     return toRun(failed);
+  } catch (error) {
+    console.error(
+      "[worker] could not record a failed run — the failure above is unrecorded",
+      runId,
+      error,
+    );
+
+    throw new RunPersistenceError("failed", runId, { cause: error });
   }
 }

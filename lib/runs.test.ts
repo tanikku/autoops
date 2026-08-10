@@ -43,7 +43,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-const { runRoutine } = await import("@/lib/runs");
+const { runRoutine, RunPersistenceError } = await import("@/lib/runs");
 const { ExecutionSuppressedError } = await import("@/lib/execution-lease");
 
 const LEASE = { token: "token-a", expiresAt: new Date("2026-08-10T12:15:00Z") };
@@ -101,6 +101,12 @@ describe("runRoutine — lease acquired", () => {
     expect(mocks.release).toHaveBeenCalledWith("worker-1", LEASE.token);
   });
 
+  /**
+   * A run with no row has not started, which is a different event from one
+   * that ran and could not be written down — the dispatcher counts the first
+   * as a worker it could not start and the second as one it did. The failure
+   * leaves as it arrived rather than becoming a persistence error.
+   */
   it("gives the lease back when the run row could not be created", async () => {
     mocks.create.mockRejectedValue(new Error("write failed"));
 
@@ -108,10 +114,19 @@ describe("runRoutine — lease acquired", () => {
     expect(mocks.release).toHaveBeenCalledWith("worker-1", LEASE.token);
   });
 
+  it("never reaches the provider when the run row could not be created", async () => {
+    mocks.create.mockRejectedValue(new Error("write failed"));
+
+    await expect(runRoutine("worker-1")).rejects.toThrow();
+    expect(mocks.execute).not.toHaveBeenCalled();
+  });
+
   it("gives the lease back when the outcome could not be written", async () => {
     mocks.update.mockRejectedValue(new Error("write failed"));
 
-    await expect(runRoutine("worker-1")).rejects.toThrow("write failed");
+    await expect(runRoutine("worker-1")).rejects.toBeInstanceOf(
+      RunPersistenceError,
+    );
     expect(mocks.release).toHaveBeenCalledWith("worker-1", LEASE.token);
   });
 
@@ -251,6 +266,89 @@ describe("runRoutine — lease contended", () => {
     await expect(runRoutine("worker-1")).rejects.toThrow();
 
     expect(mocks.release).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The line between a run that went wrong and a run whose outcome could not be
+ * written down. They shared a `catch` until Sprint 39, so a database that
+ * refused the success sent a working run through the failure path and stored
+ * it as `failed` — with the answer gone and the two causes indistinguishable.
+ */
+describe("runRoutine — recording the outcome fails", () => {
+  it("does not write a failed run when the success could not be written", async () => {
+    mocks.execute.mockResolvedValue("the answer");
+    mocks.update.mockRejectedValueOnce(new Error("db down"));
+
+    await expect(runRoutine("worker-1")).rejects.toBeInstanceOf(
+      RunPersistenceError,
+    );
+
+    // The one call is the attempt that failed. Nothing followed it.
+    expect(mocks.update).toHaveBeenCalledTimes(1);
+    expect(mocks.update.mock.calls[0][0].data.status).toBe("completed");
+  });
+
+  it("says which write it was", async () => {
+    mocks.execute.mockResolvedValue("the answer");
+    mocks.update.mockRejectedValueOnce(new Error("db down"));
+
+    await expect(runRoutine("worker-1")).rejects.toMatchObject({
+      phase: "completed",
+      runId: "run-1",
+    });
+  });
+
+  it("keeps the original database failure as the cause", async () => {
+    const cause = new Error("db down");
+    mocks.execute.mockResolvedValue("the answer");
+    mocks.update.mockRejectedValueOnce(cause);
+
+    await expect(runRoutine("worker-1")).rejects.toMatchObject({ cause });
+  });
+
+  it("gives the lease back when the success could not be written", async () => {
+    mocks.execute.mockResolvedValue("the answer");
+    mocks.update.mockRejectedValueOnce(new Error("db down"));
+
+    await expect(runRoutine("worker-1")).rejects.toThrow();
+    expect(mocks.release).toHaveBeenCalledWith("worker-1", LEASE.token);
+  });
+
+  /**
+   * A run that failed and could not be written down leaves as a persistence
+   * error too: there is no `failed` row, so returning one would describe a
+   * record that does not exist.
+   */
+  it("reports a failure that could not be written as a persistence failure", async () => {
+    mocks.execute.mockRejectedValue(new Error("model down"));
+    mocks.update.mockRejectedValue(new Error("db down"));
+
+    await expect(runRoutine("worker-1")).rejects.toMatchObject({
+      name: "RunPersistenceError",
+      phase: "failed",
+    });
+    expect(mocks.release).toHaveBeenCalledWith("worker-1", LEASE.token);
+  });
+
+  it("still reports the persistence failure when the release also failed", async () => {
+    mocks.execute.mockResolvedValue("the answer");
+    mocks.update.mockRejectedValueOnce(new Error("db down"));
+    mocks.release.mockResolvedValue("failed");
+
+    await expect(runRoutine("worker-1")).rejects.toBeInstanceOf(
+      RunPersistenceError,
+    );
+  });
+
+  it("still reports it when a failed run's write and the release both failed", async () => {
+    mocks.execute.mockRejectedValue(new Error("model down"));
+    mocks.update.mockRejectedValue(new Error("db down"));
+    mocks.release.mockResolvedValue("failed");
+
+    await expect(runRoutine("worker-1")).rejects.toMatchObject({
+      phase: "failed",
+    });
   });
 });
 

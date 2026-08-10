@@ -3,6 +3,7 @@ import "server-only";
 import { isExecutionSuppressed } from "@/lib/execution-lease";
 import { enqueueRoutine } from "@/lib/queue";
 import { claimRoutineSlot } from "@/lib/routines";
+import { isRunPersistenceError } from "@/lib/runs";
 import { advanceSchedule } from "@/lib/schedule";
 import { type DueWorker, getDueWorkers } from "@/lib/scheduler";
 import { getUserTimezone } from "@/lib/users";
@@ -81,6 +82,20 @@ export async function dispatchDueWorkers(now: Date): Promise<DispatchResult> {
           "[dispatcher] worker was already running — slot spent, nothing started",
           worker.id,
         );
+        continue;
+      }
+
+      // A worker whose outcome could not be written down **was still started**,
+      // which is the whole of what this number counts. Putting it in `failed`
+      // would say the hand-off did not happen, and it did — the run reached a
+      // provider. What is missing is the record of it, and that is in the log.
+      if (isRunPersistenceError(error)) {
+        console.error(
+          "[dispatcher] worker ran but its outcome could not be recorded",
+          worker.id,
+          error,
+        );
+        dispatched.push(worker.id);
         continue;
       }
 

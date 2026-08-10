@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ExecutionSuppressedError } from "@/lib/execution-lease";
+import { RunPersistenceError } from "@/lib/runs";
 import type { DueWorker } from "@/lib/scheduler";
 
 /**
@@ -241,6 +242,64 @@ describe("dispatchDueWorkers", () => {
 
       expect(mocks.claimRoutineSlot).toHaveBeenCalledTimes(1);
       // The only write is the claim: the slot moved forward and stayed there.
+      expect(mocks.claimRoutineSlot.mock.calls[0][2]).toEqual(
+        new Date("2026-08-11T09:00:00.000Z"),
+      );
+    });
+  });
+
+  /**
+   * A worker whose outcome could not be written down was still started, and
+   * started is what this number counts. Putting it in `failed` would say the
+   * hand-off did not happen — `failed` is workers that could not be started,
+   * and this one reached a provider.
+   */
+  describe("a worker whose outcome could not be recorded", () => {
+    it("is counted as dispatched", async () => {
+      mocks.getDueWorkers.mockResolvedValue([due("unrecorded")]);
+      mocks.enqueueRoutine.mockRejectedValue(
+        new RunPersistenceError("completed", "run-1"),
+      );
+
+      expect((await dispatchDueWorkers(NOW)).dispatched).toEqual([
+        "unrecorded",
+      ]);
+    });
+
+    it("is not counted as failed", async () => {
+      mocks.getDueWorkers.mockResolvedValue([due("unrecorded")]);
+      mocks.enqueueRoutine.mockRejectedValue(
+        new RunPersistenceError("completed", "run-1"),
+      );
+
+      expect((await dispatchDueWorkers(NOW)).failed).toBe(0);
+    });
+
+    it("does not stop the workers behind it", async () => {
+      mocks.getDueWorkers.mockResolvedValue([due("unrecorded"), due("fine")]);
+      mocks.enqueueRoutine.mockRejectedValueOnce(
+        new RunPersistenceError("completed", "run-1"),
+      );
+
+      expect(await dispatchDueWorkers(NOW)).toEqual({
+        dispatched: ["unrecorded", "fine"],
+        failed: 0,
+      });
+    });
+
+    /**
+     * The slot was claimed before any of this and nothing gives it back — the
+     * same rule a failed run follows.
+     */
+    it("has spent its slot, and nothing restores it", async () => {
+      mocks.getDueWorkers.mockResolvedValue([due("unrecorded")]);
+      mocks.enqueueRoutine.mockRejectedValue(
+        new RunPersistenceError("completed", "run-1"),
+      );
+
+      await dispatchDueWorkers(NOW);
+
+      expect(mocks.claimRoutineSlot).toHaveBeenCalledTimes(1);
       expect(mocks.claimRoutineSlot.mock.calls[0][2]).toEqual(
         new Date("2026-08-11T09:00:00.000Z"),
       );
