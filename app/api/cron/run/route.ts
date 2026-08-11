@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { dispatchDueWorkers } from "@/lib/dispatcher";
+import { latestExecutionFailureAt } from "@/lib/runs";
 
 /**
  * Why a request was turned away, in a form safe to write to a log.
@@ -92,6 +93,40 @@ function rejectionReason(request: Request): Rejection | null {
 }
 
 /**
+ * Writes when execution last failed, on every tick.
+ *
+ * **A tick that succeeded says nothing about the runs inside it.** `dispatched`
+ * counts workers that reached a provider, not workers that produced anything,
+ * so a tick whose every run failed still answers `200` — and the heartbeat that
+ * follows it still fires, because that heartbeat is about the cron service
+ * being alive. The failures land in run history, where only the account that
+ * owns the worker can see them. This is the one line an operator can watch
+ * instead.
+ *
+ * **It is written whether or not there is anything to report**, for the reason
+ * the due count is: a line that only appears sometimes cannot tell "nothing has
+ * failed" from "the check did not run".
+ *
+ * **Observing must not be able to change what was observed.** A failure to read
+ * this would otherwise escape into the handler's own catch, turn a tick that
+ * worked into a `500`, and take the heartbeat down with it — the monitoring
+ * deciding the outcome it was supposed to be watching. It is caught here and
+ * the tick carries on, the same way releasing an execution lease refuses to
+ * throw over the run it was cleaning up after.
+ */
+async function reportLatestExecutionFailure(): Promise<void> {
+  try {
+    const lastFailedAt = await latestExecutionFailureAt();
+
+    console.log(
+      `[cron] execution failures — last_failed_at=${lastFailedAt?.toISOString() ?? "none"}`,
+    );
+  } catch (error) {
+    console.error("[cron] could not read recent execution failures", error);
+  }
+}
+
+/**
  * The entry point every cron service calls. It only hands off to the
  * dispatcher — scheduling decisions and execution stay where they are.
  */
@@ -135,6 +170,8 @@ export async function POST(request: Request) {
     } else {
       console.log(summary);
     }
+
+    await reportLatestExecutionFailure();
 
     // `failed` is additive: `dispatched` keeps its meaning and its type, so a
     // cron service reading it carries on unchanged. Without the new field a

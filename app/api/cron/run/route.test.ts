@@ -20,10 +20,20 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
  * went to and that neither carries the secret.
  */
 
-const mocks = vi.hoisted(() => ({ dispatchDueWorkers: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  dispatchDueWorkers: vi.fn(),
+  latestExecutionFailureAt: vi.fn(),
+}));
 
 vi.mock("@/lib/dispatcher", () => ({
   dispatchDueWorkers: mocks.dispatchDueWorkers,
+}));
+
+// Replaced for the same reason the dispatcher is: what it reads out of run
+// history belongs to that module's own tests. What the route owes it is a call
+// and a line, and that is what these look at.
+vi.mock("@/lib/runs", () => ({
+  latestExecutionFailureAt: mocks.latestExecutionFailureAt,
 }));
 
 const { POST } = await import("@/app/api/cron/run/route");
@@ -57,6 +67,7 @@ beforeEach(() => {
   mocks.dispatchDueWorkers
     .mockReset()
     .mockResolvedValue({ dispatched: [], failed: 0 });
+  mocks.latestExecutionFailureAt.mockReset().mockResolvedValue(null);
 
   // Silenced as well as observed: a passing run should not print.
   log = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -294,6 +305,85 @@ describe("how long the tick took", () => {
 
     expect(loggedText(warn)).toContain("duration_ms=150000");
     expect(loggedText(warn)).toContain("over 150000ms");
-    expect(log).not.toHaveBeenCalled();
+    // The summary went to one stream or the other, never both. Other lines are
+    // written to `log` on every tick, so this asks about the summary rather
+    // than about the stream being untouched.
+    expect(loggedText(log)).not.toContain("tick finished");
+  });
+});
+
+/**
+ * The line an operator can watch, and the two things it must not become.
+ *
+ * A tick that worked says nothing about the runs inside it: `dispatched` counts
+ * workers that reached a provider, so a tick whose every run failed answers
+ * `200` and its heartbeat still fires. The failures are in run history, where
+ * only the account that owns the worker can see them.
+ *
+ * **This is an observation, not a verdict.** It may not change the response,
+ * and it may not turn a tick that worked into one that did not — which is the
+ * same rule the heartbeat follows on the other side of the same command.
+ */
+describe("recent execution failures", () => {
+  it("reports the most recent failure on a tick that had none of its own", async () => {
+    mocks.latestExecutionFailureAt.mockResolvedValue(
+      new Date("2026-08-11T13:15:22.129Z"),
+    );
+
+    await post({ authorization: `Bearer ${SECRET}` });
+
+    expect(loggedText(log)).toContain(
+      "last_failed_at=2026-08-11T13:15:22.129Z",
+    );
+  });
+
+  /**
+   * Written whether or not there is anything to report, for the reason the due
+   * count is: a line that only appears sometimes cannot tell "nothing has
+   * failed" from "the check did not run".
+   */
+  it("says so plainly when nothing has ever failed", async () => {
+    await post({ authorization: `Bearer ${SECRET}` });
+
+    expect(loggedText(log)).toContain("last_failed_at=none");
+  });
+
+  it("is asked after the tick, so a failure from this tick is included", async () => {
+    await post({ authorization: `Bearer ${SECRET}` });
+
+    expect(
+      mocks.dispatchDueWorkers.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.latestExecutionFailureAt.mock.invocationCallOrder[0]);
+  });
+
+  it("leaves the response exactly as it was", async () => {
+    mocks.latestExecutionFailureAt.mockResolvedValue(new Date());
+
+    const response = await post({ authorization: `Bearer ${SECRET}` });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      success: true,
+      dispatched: 0,
+      failed: 0,
+    });
+  });
+
+  /** Watching something must not decide the outcome it was watching. */
+  it("does not fail the tick when it cannot be read", async () => {
+    mocks.latestExecutionFailureAt.mockRejectedValue(new Error("db down"));
+
+    const response = await post({ authorization: `Bearer ${SECRET}` });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ success: true });
+  });
+
+  it("still writes the tick summary when it cannot be read", async () => {
+    mocks.latestExecutionFailureAt.mockRejectedValue(new Error("db down"));
+
+    await post({ authorization: `Bearer ${SECRET}` });
+
+    expect(loggedText(log)).toContain("tick finished");
   });
 });

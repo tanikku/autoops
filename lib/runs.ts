@@ -146,6 +146,47 @@ export async function getRun(
 }
 
 /**
+ * When execution last failed, anywhere on the platform, or null if it never has.
+ *
+ * **An observation, and deliberately a thin one.** A failed run is visible to
+ * the person who owns the worker — the activity feed, the health summary and
+ * the execution's own page all say so — and visible to nobody else. Nothing
+ * reads run history across tenants, so an operator watching a Closed Beta has
+ * no way to notice that executions have started failing. One timestamp on
+ * every tick is the smallest thing that answers that.
+ *
+ * **It answers "when", not "how many" and not "whose".** A window would need a
+ * length, and there is no honest number to derive one from — the cron interval
+ * lives in the platform's configuration rather than here. The most recent
+ * failure needs no window: it cannot miss one, and it repeats on every tick
+ * until something newer replaces it, which is the right direction for
+ * something that only ever gets read by accident.
+ *
+ * **Deliberately not scoped to a tenant.** It is asked on behalf of the
+ * platform, the same standing `getDueWorkers` has, and the same reason: no
+ * signed-in user is involved. What comes back is a timestamp and nothing else
+ * — no prompt, no output, no message, no id, nobody's email.
+ *
+ * **It reads `RunHistory` and nothing else**, so it survives execution moving
+ * off the request: whatever runs a worker, a failure it recorded is a row here.
+ * Reading what the dispatcher happened to return would not have survived it.
+ *
+ * `finishedAt` rather than `startedAt`, because the failure happened when it
+ * was recorded, not when the run began. Requiring it to be set also keeps the
+ * ordering well defined — a nullable column sorted descending would otherwise
+ * put the nulls first.
+ */
+export async function latestExecutionFailureAt(): Promise<Date | null> {
+  const latest = await prisma.runHistory.findFirst({
+    where: { status: "failed", finishedAt: { not: null } },
+    orderBy: { finishedAt: "desc" },
+    select: { finishedAt: true },
+  });
+
+  return latest?.finishedAt ?? null;
+}
+
+/**
  * Executes a routine.
  *
  * **How long this takes is the provider's business, not this function's.**

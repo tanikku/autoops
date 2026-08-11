@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   findUniqueOrThrow: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
+  findFirst: vi.fn(),
 }));
 
 vi.mock("@/lib/execution-lease", async () => {
@@ -39,11 +40,16 @@ vi.mock("@/lib/ai/factory", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     routine: { findUniqueOrThrow: mocks.findUniqueOrThrow },
-    runHistory: { create: mocks.create, update: mocks.update },
+    runHistory: {
+      create: mocks.create,
+      update: mocks.update,
+      findFirst: mocks.findFirst,
+    },
   },
 }));
 
-const { runRoutine, RunPersistenceError } = await import("@/lib/runs");
+const { latestExecutionFailureAt, runRoutine, RunPersistenceError } =
+  await import("@/lib/runs");
 const { ExecutionSuppressedError } = await import("@/lib/execution-lease");
 
 const LEASE = { token: "token-a", expiresAt: new Date("2026-08-10T12:15:00Z") };
@@ -365,5 +371,76 @@ describe("runRoutine — a worker that is gone", () => {
       ExecutionSuppressedError,
     );
     expect(mocks.acquire).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The one read that is not on behalf of a signed-in user.
+ *
+ * A failed run is visible to the account that owns the worker and to nobody
+ * else, so an operator watching a Closed Beta has no way to notice that
+ * executions have started failing. This answers that, and answers only that:
+ * when, across everyone, not how many and not whose.
+ */
+describe("latestExecutionFailureAt", () => {
+  beforeEach(() => {
+    mocks.findFirst.mockReset().mockResolvedValue(null);
+  });
+
+  it("says nothing has failed when nothing has", async () => {
+    expect(await latestExecutionFailureAt()).toBeNull();
+  });
+
+  it("gives back when the most recent failure finished", async () => {
+    const finishedAt = new Date("2026-08-11T13:15:22.129Z");
+    mocks.findFirst.mockResolvedValue({ finishedAt });
+
+    expect(await latestExecutionFailureAt()).toEqual(finishedAt);
+  });
+
+  it("asks only for failures, and only for ones that finished", async () => {
+    await latestExecutionFailureAt();
+
+    expect(mocks.findFirst.mock.calls[0][0].where).toEqual({
+      status: "failed",
+      finishedAt: { not: null },
+    });
+  });
+
+  /** Newest first, by when the failure was recorded rather than when it began. */
+  it("takes the newest by the moment it was recorded", async () => {
+    await latestExecutionFailureAt();
+
+    expect(mocks.findFirst.mock.calls[0][0].orderBy).toEqual({
+      finishedAt: "desc",
+    });
+  });
+
+  /**
+   * It reads on behalf of the platform, as the scheduler's own query does.
+   * Scoping it to a tenant would make it answer a question nobody is asking.
+   */
+  it("is deliberately not scoped to one account", async () => {
+    await latestExecutionFailureAt();
+
+    expect(mocks.findFirst.mock.calls[0][0].where).not.toHaveProperty("userId");
+  });
+
+  /**
+   * A timestamp and nothing else. Anything wider would put a prompt, an
+   * output or somebody's diagnostic within reach of a log line.
+   */
+  it("selects the timestamp and nothing else", async () => {
+    await latestExecutionFailureAt();
+
+    expect(mocks.findFirst.mock.calls[0][0].select).toEqual({
+      finishedAt: true,
+    });
+  });
+
+  it("treats a row with no timestamp as nothing to report", async () => {
+    mocks.findFirst.mockResolvedValue({ finishedAt: null });
+
+    expect(await latestExecutionFailureAt()).toBeNull();
   });
 });
