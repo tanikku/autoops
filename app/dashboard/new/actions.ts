@@ -39,7 +39,17 @@ export async function createRoutineAction(
 
   const input = readWorkerForm(formData);
 
-  const errors = validateWorkerForm(input);
+  // A new worker starts as a draft that nothing schedules, so both fall back
+  // to the quietest option rather than to a previous value.
+  //
+  // **Worked out before validation, because validation reads them.** Whether a
+  // blank prompt is allowed depends on what the worker will be saved as, not
+  // on what the form happened to send. Both of these are pure — nothing is
+  // read or written to decide them.
+  const status = input.status ?? "draft";
+  const frequency = input.frequency ?? "manual";
+
+  const errors = validateWorkerForm(input, { status, frequency });
   if (hasWorkerFormErrors(errors)) {
     return {
       status: "error",
@@ -48,11 +58,6 @@ export async function createRoutineAction(
       errors,
     };
   }
-
-  // A new worker starts as a draft that nothing schedules, so both fall back
-  // to the quietest option rather than to a previous value.
-  const status = input.status ?? "draft";
-  const frequency = input.frequency ?? "manual";
 
   // The owner comes from the session, never from the submitted form — the same
   // session the check above read. JWT sessions never write the account row, so

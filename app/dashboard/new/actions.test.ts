@@ -150,6 +150,55 @@ describe("createRoutineAction", () => {
     expect(mocks.createRoutine).not.toHaveBeenCalled();
   });
 
+  /**
+   * The state this sprint exists to prevent: a worker AutoOps would dispatch
+   * on a cadence, with nothing to dispatch. Rejected before the account row is
+   * provisioned, like every other rejected submission.
+   */
+  it("refuses to hire a scheduled active worker with no prompt", async () => {
+    const result = await createRoutineAction(
+      null,
+      form({ prompt: "", status: "active", frequency: "daily" }),
+    );
+
+    expect(result?.status).toBe("error");
+    expect(result?.errors?.prompt).toBe(
+      "Prompt is required for scheduled active workers.",
+    );
+    expect(mocks.ensureUser).not.toHaveBeenCalled();
+    expect(mocks.createRoutine).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("allows an active manual worker to start without one", async () => {
+    const result = await createRoutineAction(
+      null,
+      form({ prompt: "", status: "active", frequency: "manual" }),
+    );
+
+    expect(result?.status).toBe("success");
+    expect(mocks.createRoutine).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows a draft on a cadence to start without one", async () => {
+    const result = await createRoutineAction(
+      null,
+      form({ prompt: "", status: "draft", frequency: "daily" }),
+    );
+
+    expect(result?.status).toBe("success");
+    expect(mocks.createRoutine).toHaveBeenCalledTimes(1);
+  });
+
+  /** Omitted fields fall back to the quietest option, which permits a blank. */
+  it("allows a blank prompt when status and frequency were not submitted", async () => {
+    const data = new FormData();
+    data.set("name", "Daily digest");
+    data.set("prompt", "");
+
+    expect((await createRoutineAction(null, data))?.status).toBe("success");
+  });
+
   it("sends a session with no email back to sign in without creating anything", async () => {
     mocks.auth.mockResolvedValue({ user: { id: "google-sub-1" } });
 

@@ -147,19 +147,74 @@ export function readWorkerForm(formData: FormData): WorkerFormInput {
 }
 
 /**
+ * What the worker will actually be saved as, which is not always what was
+ * submitted.
+ *
+ * A field the form did not send, or sent unreadably, falls back — to the
+ * quietest option when hiring, and to the worker's existing value when
+ * editing. **A rule about the saved worker has to read the saved values**, and
+ * a rule reading `input.status` would miss the case where a submission that
+ * omits it lands on an `active` worker and leaves it active.
+ *
+ * Passed in rather than worked out here because the two fallbacks differ, and
+ * that difference is the one place the hire and edit actions are allowed to
+ * disagree.
+ */
+export type WorkerFormContext = {
+  status: RoutineStatus;
+  frequency: RoutineFrequency;
+};
+
+/**
  * The single source of truth for what a valid worker looks like.
  *
  * Both actions call this and neither adds checks of its own, so a rule cannot
  * apply on creation and go missing on edit.
  *
- * Only the name is required. Description and Prompt may be blank — a worker
- * without either is still a valid record.
+ * Only the name is always required. Description may be blank, and so may
+ * Prompt — except on the one combination below.
+ *
+ * **A worker AutoOps runs on its own has to have something to run.** An
+ * `active` worker on a cadence is dispatched without anyone present: an empty
+ * prompt there is not a blank field waiting to be filled in, it is a run that
+ * fails every slot, for as long as the worker exists. Nothing downstream
+ * stops it — the schedule advances whether the run worked or not, and a tick
+ * whose workers all failed still answers `200`.
+ *
+ * **Everything else keeps its blank prompt**, and that is deliberate rather
+ * than an oversight:
+ *
+ * - `draft` and `paused` are not dispatched, so naming a worker and filling it
+ *   in later stays possible — which is what `draft` is for.
+ * - `active` with `manual` frequency has no slot to be dispatched into
+ *   (`nextRunAt` is null and the scheduler never selects it), so it cannot
+ *   fail unattended either.
+ *
+ * A hand-started run of any of those can still meet an empty prompt and fail.
+ * That is one failure, in front of the person who asked for it, with the
+ * result in a toast — a different event from the same failure repeating on a
+ * schedule with nobody watching.
+ *
+ * Blank means blank after trimming, which `readWorkerForm` has already done by
+ * the time this runs — the same thing that makes a whitespace-only name count
+ * as missing.
  */
-export function validateWorkerForm(input: WorkerFormInput): WorkerFieldErrors {
+export function validateWorkerForm(
+  input: WorkerFormInput,
+  context: WorkerFormContext,
+): WorkerFieldErrors {
   const errors: WorkerFieldErrors = {};
 
   if (!input.name) {
     errors.name = "Name is required.";
+  }
+
+  if (
+    context.status === "active" &&
+    context.frequency !== "manual" &&
+    input.prompt === ""
+  ) {
+    errors.prompt = "Prompt is required for scheduled active workers.";
   }
 
   for (const field of Object.keys(workerFieldLimits) as WorkerFieldName[]) {

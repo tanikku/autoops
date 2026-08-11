@@ -44,7 +44,17 @@ export async function updateRoutineAction(
 
   const input = readWorkerForm(formData);
 
-  const errors = validateWorkerForm(input);
+  // An existing worker falls back to what it already had: an unreadable value
+  // must not quietly reset a running worker to a draft.
+  //
+  // **Worked out before validation, because validation reads them.** A
+  // submission that leaves the status out lands on whatever the worker already
+  // is, so a rule about active workers has to be asked about that value rather
+  // than about the absent one. Both of these are pure.
+  const status = input.status ?? existing.status;
+  const frequency = input.frequency ?? existing.frequency;
+
+  const errors = validateWorkerForm(input, { status, frequency });
   if (hasWorkerFormErrors(errors)) {
     return {
       status: "error",
@@ -53,11 +63,6 @@ export async function updateRoutineAction(
       errors,
     };
   }
-
-  // An existing worker falls back to what it already had: an unreadable value
-  // must not quietly reset a running worker to a draft.
-  const status = input.status ?? existing.status;
-  const frequency = input.frequency ?? existing.frequency;
 
   // A time of day only means anything alongside a cadence, and a weekday only
   // alongside a week: a manual worker has no slot to place either in, and a
