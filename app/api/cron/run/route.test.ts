@@ -324,7 +324,7 @@ describe("how long the tick took", () => {
  * and it may not turn a tick that worked into one that did not — which is the
  * same rule the heartbeat follows on the other side of the same command.
  */
-describe("recent execution failures", () => {
+describe("when execution last failed", () => {
   it("reports the most recent failure on a tick that had none of its own", async () => {
     mocks.latestExecutionFailureAt.mockResolvedValue(
       new Date("2026-08-11T13:15:22.129Z"),

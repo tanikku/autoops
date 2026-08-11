@@ -122,7 +122,7 @@ async function reportLatestExecutionFailure(): Promise<void> {
       `[cron] execution failures — last_failed_at=${lastFailedAt?.toISOString() ?? "none"}`,
     );
   } catch (error) {
-    console.error("[cron] could not read recent execution failures", error);
+    console.error("[cron] could not read the latest execution failure", error);
   }
 }
 
