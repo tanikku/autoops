@@ -35,11 +35,10 @@
   `lib/scheduler.ts` / `lib/dispatcher.ts` / `lib/health.ts` / `lib/overview.ts` /
   `lib/runs.ts` / `lib/execution-lease.ts` / `lib/session.ts` /
   `lib/worker-input.ts` / `lib/prompt.ts` / `lib/ai/claude-provider.ts` /
-  cron route / **5つある server action のうち4つ**(run / create / edit /
-  timezone)。**Test Files 16 / Tests 286。**
+  cron route / **server action 5つすべて**(run / create / edit / timezone /
+  delete)。**Test Files 16 / Tests 307。**
 - **テストが1つも無いもの**を把握しておくこと: 全 component、
-  `lib/schedule-label.ts`、server action の残り1つ(delete)。
-  **「286件通った」は「全部カバーした」ではない。**
+  `lib/schedule-label.ts`。**「307件通った」は「全部カバーした」ではない。**
 - **server action をテストするときは、末端だけを mock して境界は実物を使う。**
   `@/auth` / `@/lib/users` / `@/lib/routines` / `next/cache` / `next/navigation`
   を `vi.mock` し、`@/lib/session` は実物のまま通す。こうすると
@@ -150,9 +149,10 @@
 **ここに commit hash は書きません** — このファイル自体が git 管理下にあるため、書いた瞬間に1つ古くなります。
 進捗の実際は git が持っています(冒頭の手順2)。
 
-**現在地点: Sprint 42 は正式 CLOSED。Sprint 43 の実装(NEW-1 / NEW-6 / NEW-3)は
-完了。** CI 緑(Node 22 / Test Files 16 / Tests 286)、本番 deployment SUCCESS、
-自然 cron tick 正常。**Sprint 43 の正式クローズは PM の判断で、まだ出ていない。**
+**現在地点: Sprint 43 は正式 CLOSED。Sprint 44 の実装(NEW-7 / execution failure
+observation)は完了。** CI 緑(Node 22 / Test Files 16 / Tests 307)、本番
+deployment SUCCESS、自然 cron tick 正常。
+**Sprint 44 の正式クローズは PM の判断で、まだ出ていない。**
 
 完了済み:
 
@@ -191,6 +191,9 @@
   prompt を必須化(NEW-1)、prompt 変数が継承プロパティに答えるのをやめた
   (NEW-6)、edit が「1行も更新していないのに success」を返すのをやめた
   (NEW-3)。詳細は下の節。
+- Sprint 44 — **Failure Observability & Action Consistency Hardening。**
+  delete だけに欠けていた DB 例外処理を既存 action 契約へ揃え(NEW-7)、
+  実行失敗の存在を運営者が cron ログ1行で確認できるようにした。詳細は下の節。
 
 ### Sprint 36 — 失敗の分類(第1段階)と scheduler の index、完了
 
@@ -680,6 +683,75 @@ Worker が削除されると「保存しました」と表示していた**。
 **これは optimistic locking ではない。** `updateRoutine` の contract も変えて
 いない。**行が見つかった2つの save は今も last-write-wins** で、その Backlog は
 未解決のまま(上の「決定済み」を参照)。
+
+### Sprint 44 — Failure Observability & Action Consistency Hardening
+
+#### NEW-7 — delete だけが DB 例外を握っていなかった
+
+`deleteWorkerAction` にだけ try/catch が無く、`deleteRoutine` が throw すると
+**server action の外へ伝播**していた。しかも詳細ページからの削除は `await` の
+**前**に `router.push()` するため、例外はもう離れたページに向かって出ていた。
+
+他4つの action(create / edit / run / timezone)は**すべて自分の write を
+catch している**。**delete だけが例外だった**ので、同じ形に揃えただけ。
+
+| ケース | 返す値 | revalidate |
+|---|---|---|
+| 削除された | `"Worker deleted."` | `/dashboard` |
+| 一致する行なし(存在しない / 他人のもの) | `"Worker not found."` | **なし** |
+| **DB 例外** | **`"Could not delete the worker."`** + `console.error("[worker] delete failed", error)` | **なし** |
+
+**navigation の順序は変更していない。** `components/delete-worker-button.tsx`
+は無変更。**閉じたのは server action の unhandled persistence exception であって、
+削除失敗時の UX 全面再設計ではない。**
+
+#### execution failure observation — pull 型の観測1行
+
+**解いた問題:** 実行が失敗しても運営者に届く手段が**1つも無かった**。
+`RunHistory` を全テナント横断で読む query は存在せず、role も admin route も
+無い(今も無い)。ユーザーは Activity / Health で見えるが、運営者は見えない。
+
+```
+[cron] execution failures — last_failed_at=none
+[cron] execution failures — last_failed_at=<ISO8601>
+```
+
+| | |
+|---|---|
+| query | `latestExecutionFailureAt()` — `findFirst({ where:{status:"failed", finishedAt:{not:null}}, orderBy:{finishedAt:"desc"}, select:{finishedAt:true} })` |
+| 範囲 | **全テナント横断**(`getDueWorkers` と同じ立場)。1行 / 1列 |
+| コスト | cron tick あたり **read-only query +1** |
+| 出力 | timestamp のみ。**prompt / output / errorMessage / runId / routineId / userId / email は一切出さない** |
+| 頻度 | **毎ティック出す。** `due workers — count=` と同じ理由 — 出たり出なかったりする行は「失敗が無い」と「チェックが動いていない」を区別できない |
+
+**これは notification ではない。** alert でも threshold 判定でも count でも
+window 集計でもない。**自動で届くものは何も無く、人がログを読む必要がある。**
+
+| 決定 | 理由 |
+|---|---|
+| **window を持たない** | 導出できる定数が無い。cron interval は Railway の設定でリポジトリに存在せず、application code へ書くと**同じ値が2箇所に分かれて同期されない**。最新1件なら window 不要で **miss が構造的にゼロ** |
+| **duplicate を許容する** | 次の失敗が起きるまで同じ timestamp が毎ティック出続ける。**これは意図した挙動で、直す対象ではない**。観測ログなので副作用が小さく、miss を作らない方を優先した |
+| **件数(magnitude)を出さない** | window 値が要る。**「必須」ではない** |
+| **manual / scheduled を区別しない** | `RunHistory` に trigger 列が無い。**schema を足して区別しない。** 手動失敗も候補に入るが、provider が壊れていれば検知が早まる面もある |
+| **queue に依存しない** | `enqueueRoutine` の戻り値・dispatcher の局所変数・inline 実行のいずれにも依存せず、`RunHistory` の failed 行だけを読む。**ただし「将来の queue 実装で動作保証済み」とは言えない** |
+| **観測が観測対象を変えない** | 読み取り失敗は**その場で catch**。tick は 200 のまま、heartbeat も飛ぶ。落とすと監視が監視対象の結果を決めることになる |
+
+**Cron API の `{success, dispatched, failed}` は変更していない。**
+`failed` は今も「開始できなかった worker の数」で、実行失敗の件数ではない。
+`last_failed_at` を response に入れていない。
+
+**Healthchecks の意味も変更していない。** heartbeat は今も
+「cron container が動き、cron API が HTTP 2xx を返した」という infrastructure
+health で、**実行失敗を heartbeat 失敗にしない**。
+
+**errorKind の永続化は Sprint 44 でも実装していない。**
+`ProviderErrorKind` を `RunHistoryErrorKind` として扱わない。本番の provider
+failure が未観測のまま schema / taxonomy を先に固定しない。
+
+**本番実測の境界:** 2026-08-11 の自然 tick で `last_failed_at=none` を確認した。
+これは**その時点で `status="failed"` の行が見つからなかった**ことだけを意味する。
+「本番で失敗が起きない」「provider failure が存在しない」「失敗経路を本番で
+実測した」とは**言えない**。**failed>0 側は unit test のみで、人工 failure は禁止。**
 
 ### 未確認 — 別途扱う
 

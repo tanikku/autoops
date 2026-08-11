@@ -130,6 +130,29 @@ the worker it just deleted looks it up again, finds nothing, and 404s before the
 success notification can appear. Deleting from the detail page navigates away
 first, and deleting anywhere else must do the same.
 
+**A delete has three answers, and two of them mean the worker is still there:**
+
+| | Reports | Revalidates |
+| --- | --- | --- |
+| The row was deleted | `Worker deleted.` | The dashboard |
+| Nothing matched | `Worker not found.` | **No** |
+| The database refused the write | `Could not delete the worker.` | **No** |
+
+Nothing matched covers a worker that does not exist *and* one belonging to
+somebody else — the query asks for the id and the owner together, so the two
+cannot be told apart from the answer.
+
+**A refused write is not a worker that was not there.** Both leave the worker in
+place, but only one of them means something is wrong, and the reason for it is
+written to the server log rather than handed to whoever pressed the button. The
+exception does not escape: it used to, onto a page the browser had already left,
+because this was the one action that wrote without catching. Toasts live in the
+root layout, so the message still finds the person who asked for it.
+
+**Where the navigation happens did not change**, and the table above is what
+makes that safe: a failed delete leaves the worker in the list, which is exactly
+what the database now holds.
+
 Changing the **frequency** resets the pending slot, because the old one no
 longer describes the new cadence: switching to `manual` clears `nextRunAt` so
 the worker stops being due, and switching away from it schedules the first slot.
@@ -825,7 +848,7 @@ the next one, so a changed setting would appear to do nothing.
 | Components | **shadcn/ui** (Base UI) | Note: Base UI, not Radix — buttons take `render`, not `asChild` |
 | Icons | **lucide-react** | |
 | AI | **Anthropic SDK** | Behind a provider interface; falls back to a stand-in without an API key. Timeout and retries are set explicitly — see [Setup](#setup) |
-| Testing | **Vitest** | 16 files, 286 tests. Schedule arithmetic, the scheduler's query, the dispatcher, execution and its lease, health and overview, the provider boundary, the cron API, the session boundary, form validation, prompt rendering, and four of the five server actions. **Not the database's own guarantees, and no component** — see [Backlog](#backlog) |
+| Testing | **Vitest** | 16 files, 307 tests. Schedule arithmetic, the scheduler's query, the dispatcher, execution and its lease, health and overview, the provider boundary, the cron API, the session boundary, form validation, prompt rendering, and all five server actions. **Not the database's own guarantees, and no component** — see [Backlog](#backlog) |
 | CI | **GitHub Actions** | `.github/workflows/ci.yml` runs lint, types, tests and build. No secrets, no database |
 
 Two details bite anyone who assumes the usual defaults:
@@ -1252,6 +1275,60 @@ The ping URL is a credential — it is all anyone needs to tell the check that
 everything is fine — so it lives in a Railway variable and appears in no file
 here.
 
+#### Knowing whether the runs inside it worked
+
+The heartbeat above says the tick happened. **It says nothing about what the
+tick ran**, and neither does the response: `dispatched` counts workers that
+reached a provider, so a tick whose every run failed still answers `200` and
+still pings. The failures land in run history, where only the account that owns
+the worker can see them — nothing reads run history across tenants, so an
+operator watching a Closed Beta had no way to notice.
+
+Every tick now writes one more line:
+
+```
+[cron] execution failures — last_failed_at=none
+[cron] execution failures — last_failed_at=2026-08-11T13:15:22.129Z
+```
+
+It is a read of `RunHistory` for the newest row that is `failed` and has
+finished, asking for that one timestamp and nothing else — no prompt, no
+output, no message, no id, nobody's email.
+
+**It is an observation and not one of the things it resembles.** Not a
+notification, not an alert, not a threshold, not a count, and not a window.
+There is no automatic signal of any kind: somebody has to read the log. What
+changed is that reading it now answers the question.
+
+**There is no window, deliberately.** A window would need a length, and the
+only honest source for one is the cron interval, which lives in the platform's
+configuration rather than in this repository — copying it here would put the
+same number in two places that nothing keeps in step. The newest failure needs
+no window: it cannot miss one, and it repeats on every tick until something
+newer replaces it. **The same timestamp appearing tick after tick is expected**,
+and reading it as a fresh failure each time would be a misreading.
+
+**It cannot say how many**, which is the cost of having no window. One worker
+failing once and every worker failing look the same on a single line — though
+not across several, since a failure that keeps happening keeps the timestamp
+fresh while a one-off visibly ages.
+
+**Manual and scheduled runs are not distinguished.** `RunHistory` records no
+trigger, so a run someone started by hand is as much a candidate as one a tick
+dispatched. That cuts both ways: a hand-started failure raises the line when
+nothing scheduled went wrong, and a provider that has stopped working is caught
+sooner because either kind of run reveals it.
+
+**It reads run history and nothing else**, rather than whatever the dispatcher
+happened to return. That keeps it clear of the queue contract — see
+[Execution Pipeline](#execution-pipeline) for why that return value is not
+something to build on.
+
+**Observing cannot change what it observed.** A failure to read this is caught
+where it happens: the tick still answers `200`, the heartbeat still fires, and
+the reason goes to the log. Letting it fail the tick would make the monitoring
+decide the outcome it was supposed to be watching.
+
 ### Authentication
 
 The dashboard is behind Google sign-in (**Auth.js v5**, JWT sessions, **no
@@ -1368,6 +1445,7 @@ For production, add the same path on your deployed origin.
 | Sprint 41 | A dead man's switch on the cron service, so a tick that stops happening is noticed | Completed |
 | Sprint 42 | An explicit provisioning boundary, so an account can change its settings before it owns a worker | Completed |
 | Sprint 43 | A worker AutoOps runs on its own must have a prompt; template variables stop answering for inherited names; an edit that matched no row stops reporting success | Completed |
+| Sprint 44 | A delete that the database refused stops escaping the action, and every tick says when execution last failed | Completed |
 
 ## Backlog
 
@@ -1469,9 +1547,10 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
   about. Covering them means a database in CI, which is the cost being deferred
   rather than the coverage
 
-- **What has no test of its own**: every component, `lib/schedule-label.ts`,
-  and one of the five server actions — deleting a worker. The four that are
-  covered are the ones whose ordering or branching was worth pinning down
+- **What has no test of its own**: every component, and
+  `lib/schedule-label.ts`. All five server actions are covered — deleting a
+  worker was the last one without, and it gained them alongside the failure
+  handling it was missing
 
 **Concurrency**
 
@@ -1510,13 +1589,24 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
   wrong — no run has failed in production, which is why the kinds below are
   still unrecorded.
 
-- **A failing execution reaches nobody.** The [dead man's
-  switch](#knowing-the-tick-happened-at-all) watches the tick, and a tick whose
-  workers all failed is a tick that did its job — it answers `200` and pings
-  like any other. The failures are in the run history and the health summary,
-  which someone has to open. Alerting on them means deciding what counts as
-  enough of them, and with no failure ever recorded in production there is
-  nothing to set that against.
+- **Nothing tells anyone that an execution failed — it has to be looked at.**
+  The tick writes [when execution last
+  failed](#knowing-whether-the-runs-inside-it-worked) on every pass, so the
+  question is answerable from the cron log. **That is a thing to read, not a
+  thing that arrives**: there is no email, no webhook, no chat message, and no
+  alert of any kind. Building one means deciding how many failures are too
+  many, and with no failure ever recorded in production there is nothing to set
+  that against — the observation exists partly so that evidence can accumulate
+
+- **The observation has no index behind it.** `RunHistory` is indexed on
+  `routineId` and `userId`, so asking for the newest failed row scans rather
+  than seeks, once per tick. **No cost has been observed** — at the production
+  check on 2026-08-11 the tick reported `last_failed_at=none`, so no failed row
+  was found for it to sort through — and it is **not a Closed Beta blocker**,
+  but the work grows with the number of runs stored. An index on the two
+  columns it filters and sorts by would answer it, which is a schema change and
+  so a decision for a sprint that is making one. Neither the shape nor the
+  timing is settled
 
 - `削除用/` — things moved aside rather than deleted, kept until Closed Beta
   starts: the database from before the tenant identity fix, the values the
