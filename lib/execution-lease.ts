@@ -26,8 +26,16 @@ import { prisma } from "@/lib/prisma";
  * this believing it has at-most-once execution would be wrong in exactly the
  * case that is hardest to reproduce.
  *
- * **Nothing here is integrated yet.** The primitive exists; no execution path
- * calls it.
+ * **Every execution goes through this.** `runRoutine` takes a lease before it
+ * records anything and gives it back in its cleanup, and both ways into
+ * execution — a cron tick that won a slot, and a button someone pressed — come
+ * through there. That shared point is what closes the gap above: neither path
+ * knows about the other, so the only place they can be found to have met is
+ * the one they both pass.
+ *
+ * There is no heartbeat and nothing renews a lease, which is why the paragraph
+ * above matters rather than being a caveat: expiry is the whole of the
+ * recovery, and the owner token is the whole of the protection.
  */
 
 /**

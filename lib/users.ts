@@ -46,11 +46,24 @@ export async function setUserTimezone(
 }
 
 /**
- * Writes the signed-in account to the database if it is not there yet.
+ * Writes the signed-in account to the database if it is not there yet, and
+ * refreshes what the provider knows about it if it is.
  *
  * Sessions are JWT-only (no Prisma adapter), so nothing creates the row at
- * sign-in. Owned rows carry a foreign key to `User`, so the account has to
- * exist before the first one is written.
+ * sign-in — and **this is not called at sign-in either**. It runs at the
+ * provisioning boundary (`requireProvisionedUserId`), which the write paths
+ * that need the row go through: creating a worker, and saving a timezone.
+ *
+ * **The row is needed for two different reasons, and only one of them is a
+ * foreign key.** A `Routine` points at it, so it has to exist before the first
+ * one is written; the account's own settings also live on it, so it has to
+ * exist before one of those can be changed. A comment naming only the first
+ * is how the second went unnoticed until an account with no worker could not
+ * save its timezone.
+ *
+ * **`timezone` is not touched.** Every other column here comes from the
+ * provider and is safe to overwrite with a newer copy of itself; that one is
+ * the account's own choice, and refreshing a profile must not undo it.
  */
 export async function ensureUser(user: {
   id: string;
