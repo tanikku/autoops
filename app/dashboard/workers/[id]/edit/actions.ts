@@ -103,8 +103,9 @@ export async function updateRoutineAction(
       }
     : {};
 
+  let saved;
   try {
-    await updateRoutine(
+    saved = await updateRoutine(
       id,
       {
         name: input.name,
@@ -126,6 +127,17 @@ export async function updateRoutineAction(
       message: "Could not save the worker.",
       values: input,
     };
+  }
+
+  // **No row matched, which is not the same as no error.** `updateRoutine`
+  // returns null when its `WHERE` found nothing — the worker was deleted
+  // between the read at the top of this action and the write above, or it was
+  // never this owner's. Nothing was saved, so saying it was would be the one
+  // outcome worse than either: the form clears, the toast says the change
+  // landed, and it did not. `deleteWorkerAction` already checks its own
+  // count for the same reason.
+  if (!saved) {
+    return { status: "error", message: "Worker not found.", values: input };
   }
 
   // The detail and edit pages both render this worker, so revalidating only

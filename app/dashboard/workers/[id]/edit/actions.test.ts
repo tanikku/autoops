@@ -218,6 +218,57 @@ describe("updateRoutineAction — the prompt contract", () => {
   });
 });
 
+/**
+ * A separate concern at the other end of the same function: whether the write
+ * landed at all. Nothing here is about the prompt.
+ */
+describe("updateRoutineAction — a write that matched no row", () => {
+  it("does not report success when nothing was updated", async () => {
+    mocks.updateRoutine.mockResolvedValue(null);
+
+    const result = await save(form({ prompt: "Summarise today." }));
+
+    expect(result?.status).toBe("error");
+    expect(result?.message).toBe("Worker not found.");
+  });
+
+  it("does not revalidate anything when nothing was updated", async () => {
+    mocks.updateRoutine.mockResolvedValue(null);
+
+    await save(form({ prompt: "Summarise today." }));
+
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("hands the submitted values back so the form keeps them", async () => {
+    mocks.updateRoutine.mockResolvedValue(null);
+
+    const result = await save(form({ prompt: "Summarise today." }));
+
+    expect(result?.values?.prompt).toBe("Summarise today.");
+  });
+
+  it("still reports success, and revalidates, when a row was updated", async () => {
+    const result = await save(form({ prompt: "Summarise today." }));
+
+    expect(result?.status).toBe("success");
+    expect(result?.message).toBe('Worker "Daily digest" saved.');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(
+      "/dashboard/workers/worker-1",
+    );
+  });
+
+  it("reports a write that threw as a failure rather than as a missing worker", async () => {
+    mocks.updateRoutine.mockRejectedValue(new Error("connection terminated"));
+
+    const result = await save(form({ prompt: "Summarise today." }));
+
+    expect(result?.message).toBe("Could not save the worker.");
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
 describe("updateRoutineAction — ownership", () => {
   it("404s on a worker that is not the signed-in owner's", async () => {
     mocks.getRoutine.mockResolvedValue(null);
