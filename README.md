@@ -772,7 +772,7 @@ the next one, so a changed setting would appear to do nothing.
 | Components | **shadcn/ui** (Base UI) | Note: Base UI, not Radix — buttons take `render`, not `asChild` |
 | Icons | **lucide-react** | |
 | AI | **Anthropic SDK** | Behind a provider interface; falls back to a stand-in without an API key. Timeout and retries are set explicitly — see [Setup](#setup) |
-| Testing | **Vitest** | Covers `lib/schedule.ts` only — see [Backlog](#backlog) for what that leaves out |
+| Testing | **Vitest** | 13 files, 220 tests. Schedule arithmetic, the scheduler's query, the dispatcher, execution and its lease, health and overview, the provider boundary, the cron API, the session boundary, and three of the five server actions. **Not the database's own guarantees, and no component** — see [Backlog](#backlog) |
 | CI | **GitHub Actions** | `.github/workflows/ci.yml` runs lint, types, tests and build. No secrets, no database |
 
 Two details bite anyone who assumes the usual defaults:
@@ -811,7 +811,7 @@ User ──┬── Routine ──── RunHistory
 
 | Model | Purpose | Key points |
 | --- | --- | --- |
-| **User** | A signed-in Google account | `id` is the provider account id, not a generated key |
+| **User** | What AutoOps keeps for an account, not the account itself | `id` is the provider account id, not a generated key. Written lazily — see [Account Provisioning](#account-provisioning) |
 | **Routine** | A worker | Four columns define the schedule; `nextRunAt` is what it resolves to |
 | **RunHistory** | One execution | `userId` denormalised from the routine |
 
@@ -892,10 +892,12 @@ pnpm test                         # `pnpm test:watch` while working
 pnpm build
 ```
 
-These four are what CI runs on every push, and they need no database — the
-tests cover `lib/schedule.ts`, which reads none. **Scheduling behaviour that
-does touch the database is not covered by any of them**: claiming, catch-up and
-failure isolation are still verified by hand against a running app.
+These four are what CI runs on every push, and they need no database. Nothing
+under test reaches one: `server-only` is aliased to the same empty module
+Next.js resolves it to, and the persistence layer is stood in for. **What the
+database itself guarantees is therefore covered by none of them** — that a
+claim or a lease is atomic, and how catch-up behaves against real rows, are
+still verified by hand against a running app.
 
 Database:
 
@@ -1151,6 +1153,45 @@ it, or change what runs — it chooses `warn` over `log` and nothing else, the
 same standing the fifteen minutes in [Worker Health](#worker-health) has.
 Deciding what to do about a slow tick is a decision for whoever reads the line.
 
+#### Knowing the tick happened at all
+
+A tick that fails says so: the HTTP status carries it. **A tick that never runs
+says nothing**, and nothing inside AutoOps can notice its own absence — no
+request arrives, and a dashboard with nothing due looks the same either way.
+
+That is what a **dead man's switch** covers, and it is the one piece of
+monitoring that cannot live inside the deployment it watches. A check on
+[Healthchecks.io](https://healthchecks.io) expects a ping every **5 minutes**
+and allows a further **15** before it alerts, so silence is reported roughly
+twenty minutes after the last tick that worked.
+
+The cron service sends it, and only once AutoOps has answered:
+
+```
+A && (B || true)
+```
+
+`A` is the call to `/api/cron/run`, `B` is the ping, and two properties follow
+from that shape rather than from anything being checked:
+
+- **A tick that failed sends no heartbeat.** `--fail-with-body` turns a `4xx`
+  or `5xx` into a curl failure, so `&&` stops there and the check falls silent.
+  Without the flag curl exits `0` on an HTTP error and the ping would go out
+  anyway, which is the failure mode this exists to avoid.
+- **A heartbeat that failed is not a tick that failed.** `|| true` absorbs it,
+  and the ping carries `--max-time 10` of its own so a hanging monitor cannot
+  hold the container open. **Watching something must not change what it does**
+  — the same rule the [duration threshold](#how-long-a-tick-took) follows.
+
+**It watches for silence, not for failure.** A tick that hands off nothing
+pings exactly like a busy one, and so does a tick whose worker then failed —
+the tick did its job. Noticing a failing *execution* needs a different signal,
+and there is not one; see the [Backlog](#backlog).
+
+The ping URL is a credential — it is all anyone needs to tell the check that
+everything is fine — so it lives in a Railway variable and appears in no file
+here.
+
 ### Authentication
 
 The dashboard is behind Google sign-in (**Auth.js v5**, JWT sessions, **no
@@ -1158,11 +1199,60 @@ database adapter**). All three `AUTH_*` variables are required to sign in.
 
 Skipping the adapter is deliberate: `auth.ts` stays free of database imports, so
 the middleware protecting `/dashboard/*` runs on the edge without a round trip.
-The cost is that nothing writes the `User` row at sign-in, so `ensureUser()`
-creates it lazily before the first row that references it.
+The cost is that nothing writes the `User` row at sign-in — see
+[Account Provisioning](#account-provisioning) for where it does get written.
 
 That same choice is why the tenant key comes from `account.providerAccountId` —
 see [Tenant Identity](#tenant-identity) before touching anything in `auth.ts`.
+
+### Account Provisioning
+
+**Being signed in and having a row are different things**, and AutoOps keeps
+them apart. The identity comes from the token. The row is application data: it
+holds the account's timezone, and it is what a worker's foreign key points at.
+Nothing creates it until something needs it, and signing in is not that.
+
+Two functions divide the question, and the split is the contract:
+
+| | Answers | Writes |
+| --- | --- | --- |
+| `requireUserId()` | Who is asking | **Nothing** |
+| `requireProvisionedUserId()` | Who is asking, *and* guarantees their row exists | An upsert |
+
+**Reads use the first.** Every page renders without the row — `getUserTimezone`
+falls back to UTC — so provisioning on the way in would put a write behind
+every page view and buy nothing.
+
+**Writes that need the row use the second**, and today those are creating a
+worker and saving a timezone. Deleting, editing or running a worker does not:
+each acts on a `Routine`, whose existence already proves the row is there. That
+is the rule rather than "every write" — the question is whether the row has to
+be brought into being, not whether something is being written.
+
+Every such write runs in the same order, and each step is where it is for a
+reason:
+
+```
+authentication  →  validation  →  provisioning  →  the write itself
+```
+
+- **Authentication comes first, whatever was submitted.** A signed-out visitor
+  is sent to sign in rather than told their input was invalid.
+- **Provisioning comes after validation.** A submission that is going to be
+  rejected must not create the row that saving it would have needed.
+
+Provisioning refreshes what the provider knows — name, email, picture — and
+**never the timezone**, so signing in cannot undo a setting the account chose.
+
+**A session carrying no email is turned away rather than invented for.**
+`User.email` is `NOT NULL` and unique, so a placeholder would satisfy the
+column and hand the constraint a fabricated identity to treat as real. It is
+refused exactly like a session with no id.
+
+**Failing to write the row is not failing to authenticate**, and the two leave
+differently — the first as a `UserProvisioningError`, the second as a redirect,
+which is also thrown. A caller that caught both would show a signed-out visitor
+a form error instead of the sign-in page.
 
 Generate a session secret:
 
@@ -1212,6 +1302,11 @@ For production, add the same path on your deployed origin.
 | Sprint 30 | Worker Status explanation on the create/edit form | Completed |
 | Sprint 31 | Long-running execution detection, scheduled-run overdue detection | Completed |
 | Sprint 37 | Execution architecture decided — inline stays, and a tick now says how long it took | Completed |
+| Sprint 38 | A lease on executing a worker, so a hand-started run and a scheduled one cannot overlap; a test boundary for `server-only` modules | Completed |
+| Sprint 39 | A failed run's reason kept apart from its output, and a write that fails no longer recorded as a run that failed | Completed |
+| Sprint 40 | The first real execution in production, and tests for the provider boundary and the cron API | Completed |
+| Sprint 41 | A dead man's switch on the cron service, so a tick that stops happening is noticed | Completed |
+| Sprint 42 | An explicit provisioning boundary, so an account can change its settings before it owns a worker | Completed |
 
 ## Backlog
 
@@ -1282,11 +1377,40 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
   handler closes the HTTP server and calls `process.exit(0)`, which a worker
   waiting on a model has no way to delay
 
+**Reading**
+
+- **Nothing bounds how much run history a page loads.** Activity reads every
+  run the account has ever had, and a worker's detail page reads every run of
+  that worker — no limit, no cursor, no page. Each row carries its `output`,
+  the whole of what the model produced, and the activity list sends all of them
+  to the browser to show one truncated line each.
+
+  **Production has not felt this**, because production has almost no history to
+  load. What is wrong is the shape: every run makes both reads larger and
+  nothing levels off. **Not a Closed Beta blocker** — a few accounts over a few
+  weeks stays small — but it worsens for as long as the beta runs, which is why
+  it sits high here rather than at the bottom.
+
+  **How to bound it is not decided.** A row limit, a cursor, a page, or keeping
+  `output` out of the list are all still open, and they answer different
+  questions. **This is not the scheduler's `take`** — that one is about how many
+  due workers a single tick may claim across every tenant, is deferred for
+  reasons of its own, and shares nothing with this but the word
+
 **Testing**
 
-- Only `lib/schedule.ts` has tests. Everything that touches the database —
-  claiming, catch-up, failure isolation — is verified by hand, so CI passing
-  says the arithmetic is right and nothing about the behaviour built on it
+- **What the database itself guarantees is still verified by hand.** Tests
+  reach schedule arithmetic, the scheduler's query contract, the dispatcher,
+  execution and its lease, health and overview, the provider boundary, the cron
+  API, and the session boundary — but every one of them stands the database in.
+  That a claim or a lease is atomic, and how catch-up behaves against real
+  rows, are things CI passing says nothing about. Covering them means a
+  database in CI, which is the cost being deferred rather than the coverage
+
+- **What has no test of its own**: every component, `lib/worker-input.ts`,
+  `lib/prompt.ts`, `lib/schedule-label.ts`, and two of the five server actions
+  — deleting a worker and editing one. The three that are covered are the ones
+  whose ordering or branching was worth pinning down
 
 **Concurrency**
 
@@ -1316,13 +1440,22 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
   shell — `/bin/sh -c "..."` — to expand it. Services built from this repo via
   Railpack are unaffected; they already run in a shell.
 
-- **The Claude API has never been called in production.** `ANTHROPIC_API_KEY`
-  is set on the Web Service and the startup line announcing the stand-in does
-  not appear, so the deployed app is configured to use the real provider — but
-  no worker has ever run there, so **nothing has proved the key itself works**.
-  A wrong or expired key would look exactly like this until the first
-  execution. Verifying it means running a worker against the live model, which
-  is a deliberate act rather than something to discover by accident.
+- **The Claude API works in production, on the evidence of one run.** Sprint 40
+  hired a worker there, ran it by hand, and deleted it: the run completed
+  against the live model in about five seconds. `ANTHROPIC_API_KEY` is set on
+  the Web Service, the startup line announcing the stand-in does not appear,
+  and **the key is now known to be accepted** rather than only configured.
+  What one run does not establish is how the provider behaves when it goes
+  wrong — no run has failed in production, which is why the kinds below are
+  still unrecorded.
+
+- **A failing execution reaches nobody.** The [dead man's
+  switch](#knowing-the-tick-happened-at-all) watches the tick, and a tick whose
+  workers all failed is a tick that did its job — it answers `200` and pings
+  like any other. The failures are in the run history and the health summary,
+  which someone has to open. Alerting on them means deciding what counts as
+  enough of them, and with no failure ever recorded in production there is
+  nothing to set that against.
 
 - `削除用/` — things moved aside rather than deleted, kept until Closed Beta
   starts: the database from before the tenant identity fix, the values the

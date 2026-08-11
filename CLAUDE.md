@@ -31,7 +31,21 @@
 - 純粋関数(`lib/schedule.ts` / `lib/health.ts` / `lib/overview.ts`)は Vitest で
   そのまま検証できる。`lib/scheduler.ts` と `lib/dispatcher.ts` も Sprint 38 から
   検証できる — `server-only` の alias(下の Sprint 38 の節)と `vi.mock` で、
-  **依存も DB も足さずに**届くようになった。
+  **依存も DB も足さずに**届くようになった。現在の到達範囲は `lib/schedule.ts` /
+  `lib/scheduler.ts` / `lib/dispatcher.ts` / `lib/health.ts` / `lib/overview.ts` /
+  `lib/runs.ts` / `lib/execution-lease.ts` / `lib/session.ts` /
+  `lib/ai/claude-provider.ts` / cron route / **5つある server action のうち3つ**
+  (run / create / timezone)。**Test Files 13 / Tests 220。**
+- **テストが1つも無いもの**を把握しておくこと: 全 component、
+  `lib/worker-input.ts`、`lib/prompt.ts`、`lib/schedule-label.ts`、
+  server action の残り2つ(delete / edit)。**「220件通った」は
+  「全部カバーした」ではない。**
+- **server action をテストするときは、末端だけを mock して境界は実物を使う。**
+  `@/auth` / `@/lib/users` / `@/lib/routines` / `next/cache` / `next/navigation`
+  を `vi.mock` し、`@/lib/session` は実物のまま通す。こうすると
+  「authentication → validation → provisioning → write」の順序そのものを
+  `invocationCallOrder` で固定できる。`redirect` の mock は**必ず throw させる** —
+  返してしまうと、本番なら到達しない行がテストでは動く。
 - **ただし届くのは「どう振る舞うか」までで、「本当に排他できているか」ではない。**
   `claimRoutineSlot` が atomic であること、catch-up が実データでどう動くかは
   実 DB と実 cron が要り、**CI では検証されない**。dispatcher のテストが押さえて
@@ -67,6 +81,33 @@
   `gh run list` でよく、どちらで確認したかはリポジトリに影響しない。
   「`gh` がないから CI は確認できない」で止めないこと。
 
+- **Git Bash から Railway へ POSIX path や URL を含む文字列を渡すと壊れる。**
+  MSYS の path conversion が実際に起きた(Sprint 41):
+
+  ```
+  /bin/sh        → C:\Program Files\Git\usr\bin\sh
+  https://       → https;\
+  Authorization: → Authorization;
+  ```
+
+  必要なら `MSYS_NO_PATHCONV=1` と `MSYS2_ARG_CONV_EXCL='*'` を使う。ただし
+  **機械的に常用せず、対象コマンドの引数の意味を確認してから**。
+  **Railway の設定を変更したら必ず read-back して保存値を検証すること** —
+  上の破損はデプロイ前の読み直しで見つかった。
+
+- **Railway の service instance 設定は、既存 deployment の manifest に自動では
+  反映されない。** UI 上で新しい値が見えていても Apply / Deploy が出ないことが
+  あり、deployment 側は古い値のまま動き続ける。Sprint 41 の Docker image service
+  では
+
+  ```
+  railway redeploy --service <name> --from-source
+  ```
+
+  で現在の設定から新しい deployment が作られることを実測した。フラグなしの
+  `redeploy` は「既存 deployment の再実行」で、設定変更は載らない見込み。
+  **この実測を全 Railway service へ一般化しないこと。**
+
 ## 決定済み — 蒸し返さない
 
 | 決定 | 理由 |
@@ -99,6 +140,9 @@
 | enqueue 時に `RunHistory` を作って id を返す方式(C2)は、**現行の `RunHistory` semantics のままでは採らない** | 行は execution 開始時に作られ、`startedAt` は実行開始時刻。Rendered Prompt の再構成(`promptVariables(run.startedAt)`)、実行時間の表示、stuck 判定の3つがすべてその意味に依存している。前倒しすれば3つが同時にずれる。**`RunHistory` 自体を将来再設計することを禁じるものではない** |
 | **execution ownership は correctness state**。observability ではないので DB に持ってよい | 判定基準は「読まれ方」。`stuck` は表示のためだけに読まれ、何の分岐にも使われないから DB に持たない。execution ownership は**実行するかしないかの分岐に使われる**。書いた値が振る舞いを変えるものは状態であって観測ではない |
 | **execution lease は無条件の at-most-once を保証しない** | 保証するのは「execution が lease TTL より長引かない限り、同一 Routine の同時実行を抑止する」まで。TTL を超えて生き残った実行と、乗っ取った実行は**現に重なる**。総実行時間に理論上の上界がない(接続待ちが無期限)以上、定数では保証できない。**owner token が守るのは「古い所有者が新しい所有者の lease を消さない」ことだけ** — ここを at-most-once と誤読して上に何かを積むと、再現しにくい形で壊れる |
+| **`User` 行は sign-in では作らない。** provisioning は「行を新たに存在させる必要がある write」の境界でだけ行う | 3案を比較した結果。`auth.ts` に DB を入れる案は「adapter を入れない = middleware を Edge で動かす」根拠を消すうえ、**JWT は sign-in 時にしか発行されないので既存セッションには効かない**。`requireUserId()` に入れる案は read path 5箇所が全て write になり、DB 障害が認証障害として見える。**読み取りが行を作ってはいけない** |
+| **`requireUserId()` に provisioning を足さない。** read-safe 契約はテストで固定してある | 足した瞬間、ページ表示ごとに upsert が走る。AutoOps 全体の「読み取りは書かない」性質(scheduler は read-only、health / overview は導出)を初めて破ることになる |
+| 有効な write で `auth()` が2回走ることは**許容する** | authentication と provisioning の責務分離を優先した結果。`requireUserId({ provision: true })` のような flag API や、session を広く配る abstraction は作らない。性能最適化はこの分離を壊す理由にならない |
 | `take` は **未採用**。ただし scheduler に置くことを永久に禁じたわけでもない | 本番 Routine 0件で行数の実害がなく、catch-up と組み合わせるとバックログが1 interval を超えた時点でスロットを静かに失う。tenant fairness の論点も未解決。**根拠が揃うまで入れない**、が理由のすべて |
 
 ## 現在地
@@ -106,7 +150,9 @@
 **ここに commit hash は書きません** — このファイル自体が git 管理下にあるため、書いた瞬間に1つ古くなります。
 進捗の実際は git が持っています(冒頭の手順2)。
 
-**現在地点: Sprint 38 完了、Sprint 39 進行中。CI 緑。**
+**現在地点: Sprint 42 の provisioning blocker は実装完了。** CI 緑
+(Node 22 / Test Files 13 / Tests 220)、本番 deployment SUCCESS、自然 cron tick 正常。
+**Sprint 42 の正式クローズは PM の判断で、まだ出ていない。**
 
 完了済み:
 
@@ -132,6 +178,15 @@
   詳細は下の節。
 - Sprint 39 — **`RunHistory` の失敗データを `output` から分離**(`errorMessage`)。
   詳細は下の節。
+- Sprint 40 — **本番で初めて実行が起きた。** 通常の UI から Worker を1件作り、
+  手動実行し、削除した。**Claude API は成功**(約5秒)。あわせて
+  `lib/ai/claude-provider.test.ts` と `app/api/cron/run/route.test.ts` を追加。
+  詳細は下の節。
+- Sprint 41 — **cron の沈黙を外部から検知できるようにした**(Healthchecks.io の
+  dead man's switch)。あわせて due 件数のログ。詳細は下の節。
+- Sprint 42 — **User provisioning 境界の正式化**(`requireProvisionedUserId`)。
+  **実装は完了**し、Closed Beta blocker だった「Worker を持たないアカウントが
+  timezone を保存できない」を解消。詳細は下の節。
 
 ### Sprint 36 — 失敗の分類(第1段階)と scheduler の index、完了
 
@@ -487,15 +542,97 @@ write outcome     失敗 → 何も書かず RunPersistenceError を投げる
   ことになる。
 - `errorKind` の永続化、retry policy、`output` の保全はいずれも**未決のまま**。
 
+### Sprint 40 — 本番での初回実行と、境界のテスト
+
+**本番で実行が起きたのはこれが初めて。** PM が通常の UI から Worker を1件作り、
+手動実行し、削除した。実装担当は read-only の確認のみ。
+
+- **Claude API は成功した(約5秒)。** これで `ANTHROPIC_API_KEY` が「設定されて
+  いる」から「通る」に変わった。**失敗時の挙動は依然未観測。**
+- `lib/ai/claude-provider.test.ts`(27件)と `app/api/cron/run/route.test.ts`
+  (19件)を追加。前者は `classify()` の8 kind と境界の非漏洩、後者は 401 の
+  4経路と duration 閾値の境界。
+- **`refused` は `classify()` からは出ない** — 成功応答の `stop_reason ===
+  "refusal"` から来る。テストを読むときに間違えやすい。
+
+**この Sprint で事故を1件起こした。** `afterEach(vi.restoreAllMocks())` が
+`Anthropic.Messages.prototype.create` のスパイまで戻し、2件目以降のテストが
+実際に `api.anthropic.com` を叩いた(全て 401、`ANTHROPIC_API_KEY` は未使用、
+本番影響なし)。対処は `mockClear` への変更と、モジュール先頭で `globalThis.fetch`
+を投げるようにするガード + `afterAll` での復元。**「通信していないことを確かめる
+ために通信する」ことは禁止。**
+
+### Sprint 41 — cron の沈黙を検知する
+
+**解いたのは「tick が動かなくなったこと」だけ。** 実行の失敗は対象外で、それは
+今も誰にも届かない(下の Backlog)。
+
+- Healthchecks.io の dead man's switch。**Period 5分 / Grace 15分** なので、
+  最後に成功した tick からおよそ20分で通知対象になる。
+- Railway cron の Start Command は **`A && (B || true)`**。A が AutoOps の
+  cron API、B が heartbeat。
+  - **A が失敗したら heartbeat を送らない** — `--fail-with-body` があるので
+    4xx/5xx が curl の失敗になる。**このフラグが無いと curl は HTTP エラーでも
+    exit 0 になり、失敗した tick でも ping が飛ぶ。**
+  - **B の失敗は A の失敗にしない** — `|| true` で吸収し、`--max-time 10` を
+    heartbeat 側にだけ付ける。監視が実行の意味を書き換えてはいけない。
+  - **`(A && B) || true` は禁止。** それだと A の失敗まで吸収される。
+- `[dispatcher] due workers — count=N` を追加。「tick が動いていない」
+  「dispatcher に届いていない」「届いたが due が0」を切り分けられる。
+- **Ping URL は secret 扱い。** repo にも docs にも command literal にも書かない。
+- **STUCK_THRESHOLD_MS / EXECUTION_LEASE_MS / TICK_WARN_THRESHOLD_MS とは
+  別概念。** 値が近くても混同しない。
+
+### Sprint 42 — User provisioning 境界の正式化
+
+**Auth identity と DB `User` は別物**で、この設計はそれを意図的に分けている。
+`User` 行は「認証の結果」ではなく **AutoOps 側の application entity**(timezone を
+持ち、`Routine` の FK 親になる)。**sign-in では作られない。**
+
+| | 責務 | DB write |
+|---|---|---|
+| `requireUserId()` | 認証済み identity を要求する | **なし** |
+| `requireProvisionedUserId()` | それに加えて `User` 行の存在を保証する | upsert 1回 |
+
+**User-owned write の処理順は固定:**
+
+```
+authentication → validation → provisioning → business write
+```
+
+- **認証は入力の妥当性より先。** 未認証なら、入力が不正でも redirect する。
+- **provisioning は validation より後。** 弾かれる submission が、保存に必要
+  だったはずの行を作ってはいけない。
+- invalid input では **provisioning も persistence write も 0回**。
+
+**適用先は「行を新たに存在させる必要がある write」だけ。** 現在は Worker create
+と Settings の timezone 更新の2つ。delete / run / edit は既存 `Routine` を対象に
+するので、FK 親として行が既にあることが前提 — **機械的に全 write path を
+`requireProvisionedUserId()` にしない。**
+
+| | |
+|---|---|
+| 依存方向 | `session → provisioning → users persistence`。**`lib/users.ts` から session/auth を参照しない**(逆方向依存を作らない) |
+| `ensureUser` | upsert。id / email / name / image を扱い、**`timezone` には触れない** — provider profile の refresh が設定を上書きしてはいけない |
+| session に email が無い場合 | **provisioning を成立させない。** `User.email` は NOT NULL かつ unique で、dummy / synthetic email は捏造された identity を制約に本物として扱わせる |
+| `UserProvisioningError` | `ExecutionSuppressedError` / `RunPersistenceError` と同じ最小構成(1クラス + 1述語)。**taxonomy ではない** — `redirect()` も throw で抜けるため、包括 catch が `NEXT_REDIRECT` を飲むのを防ぐためだけに存在する。これ以上広げない |
+| `getUserTimezone` の UTC fallback | **維持。** これは read-side fallback であって provisioning ではない。**読み取りが行を作ってはいけない** |
+| `nextRunAt` | timezone 保存で**再計算しない**。既存の「frequency 変更なし → slot 保持」を維持 |
+| 有効な write での `auth()` 2回 | **許容する。** authentication と provisioning の責務分離を優先した。`requireUserId({ provision: true })` のような flag API は作らない |
+
 ### 未確認 — 別途扱う
 
 CI が緑でも検証されていないもの。**「動作確認済み」と言わないこと。**
 
 - `classify()` の実 API による挙動(401 / 429 等)。型と SDK のクラス階層を
-  実物のファイルで確認しただけで、実際の応答は受けていない。
-- **`ANTHROPIC_API_KEY` の有効性。** 本番の Web Service には設定されていて、
-  stand-in の警告も出ていない — つまり `ClaudeProvider` を使う構成にはなって
-  いる。ただし**成功した API 呼び出しが1件もない**ので、キーが通るかは不明。
+  実物のファイルで確認し、27件のテストで分類そのものは固定したが、**実際の
+  エラー応答は一度も受けていない**。本番の provider failure は今も0件。
+- **`ANTHROPIC_API_KEY` は Sprint 40 で有効性が確認済み**(成功実行1件)。
+  ただし**確認できたのは「通る」ことだけ**で、失敗時の挙動・rate limit・
+  長時間実行はいずれも未観測。
+- **B-1(Sprint 42 で修正した provisioning の穴)を本番で再現確認していない。**
+  correctness は unit test と Node 22 の CI で固定してある。本番で新規アカウント
+  を人工的に作って再現した、という事実は**ない** — 両者を混同しないこと。
 - **`duration_ms` の warn 分岐(150,000ms 以上)。** 発火条件そのものが本番に
   存在しないため、実行が起きるまで検証できない。型検査とビルドは通っている。
 - DST の他 zone。`America/New_York` のみ実測。
