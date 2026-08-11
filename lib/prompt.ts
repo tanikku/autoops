@@ -10,12 +10,21 @@ export function promptVariables(at: Date = new Date()): PromptVariables {
   };
 }
 
-/** Replaces `{{name}}` placeholders. Unknown names are left as-is. */
+/**
+ * Replaces `{{name}}` placeholders. Unknown names are left as-is.
+ *
+ * **Own properties only.** `in` would have answered for the whole prototype
+ * chain, so `{{constructor}}` and `{{toString}}` were substituted with
+ * whatever `Object.prototype` holds under that name — a function, stringified
+ * into the prompt — while the documented behaviour is to leave an unrecognised
+ * name exactly where it is. The variables are the two put there deliberately,
+ * and nothing a plain object happens to inherit is one of them.
+ */
 export function renderPrompt(
   template: string,
   variables: PromptVariables,
 ): string {
   return template.replace(VARIABLE_PATTERN, (match, name: string) =>
-    name in variables ? variables[name] : match,
+    Object.hasOwn(variables, name) ? variables[name] : match,
   );
 }
