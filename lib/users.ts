@@ -10,9 +10,10 @@ import { prisma } from "@/lib/prisma";
  * at sign-in and would keep serving the old value until the next one, so a
  * changed setting would appear to do nothing.
  *
- * Falls back to UTC for a user whose row does not exist yet — `ensureUser`
- * only writes it when the first worker is created, so a fresh account can
- * reach the dashboard before the row does.
+ * Falls back to UTC for a user whose row does not exist yet — nothing writes
+ * it until a write path provisions it (`requireProvisionedUserId`), so a fresh
+ * account can reach the dashboard before the row does. **Reading must not be
+ * what creates it**, which is why the fallback is here rather than a write.
  */
 export async function getUserTimezone(userId: string): Promise<string> {
   const user = await prisma.user.findUnique({
@@ -27,8 +28,12 @@ export async function getUserTimezone(userId: string): Promise<string> {
  * Changes the zone a user's timestamps are read and scheduled in.
  *
  * Touches that column and nothing else: the rest of the row comes from the
- * provider and is refreshed by `ensureUser` at sign-in, so writing it here
- * would only risk overwriting something newer with something staler.
+ * provider and is refreshed by `ensureUser` at the provisioning boundary
+ * (`requireProvisionedUserId`), so writing it here would only risk overwriting
+ * something newer with something staler.
+ *
+ * **The row is not created here.** A caller reaching this has been through
+ * that boundary, which is what guarantees there is something to update.
  */
 export async function setUserTimezone(
   userId: string,

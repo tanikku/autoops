@@ -1,11 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
-import { auth } from "@/auth";
 import { createRoutine } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
-import { ensureUser, getUserTimezone } from "@/lib/users";
+import { requireProvisionedUserId, requireUserId } from "@/lib/session";
+import { getUserTimezone } from "@/lib/users";
 import {
   hasWorkerFormErrors,
   readWorkerForm,
@@ -32,11 +31,11 @@ export async function createRoutineAction(
   _prevState: CreateRoutineState,
   formData: FormData,
 ): Promise<CreateRoutineState> {
-  // The owner comes from the session, never from the submitted form.
-  const session = await auth();
-  if (!session?.user?.id || !session.user.email) {
-    redirect("/");
-  }
+  // **Who is asking comes first, and it is only a question.** A visitor with no
+  // session is sent to sign in before anything they submitted is read, whether
+  // or not it was valid. This writes nothing — provisioning is a separate step,
+  // below, and deliberately not part of authenticating.
+  await requireUserId();
 
   const input = readWorkerForm(formData);
 
@@ -55,14 +54,12 @@ export async function createRoutineAction(
   const status = input.status ?? "draft";
   const frequency = input.frequency ?? "manual";
 
-  // JWT sessions never write the account row, so make sure it exists before
-  // the first row that references it.
-  await ensureUser({
-    id: session.user.id,
-    email: session.user.email,
-    name: session.user.name,
-    image: session.user.image,
-  });
+  // The owner comes from the session, never from the submitted form — the same
+  // session the check above read. JWT sessions never write the account row, so
+  // this is also what makes sure it exists before the first row that references
+  // it: a `Routine` carries a foreign key to it. Asked for after validation, so
+  // a rejected submission never creates the row it would have needed.
+  const userId = await requireProvisionedUserId();
 
   // A time of day only means anything alongside a cadence, and a weekday only
   // alongside a week: a manual worker has no slot to place either in, and a
@@ -70,7 +67,7 @@ export async function createRoutineAction(
   const runAtMinutes = frequency === "manual" ? null : input.runAtMinutes;
   const runAtWeekday = frequency === "weekly" ? input.runAtWeekday : null;
   const runAtDay = frequency === "monthly" ? input.runAtDay : null;
-  const timezone = await getUserTimezone(session.user.id);
+  const timezone = await getUserTimezone(userId);
 
   try {
     await createRoutine(
@@ -91,7 +88,7 @@ export async function createRoutineAction(
           timezone,
         }),
       },
-      session.user.id,
+      userId,
     );
   } catch (error) {
     console.error("[worker] create failed", error);
