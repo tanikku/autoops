@@ -139,6 +139,14 @@ never shifts the schedule.
 Changing the **status** to `paused` or `draft` takes the worker out of scheduled
 execution without discarding its schedule.
 
+**A save that matched no row is not a save.** The edit action reads the worker,
+then writes it, and a worker deleted between the two leaves the write matching
+nothing — it reports `Worker not found.` rather than success, and revalidates
+nothing. Saying otherwise would be worse than either outcome: the form would
+clear and the toast would say the change landed. **That is not optimistic
+locking** and does not stand in for it: two saves that both find the row still
+last-write-wins, which is [Backlog](#backlog).
+
 ### Cadence and time of day
 
 A worker's schedule is a combination of four columns and the account's zone:
@@ -324,6 +332,51 @@ The two actions differ in exactly one place, and it is explicit: an unreadable
 `status` or `frequency` falls back to `draft` / `manual` when creating, and to
 the worker's existing value when editing. A new worker starts quiet; an existing
 one is not silently reset.
+
+**Those fallbacks are worked out before validation runs, and handed to it.**
+One rule depends on what the worker will be *saved* as rather than on what the
+form sent, and asking about the submitted value would let a submission that
+simply omits the field through — landing on an existing `active` worker and
+leaving it active. Both are pure, so nothing is read or written to decide them.
+
+#### A worker AutoOps runs on its own has to have something to run
+
+Only the name is always required. Description may be blank, and so may Prompt —
+except on the one combination that AutoOps dispatches without anyone present:
+
+| Status | Frequency | Blank prompt |
+| --- | --- | --- |
+| `draft` | any | Allowed |
+| `paused` | any | Allowed |
+| `active` | `manual` | Allowed |
+| `active` | `daily` / `weekly` / `monthly` | **Rejected** |
+
+```
+Prompt is required for scheduled active workers.
+```
+
+**The rule is about unattended repetition, not about being runnable.** Every
+worker is runnable by hand whatever its status — `paused` says so on the form
+itself — so requiring a prompt of anything runnable would require one of
+everything, and naming a worker before writing it is what `draft` is for. What
+the three allowed rows have in common is that nothing dispatches them: `draft`
+and `paused` are not selected by the [scheduler](#scheduling-engine), and an
+`active` worker on `manual` has a null `nextRunAt` and so is never due.
+
+The rejected row is the one that repeats. A blank prompt there is not a field
+waiting to be filled in, it is a run that fails every slot for as long as the
+worker exists — the schedule advances whether a run worked or not, and a tick
+whose workers all failed still answers `200`.
+
+**Blank means blank after trimming**, the same thing that makes a
+whitespace-only name count as missing. And a hand-started run of an allowed
+combination can still meet an empty prompt and fail: that is one failure, in
+front of the person who asked for it, which is a different event from the same
+failure repeating on a schedule with nobody watching.
+
+**This is checked when a worker is written, not when one runs.** A worker
+already stored in that state would not be repaired by it — nothing rewrites
+existing rows, and nothing stops the scheduler from picking one up.
 
 Fields stay **uncontrolled**. The form submits through a server action that
 reads FormData, so no component holds the values. Two consequences follow:
@@ -772,7 +825,7 @@ the next one, so a changed setting would appear to do nothing.
 | Components | **shadcn/ui** (Base UI) | Note: Base UI, not Radix — buttons take `render`, not `asChild` |
 | Icons | **lucide-react** | |
 | AI | **Anthropic SDK** | Behind a provider interface; falls back to a stand-in without an API key. Timeout and retries are set explicitly — see [Setup](#setup) |
-| Testing | **Vitest** | 13 files, 220 tests. Schedule arithmetic, the scheduler's query, the dispatcher, execution and its lease, health and overview, the provider boundary, the cron API, the session boundary, and three of the five server actions. **Not the database's own guarantees, and no component** — see [Backlog](#backlog) |
+| Testing | **Vitest** | 16 files, 286 tests. Schedule arithmetic, the scheduler's query, the dispatcher, execution and its lease, health and overview, the provider boundary, the cron API, the session boundary, form validation, prompt rendering, and four of the five server actions. **Not the database's own guarantees, and no component** — see [Backlog](#backlog) |
 | CI | **GitHub Actions** | `.github/workflows/ci.yml` runs lint, types, tests and build. No secrets, no database |
 
 Two details bite anyone who assumes the usual defaults:
@@ -1048,6 +1101,13 @@ run:
 Both are UTC. **An unknown name is left in place** rather than replaced with an
 empty string, so a typo shows up in the output instead of silently vanishing.
 
+**Only those two are names.** The substitution asks whether the variables
+carry a name of their own, not whether anything answers to it — `{{constructor}}`
+and `{{toString}}` are as unknown as `{{yesterday}}` and are left where they
+are. Asking with `in` had answered for everything a plain object inherits, so
+those two were replaced with a stringified function. Nothing was exposed by it
+that a prompt could not already say; it was simply the wrong answer.
+
 ### Cron API
 
 `POST /api/cron/run` is the entry point for scheduled execution. It asks the
@@ -1307,6 +1367,7 @@ For production, add the same path on your deployed origin.
 | Sprint 40 | The first real execution in production, and tests for the provider boundary and the cron API | Completed |
 | Sprint 41 | A dead man's switch on the cron service, so a tick that stops happening is noticed | Completed |
 | Sprint 42 | An explicit provisioning boundary, so an account can change its settings before it owns a worker | Completed |
+| Sprint 43 | A worker AutoOps runs on its own must have a prompt; template variables stop answering for inherited names; an edit that matched no row stops reporting success | Completed |
 
 ## Backlog
 
@@ -1402,15 +1463,15 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
 - **What the database itself guarantees is still verified by hand.** Tests
   reach schedule arithmetic, the scheduler's query contract, the dispatcher,
   execution and its lease, health and overview, the provider boundary, the cron
-  API, and the session boundary — but every one of them stands the database in.
-  That a claim or a lease is atomic, and how catch-up behaves against real
-  rows, are things CI passing says nothing about. Covering them means a
-  database in CI, which is the cost being deferred rather than the coverage
+  API, the session boundary, form validation and prompt rendering — but every
+  one of them stands the database in. That a claim or a lease is atomic, and
+  how catch-up behaves against real rows, are things CI passing says nothing
+  about. Covering them means a database in CI, which is the cost being deferred
+  rather than the coverage
 
-- **What has no test of its own**: every component, `lib/worker-input.ts`,
-  `lib/prompt.ts`, `lib/schedule-label.ts`, and two of the five server actions
-  — deleting a worker and editing one. The three that are covered are the ones
-  whose ordering or branching was worth pinning down
+- **What has no test of its own**: every component, `lib/schedule-label.ts`,
+  and one of the five server actions — deleting a worker. The four that are
+  covered are the ones whose ordering or branching was worth pinning down
 
 **Concurrency**
 

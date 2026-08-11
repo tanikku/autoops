@@ -34,12 +34,12 @@
   **依存も DB も足さずに**届くようになった。現在の到達範囲は `lib/schedule.ts` /
   `lib/scheduler.ts` / `lib/dispatcher.ts` / `lib/health.ts` / `lib/overview.ts` /
   `lib/runs.ts` / `lib/execution-lease.ts` / `lib/session.ts` /
-  `lib/ai/claude-provider.ts` / cron route / **5つある server action のうち3つ**
-  (run / create / timezone)。**Test Files 13 / Tests 220。**
+  `lib/worker-input.ts` / `lib/prompt.ts` / `lib/ai/claude-provider.ts` /
+  cron route / **5つある server action のうち4つ**(run / create / edit /
+  timezone)。**Test Files 16 / Tests 286。**
 - **テストが1つも無いもの**を把握しておくこと: 全 component、
-  `lib/worker-input.ts`、`lib/prompt.ts`、`lib/schedule-label.ts`、
-  server action の残り2つ(delete / edit)。**「220件通った」は
-  「全部カバーした」ではない。**
+  `lib/schedule-label.ts`、server action の残り1つ(delete)。
+  **「286件通った」は「全部カバーした」ではない。**
 - **server action をテストするときは、末端だけを mock して境界は実物を使う。**
   `@/auth` / `@/lib/users` / `@/lib/routines` / `next/cache` / `next/navigation`
   を `vi.mock` し、`@/lib/session` は実物のまま通す。こうすると
@@ -150,9 +150,9 @@
 **ここに commit hash は書きません** — このファイル自体が git 管理下にあるため、書いた瞬間に1つ古くなります。
 進捗の実際は git が持っています(冒頭の手順2)。
 
-**現在地点: Sprint 42 の provisioning blocker は実装完了。** CI 緑
-(Node 22 / Test Files 13 / Tests 220)、本番 deployment SUCCESS、自然 cron tick 正常。
-**Sprint 42 の正式クローズは PM の判断で、まだ出ていない。**
+**現在地点: Sprint 42 は正式 CLOSED。Sprint 43 の実装(NEW-1 / NEW-6 / NEW-3)は
+完了。** CI 緑(Node 22 / Test Files 16 / Tests 286)、本番 deployment SUCCESS、
+自然 cron tick 正常。**Sprint 43 の正式クローズは PM の判断で、まだ出ていない。**
 
 完了済み:
 
@@ -187,6 +187,10 @@
 - Sprint 42 — **User provisioning 境界の正式化**(`requireProvisionedUserId`)。
   **実装は完了**し、Closed Beta blocker だった「Worker を持たないアカウントが
   timezone を保存できない」を解消。詳細は下の節。
+- Sprint 43 — **入力契約の締め直し。** 無人で繰り返し実行される Worker に
+  prompt を必須化(NEW-1)、prompt 変数が継承プロパティに答えるのをやめた
+  (NEW-6)、edit が「1行も更新していないのに success」を返すのをやめた
+  (NEW-3)。詳細は下の節。
 
 ### Sprint 36 — 失敗の分類(第1段階)と scheduler の index、完了
 
@@ -619,6 +623,63 @@ authentication → validation → provisioning → business write
 | `getUserTimezone` の UTC fallback | **維持。** これは read-side fallback であって provisioning ではない。**読み取りが行を作ってはいけない** |
 | `nextRunAt` | timezone 保存で**再計算しない**。既存の「frequency 変更なし → slot 保持」を維持 |
 | 有効な write での `auth()` 2回 | **許容する。** authentication と provisioning の責務分離を優先した。`requireUserId({ provision: true })` のような flag API は作らない |
+
+### Sprint 43 — 入力契約の締め直し
+
+#### NEW-1 — 無人で繰り返す Worker には prompt が要る
+
+**問題は「空 prompt を保存できること」ではない。** Run ボタンは status で
+制限されておらず、`draft` / `paused` / `active` のすべてで手動実行できる
+(UI 自身が paused について "Manual runs still work." と書いている)。よって
+「実行可能なら prompt 必須」にすると**全 Worker が必須**になり、下書き導線が
+壊れる。
+
+**契約は「AutoOps が無人で繰り返し実行する ⇒ prompt が要る」。**
+
+```
+effectiveStatus === "active" && effectiveFrequency !== "manual" && prompt === ""
+  → invalid: "Prompt is required for scheduled active workers."
+```
+
+| status | frequency | 空 prompt |
+|---|---|---|
+| draft | 任意 | 許可 |
+| paused | 任意 | 許可 |
+| active | manual | **許可**(`nextRunAt` が null で scheduler が選ばない) |
+| active | daily / weekly / monthly | **拒否** |
+
+**「prompt は常に required」と書かないこと。**
+
+| | |
+|---|---|
+| 判定する値 | **実際に保存される実効値**。`validateWorkerForm(input, { status, frequency })` に渡す。`input.status` を直接見ると、**status を含まない POST → `input.status = null` → `existing.status`(active) へ fallback** で迂回できてしまう |
+| fallback の位置 | **検証の前**。create は `?? "draft"` / `?? "manual"`、edit は `?? existing.*`。**純粋計算のみ**なので Sprint 42 の `authentication → validation → provisioning → write` を壊さない |
+| 空判定 | `input.prompt === ""`。`readWorkerForm` が trim 済みなので空白のみもここに落ちる。**既存の `!input.name` と同じ前提**に乗せてあり、validator 側で二重に trim しない |
+| 適用範囲 | **write-time のみ。** 既に保存されている `active` + 定期 + 空 prompt の行は**自動修復されない**。直るのは次に編集して保存したとき。**本番にその行があるかは確認していない** |
+
+#### NEW-6 — prompt 変数は own property だけ
+
+`name in variables` はプロトタイプチェーンを辿るため、`{{constructor}}` /
+`{{toString}}` / `{{__proto__}}` 等が展開されていた。documented contract は
+「unknown はそのまま残す」なので**矛盾**。`Object.hasOwn(variables, name)` に
+変更。
+
+**correctness の修正であって security 修正ではない。** 読み取りのみで
+prototype 汚染はなく、混入先はモデルへ送る prompt 本文だけ。ユーザーは元々
+prompt に任意の文字列を書けるので新しい権限は生まれない。**誇張しないこと。**
+
+#### NEW-3 — 1行も更新していないなら success ではない
+
+`updateRoutine` は `updateMany` の `count === 0` で `null` を返す(例外は
+投げない)。edit action がその戻り値を捨てていたため、**read と write の間に
+Worker が削除されると「保存しました」と表示していた**。
+
+戻り値を確認し、`null` なら `"Worker not found."` を返して `revalidatePath` も
+行わない。`deleteWorkerAction` が既にやっている判断を edit にも入れただけ。
+
+**これは optimistic locking ではない。** `updateRoutine` の contract も変えて
+いない。**行が見つかった2つの save は今も last-write-wins** で、その Backlog は
+未解決のまま(上の「決定済み」を参照)。
 
 ### 未確認 — 別途扱う
 
