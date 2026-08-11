@@ -29,7 +29,23 @@ export async function deleteWorkerAction(
   void prevState; // required by `useActionState`, unused here
   const userId = await requireUserId();
 
-  const deleted = await deleteRoutine(id, userId);
+  // **A delete that threw is not a delete that found nothing.** The two are
+  // the same to whoever pressed the button — the worker is still there either
+  // way — but only one of them means something is wrong, and the reason for it
+  // belongs in the log rather than in a toast. Every other action that writes
+  // catches its own write; this was the one that did not, and an exception
+  // escaping here reaches a page the caller has already navigated away from.
+  let deleted: boolean;
+  try {
+    deleted = await deleteRoutine(id, userId);
+  } catch (error) {
+    console.error("[worker] delete failed", error);
+    return { status: "error", message: "Could not delete the worker." };
+  }
+
+  // Missing and someone else's are deliberately the same answer: the query
+  // matched on `id` *and* `userId`, so a worker that is not this account's
+  // cannot be told apart from one that does not exist.
   if (!deleted) {
     return { status: "error", message: "Worker not found." };
   }
