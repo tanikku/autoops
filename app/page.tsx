@@ -13,7 +13,7 @@ export default function Home() {
           nativeButton={false}
           render={
             <a
-              href="https://github.com"
+              href="https://github.com/tanikku/autoops"
               target="_blank"
               rel="noopener noreferrer"
             />
@@ -52,7 +52,7 @@ export default function Home() {
             nativeButton={false}
             render={
               <a
-                href="https://github.com"
+                href="https://github.com/tanikku/autoops"
                 target="_blank"
                 rel="noopener noreferrer"
               />
