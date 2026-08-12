@@ -784,9 +784,11 @@ the next one, so a changed setting would appear to do nothing.
 **Accounts**
 
 - Google Authentication (Auth.js v5, JWT sessions)
+- Closed Beta admission — sign-in limited to an invited list of addresses
 - Multi-tenancy — every row scoped to its owner, 404 on someone else's
 - Settings — a timezone for the account, applied to every timestamp and to
   scheduled execution
+- Privacy notice at `/privacy`, describing what is stored and what is not
 
 **Workers**
 
@@ -1004,10 +1006,48 @@ cp .env.example .env
 | `AUTH_GOOGLE_ID` | Yes | Google OAuth client id |
 | `AUTH_GOOGLE_SECRET` | Yes | Google OAuth client secret |
 | `CRON_SECRET` | Yes | Bearer token for `POST /api/cron/run`. Unset means every request is rejected |
+| `BETA_ALLOWED_EMAILS` | Yes | Comma-separated addresses allowed to sign in. **Unset means nobody can** — see below |
 | `AUTH_URL` | **In production** | The deployed origin, e.g. `https://autoops.example.com`. Leave it unset locally — see below |
 | `ANTHROPIC_API_KEY` | No | Real AI execution. Without it, a stand-in provider answers |
 
 `.env` is gitignored; `.env.example` is committed and holds no real values.
+
+### `BETA_ALLOWED_EMAILS` refuses everyone until you set it
+
+**It is not optional, and "unset" is not "unrestricted".** AutoOps is
+invite-only while it is in Closed Beta, and the list is what decides who is
+invited. An unset, empty, or whitespace-only value parses to an empty list, and
+an empty list turns every sign-in away — **including yours, locally**. That is
+the same direction `CRON_SECRET` fails in, and for the same reason: a variable
+somebody forgot must not quietly reopen the door.
+
+```bash
+BETA_ALLOWED_EMAILS=you@example.com,teammate@example.com
+```
+
+Three conditions have to hold for a sign-in to go through: Google returned an
+address, Google says it is verified, and that address is on the list. Both
+sides are trimmed and lower-cased before they are compared, and **nothing else
+is done to them** — the dots Gmail ignores and the `+tag` some providers treat
+as an alias are not interpreted here, because guessing wide would admit an
+address nobody wrote down. Put the address exactly as it is.
+
+**A refused sign-in leaves nothing behind.** The check runs before a token is
+issued, so there is no session and no `User` row — see
+[Account Provisioning](#account-provisioning) — and the visitor comes back to
+the landing page, which says only that the beta is invite-only.
+
+**Changing the list needs a restart.** It is read once when the process starts,
+as the AI provider reads its own key once. In production that means updating
+the variable and then redeploying or restarting; the running process will not
+notice on its own.
+
+**Adding a deployment before the variable locks everyone out.** Set
+`BETA_ALLOWED_EMAILS` first, confirm it is there, and deploy the code after.
+
+**Removing somebody from the list does not sign them out.** Sessions are JWTs
+with no server-side store, so a token already issued stays valid until it
+expires. The list controls who can sign in next, not who is signed in now.
 
 ### `AUTH_URL` is only needed once you deploy
 
@@ -1334,6 +1374,19 @@ decide the outcome it was supposed to be watching.
 The dashboard is behind Google sign-in (**Auth.js v5**, JWT sessions, **no
 database adapter**). All three `AUTH_*` variables are required to sign in.
 
+**Being able to sign in is not the same as being allowed to.** While AutoOps is
+in Closed Beta, a `signIn` callback checks the address Google returned against
+[`BETA_ALLOWED_EMAILS`](#beta_allowed_emails-refuses-everyone-until-you-set-it)
+and refuses anyone not on it. The check is a pure function in
+`lib/beta-access.ts` rather than logic inside `auth.ts`, which keeps that file
+free of anything the edge cannot run — the same constraint that rules out a
+database adapter — and makes the rule testable on its own. When the beta ends,
+the file goes and the callback with it.
+
+Nothing about a refusal is logged. The address that was turned away and the
+list it was compared against are both things a log would then be holding, and
+the person it concerns already learns the outcome from the page they land on.
+
 Skipping the adapter is deliberate: `auth.ts` stays free of database imports, so
 the middleware protecting `/dashboard/*` runs on the edge without a round trip.
 The cost is that nothing writes the `User` row at sign-in — see
@@ -1446,6 +1499,7 @@ For production, add the same path on your deployed origin.
 | Sprint 42 | An explicit provisioning boundary, so an account can change its settings before it owns a worker | Completed |
 | Sprint 43 | A worker AutoOps runs on its own must have a prompt; template variables stop answering for inherited names; an edit that matched no row stops reporting success | Completed |
 | Sprint 44 | A delete that the database refused stops escaping the action, and every tick says when execution last failed | Completed |
+| Sprint 45 | Sign-in limited to an invited list, and a privacy notice describing what AutoOps actually keeps | Completed |
 
 ## Backlog
 

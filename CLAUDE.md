@@ -35,10 +35,12 @@
   `lib/scheduler.ts` / `lib/dispatcher.ts` / `lib/health.ts` / `lib/overview.ts` /
   `lib/runs.ts` / `lib/execution-lease.ts` / `lib/session.ts` /
   `lib/worker-input.ts` / `lib/prompt.ts` / `lib/ai/claude-provider.ts` /
-  cron route / **server action 5つすべて**(run / create / edit / timezone /
-  delete)。**Test Files 16 / Tests 307。**
+  `lib/beta-access.ts` / cron route / **server action 5つすべて**(run / create /
+  edit / timezone / delete)。**Test Files 17 / Tests 332。**
 - **テストが1つも無いもの**を把握しておくこと: 全 component、
-  `lib/schedule-label.ts`。**「307件通った」は「全部カバーした」ではない。**
+  `lib/schedule-label.ts`、**`auth.ts` 本体**(admission の判定ロジックは
+  `lib/beta-access.ts` へ分離してテスト済みだが、callback の結線自体は未テスト)。
+  **「332件通った」は「全部カバーした」ではない。**
 - **server action をテストするときは、末端だけを mock して境界は実物を使う。**
   `@/auth` / `@/lib/users` / `@/lib/routines` / `next/cache` / `next/navigation`
   を `vi.mock` し、`@/lib/session` は実物のまま通す。こうすると
@@ -149,10 +151,10 @@
 **ここに commit hash は書きません** — このファイル自体が git 管理下にあるため、書いた瞬間に1つ古くなります。
 進捗の実際は git が持っています(冒頭の手順2)。
 
-**現在地点: Sprint 43 は正式 CLOSED。Sprint 44 の実装(NEW-7 / execution failure
-observation)は完了。** CI 緑(Node 22 / Test Files 16 / Tests 307)、本番
-deployment SUCCESS、自然 cron tick 正常。
-**Sprint 44 の正式クローズは PM の判断で、まだ出ていない。**
+**現在地点: Sprint 44 は正式 CLOSED。Sprint 45 の実装(Closed Beta admission
+control / privacy notice)はローカル完了。** Test Files 17 / Tests 332。
+**まだ push しておらず、Production rollout も未実施。**
+**Sprint 45 の正式クローズは PM の判断で、まだ出ていない。**
 
 完了済み:
 
@@ -194,6 +196,8 @@ deployment SUCCESS、自然 cron tick 正常。
 - Sprint 44 — **Failure Observability & Action Consistency Hardening。**
   delete だけに欠けていた DB 例外処理を既存 action 契約へ揃え(NEW-7)、
   実行失敗の存在を運営者が cron ログ1行で確認できるようにした。詳細は下の節。
+- Sprint 45 — **Closed Beta Access & Privacy Readiness。** sign-in を招待制に
+  し(`BETA_ALLOWED_EMAILS`)、`/privacy` を追加した。詳細は下の節。
 
 ### Sprint 36 — 失敗の分類(第1段階)と scheduler の index、完了
 
@@ -752,6 +756,54 @@ failure が未観測のまま schema / taxonomy を先に固定しない。
 これは**その時点で `status="failed"` の行が見つからなかった**ことだけを意味する。
 「本番で失敗が起きない」「provider failure が存在しない」「失敗経路を本番で
 実測した」とは**言えない**。**failed>0 側は unit test のみで、人工 failure は禁止。**
+
+### Sprint 45 — Closed Beta Access & Privacy Readiness
+
+#### admission control — `BETA_ALLOWED_EMAILS`
+
+**Production URL の秘匿ではなく、明示的に許可した Google アカウントだけが
+sign-in できる状態にした。** 判定は `auth.ts` の `signIn` callback から
+`lib/beta-access.ts` の純粋関数2つを呼ぶだけ。
+
+| 決定 | 理由 |
+|---|---|
+| **環境変数(comma-separated)。DB でも repository でもない** | repository に実ユーザーの email を書くと **git 履歴から消せない**。DB 方式は `auth.ts` に DB import が要り、**「adapter を入れない = middleware を Edge で動かす」という根拠を壊す** |
+| **fail-closed。** 未設定 / 空 / 空白のみ / カンマのみ / parse 後0件 → **全員 deny** | 目的は「許可していない利用者を本番へ入れない」こと。**設定漏れで無制限 sign-in に戻る fail-open はその目的と矛盾する。** `CRON_SECRET` の fail-closed と設計思想を揃えた |
+| **判定は3条件の AND** | `profile.email` が存在 / **`email_verified === true`** / trim + lowercase 後に allowlist に一致 |
+| **正規化は trim + lowercase だけ** | Gmail のドット無視や `+alias` を再現すると **provider の代理で推測することになる**。広く推測すれば誰も書いていない address が入り、狭く推測すれば招待した人が締め出される。**書いたとおりに比較する** |
+| **`lib/beta-access.ts` に分離** | `auth.ts` を薄く保ち Edge 互換を維持。**純粋関数なので Vitest で直接テストできる**(`auth.ts` 自体にはテストが無い)。Public Beta 移行時は**ファイルごと消せる** |
+| **拒否のログを一切追加しない** | email も allowlist も、出せば**ログがそれを保持することになる**。拒否された本人は landing の1文で結果を知る。件数ログも追加しない |
+| **`pages.error = "/"`** | Auth.js が `?error=AccessDenied` を付けて landing へ戻す。**付くのは型名だけで address も list も載らない**。landing は「招待制である」ことしか言わない |
+
+**拒否は何も残さない。** `signIn` が false を返すと `jwt` に到達せず、token も
+cookie も `User` row も作られない(row は provisioning 境界で作られ、そこへは
+session が要る)。
+
+**allowlist はプロセス起動時に1度だけ parse する**(provider factory が
+`ANTHROPIC_API_KEY` を1度読むのと同じ)。**変更には再起動 / redeploy が必要。**
+
+**rollout の順序を守ること: 変数設定 → コード deploy。** 逆順にすると
+fail-closed により**全員が sign-in できなくなる**。
+
+**既存 JWT は即時失効できない**(NEW-12)。JWT にサーバ側ストアが無いため、
+発行済み token は期限まで有効。**allowlist が制御するのは「次に誰が入れるか」で
+あって「今誰が入っているか」ではない。** Sprint 45 では拡張しない。
+
+#### `/privacy`
+
+公開ページ。**現在の実装から言えることだけを書いた。** 「保存しない」「一定期間で
+自動削除する」「アカウント削除を依頼できる」等、**実装に存在しないことは書かない**。
+
+**Contact section は作っていない** — 正式な support contact が未確定で、
+**placeholder や推測した連絡先を production に入れない**ため。不要という判断では
+なく、確定後の future work。
+
+**Terms of Service は Sprint 45 対象外。** 技術判断ではなく法務・事業判断のため。
+**不要と判断したわけではない。**
+
+**landing が static → dynamic になったのは意図した変更。** `searchParams` を
+Server Component で読むため。Client Component / `useSearchParams` / Suspense は
+追加していない。
 
 ### 未確認 — 別途扱う
 
