@@ -151,10 +151,13 @@
 **ここに commit hash は書きません** — このファイル自体が git 管理下にあるため、書いた瞬間に1つ古くなります。
 進捗の実際は git が持っています(冒頭の手順2)。
 
-**現在地点: Sprint 44 は正式 CLOSED。Sprint 45 の実装(Closed Beta admission
-control / privacy notice)はローカル完了。** Test Files 17 / Tests 332。
-**まだ push しておらず、Production rollout も未実施。**
-**Sprint 45 の正式クローズは PM の判断で、まだ出ていない。**
+**現在地点: Sprint 45 まで正式 CLOSED。Sprint 46 Day 1 の Backlog 再評価では
+「実装しない」(Option 0)を選び、Closed Beta Observation Phase に入っている。**
+Test Files 17 / Tests 332。
+
+**Observation Phase は継続中で、Documentation Sprint はその上で走っている。**
+Documentation Sprint の成果物(`docs/` 3点、README の導線と Backlog、
+`lib/worker-templates.ts` の修正、このファイル)は**ローカル完了・未 commit**。
 
 完了済み:
 
@@ -198,6 +201,8 @@ control / privacy notice)はローカル完了。** Test Files 17 / Tests 332。
   実行失敗の存在を運営者が cron ログ1行で確認できるようにした。詳細は下の節。
 - Sprint 45 — **Closed Beta Access & Privacy Readiness。** sign-in を招待制に
   し(`BETA_ALLOWED_EMAILS`)、`/privacy` を追加した。詳細は下の節。
+- Documentation Sprint — **利用者向けドキュメント3点の新規作成と、能力の
+  誇張を取り除く template 修正。** 詳細は下の節。
 
 ### Sprint 36 — 失敗の分類(第1段階)と scheduler の index、完了
 
@@ -804,6 +809,38 @@ fail-closed により**全員が sign-in できなくなる**。
 **landing が static → dynamic になったのは意図した変更。** `searchParams` を
 Server Component で読むため。Client Component / `useSearchParams` / Suspense は
 追加していない。
+
+### Documentation Sprint — 利用者向けドキュメントと template の能力整合
+
+**ドキュメントを書き始めた時点で、現在のコードを source of truth として
+確認した結果、`lib/worker-templates.ts` が実装にない能力を約束していた。**
+実装せずに報告し、PM の判断で「能力整合の修正」として先に直した
+(**feature sprint ではない**)。
+
+- 5件中3件が、AutoOps ができないことを前提に書かれていた —
+  「今日の重要ニュース」「受信箱の未返信メール」「追跡中トピックを出典付きで
+  調査」。**worker は prompt 1本のモデル呼び出し**で、browsing / search /
+  inbox / calendar / files / tool use / MCP / 前回実行の記憶はどれも無い。
+- **しかもそういう run は success として記録される。** 出力が根拠に基づくか
+  捏造かを判定できる箇所がパイプラインに1つも無いため。
+- 修正は5件すべてを「利用者が material を貼る」形にし、**`defaultFrequency` を
+  全件 `manual`** にした。prompt が入力を抱えている以上、cadence で回しても
+  同じことを繰り返して課金するだけになる。**id / name は変更していない。**
+- 変数は `{{today}}` / `{{now}}` のみ。**新しい変数は追加していない。**
+- **template の "Use only what is written below" はモデルへの指示であって、
+  プラットフォームの保証ではない。** 誇張しないこと。
+
+**能力の欠落そのものは直していない。** 文言は直せるが、外部データに触れる
+手段が無いという事実は残る。README Backlog に **Product** として2項目
+(能力境界 / 捏造が success になること)を記録した。
+**次スプリントで外部連携を実装すると決まってはいない** — 選択肢も範囲も未決。
+
+新規ドキュメントは `docs/USER_GUIDE.md` / `docs/USE_CASES.md` /
+`docs/TROUBLESHOOTING.md` の3点で、**利用者向け**(README は開発者向けのまま)。
+TROUBLESHOOTING には運営者向けの節があり、Healthchecks は infrastructure の
+heartbeat、`last_failed_at` は**読みに行く観測であって通知ではない**ことを
+そこに明記してある。README は導線の追加と Backlog の追記だけで、
+**Architecture / Roadmap / 履歴の構成は変更していない。**
 
 ### 未確認 — 別途扱う
 

@@ -2,6 +2,16 @@
 
 A modern AI workflow automation platform.
 
+**Using AutoOps rather than working on it?** Start here:
+
+- **[User Guide](./docs/USER_GUIDE.md)** — what AutoOps does, what it cannot do,
+  and how to run a Worker.
+- **[Use Cases](./docs/USE_CASES.md)** — Worker setups with copy-paste prompts.
+- **[Troubleshooting](./docs/TROUBLESHOOTING.md)** — symptoms and causes, plus a
+  section for whoever operates the Closed Beta deployment.
+
+The rest of this file is for developers.
+
 ## Vision
 
 Build your AI workforce. Define a **worker** once — a name, a prompt, a cadence
@@ -1569,6 +1579,47 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
   dependency, and cannot shut down cleanly: the framework's own `SIGTERM`
   handler closes the HTTP server and calls `process.exit(0)`, which a worker
   waiting on a model has no way to delay
+
+**Product**
+
+- **A worker can only work on what its prompt already contains, and the
+  templates were written as though it could not.** A worker is one model call
+  with the text it holds — no browsing, no search, no inbox, no files, no tools,
+  and no sight of what it produced last time. Three of the five presets offered
+  "today's important news", "the unanswered emails in my inbox" and "research
+  the topic I am tracking, with sources". They were rewritten in the
+  documentation sprint to take pasted material instead, and all five moved to
+  `manual` because material carried in the prompt does not change on a cadence.
+
+  **The wording was the part that could be fixed; the gap it described was
+  not.** Scheduling is worth most when each run sees something new, and nothing
+  in AutoOps can go and find anything. What remains is the narrower product the
+  code actually implements — the scheduled examples in
+  [Use Cases](./docs/USE_CASES.md) are the ones that survive it, and they work
+  because the model generates the output rather than fetching it.
+
+  **What follows from the boundary is what a worker cannot be, not what the
+  answer has to be.** A worker that needs external information, a worker that
+  needs to act on an external system, and a worker that needs an earlier run's
+  output carried forward are all outside what execution does today. **How that
+  gap might be closed is open** — tool use, fetching or search, connectors,
+  carried-forward context, and designs not listed here are all candidates.
+  **None of them is chosen.** Approach, scope, priority and timing are all
+  undecided, and nothing here should be read as narrowing them to any one of
+  these.
+
+- **AutoOps does not check whether model output is true.** A response the
+  provider returned normally is recorded as `completed`, and that says the call
+  succeeded — not that what came back is correct. Output that is wrong, or
+  invented from nothing, is stored the same way as output that is right; a
+  worker still holding `(paste headlines or article text here)` completes and
+  files a briefing about nothing.
+
+  The templates now instruct the model to use only what it was given and to
+  mark gaps rather than fill them. **That is an instruction to the model, not a
+  guarantee the platform enforces** — it makes the failure less likely, not
+  impossible, and nothing between the provider and `RunHistory` inspects the
+  contents either way
 
 **Reading**
 
