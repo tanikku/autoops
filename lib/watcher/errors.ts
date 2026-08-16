@@ -54,7 +54,17 @@ export type WatcherErrorKind =
   /** The body was larger than may be read. */
   | "response-too-large"
   /** The body is not something this can read as text. */
-  | "unsupported-content-type";
+  | "unsupported-content-type"
+  /**
+   * The markup could not be turned into text at all.
+   *
+   * **Not "the HTML was invalid".** Broken markup is the ordinary case and the
+   * parser recovers from it the way a browser would; this is for the parser
+   * itself failing, which leaves nothing to compare and no baseline to keep.
+   * Separate from `unsupported-content-type`, which is a refusal before any
+   * parsing happens.
+   */
+  | "normalization-failed";
 
 /**
  * A fetch failure, named.
