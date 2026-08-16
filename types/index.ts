@@ -8,6 +8,21 @@ export type ActionResult =
   | { status: "success"; message: string }
   | { status: "error"; message: string };
 
+/**
+ * What a worker does when it runs.
+ *
+ * `prompt` sends the prompt it holds to the model, which is every worker that
+ * existed before watchers did. `website` reads a page first and only involves
+ * the model when the page has changed.
+ *
+ * **A closed set narrowed from a plain string column**, the same shape as
+ * `status` and `frequency`, so adding a kind is a line here rather than a
+ * migration.
+ */
+export const routineKinds = ["prompt", "website"] as const;
+
+export type RoutineKind = (typeof routineKinds)[number];
+
 export const routineStatuses = ["active", "paused", "draft"] as const;
 
 export type RoutineStatus = (typeof routineStatuses)[number];
@@ -27,6 +42,8 @@ export type Routine = {
   name: string;
   description: string;
   prompt: string;
+  /** What the worker does when it runs. See `RoutineKind`. */
+  kind: RoutineKind;
   status: RoutineStatus;
   frequency: RoutineFrequency;
   /**
@@ -95,6 +112,10 @@ export function ordinal(day: number): string {
   }
 }
 
+export function isRoutineKind(value: string): value is RoutineKind {
+  return (routineKinds as readonly string[]).includes(value);
+}
+
 export function isRoutineStatus(value: string): value is RoutineStatus {
   return (routineStatuses as readonly string[]).includes(value);
 }
@@ -135,3 +156,50 @@ export type RunHistoryDetail = RunHistoryEntry & { routinePrompt: string };
 export function isRunStatus(value: string): value is RunStatus {
   return (runStatuses as readonly string[]).includes(value);
 }
+
+/**
+ * The page a `website` worker watches.
+ *
+ * Configuration only — what was last seen there is a `WebsiteSnapshot`, and the
+ * two are apart so that reading the settings never carries a page with it.
+ *
+ * **No owner of its own.** Who this belongs to is who owns `routineId`, and
+ * there is exactly one place that says so.
+ */
+export type WebsiteSource = {
+  id: string;
+  routineId: string;
+  url: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+/**
+ * The baseline a change is measured against.
+ *
+ * **Its absence is a state.** There is no snapshot until a page has been read
+ * successfully once, and that is what "nothing to compare against yet" looks
+ * like — not an empty string, and not a row full of nulls.
+ *
+ * `normalizedContent` is text extracted from the page, never raw HTML, and
+ * nothing sends it to a browser: it is read while a run is happening and
+ * nowhere else.
+ */
+export type WebsiteSnapshot = {
+  id: string;
+  websiteSourceId: string;
+  normalizedContent: string;
+  contentHash: string;
+  lastCheckedAt: Date;
+  /**
+   * When the page last differed from what was already here, or null if it never
+   * has.
+   *
+   * **Establishing a baseline is not observing a change.** A first read has
+   * nothing to differ from, so this stays null until the page actually changes
+   * — which keeps "nothing has happened since we started watching" distinct
+   * from "something happened at the moment we started".
+   */
+  lastChangedAt: Date | null;
+  createdAt: Date;
+};

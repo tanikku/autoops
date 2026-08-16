@@ -26,6 +26,7 @@ function worker(overrides: Partial<Routine> = {}): Routine {
     name: "Worker",
     description: "",
     prompt: "",
+    kind: "prompt",
     status: "active",
     frequency: "daily",
     runAtMinutes: 540,

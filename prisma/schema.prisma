@@ -27,29 +27,42 @@ model User {
 }
 
 model Routine {
-  id          String       @id @default(cuid())
-  userId      String
-  name        String
-  description String       @default("")
-  prompt      String       @default("")
-  status      String       @default("draft")
-  frequency   String       @default("manual")
+  id                  String         @id @default(cuid())
+  userId              String
+  name                String
+  description         String         @default("")
+  prompt              String         @default("")
+  /// What kind of worker this is: `prompt` sends its prompt to the model,
+  /// `website` fetches a page first and only involves the model when the page
+  /// changed.
+  ///
+  /// **A plain string, narrowed in `toRoutine`, exactly as `status` and
+  /// `frequency` are.** The alternative — an enum — would be the first in this
+  /// schema and would make adding a kind a migration rather than a line in a
+  /// type guard.
+  ///
+  /// The default is what makes this additive: every worker that existed before
+  /// watchers did is a `prompt` worker, and Postgres fills them in without a
+  /// backfill.
+  kind                String         @default("prompt")
+  status              String         @default("draft")
+  frequency           String         @default("manual")
   /// Time of day the worker runs, as minutes into the day in the owner's
   /// timezone: 0 is midnight, 540 is 09:00. Null keeps whatever time the
   /// pending slot already had, which is how every worker behaved before a time
   /// could be chosen.
-  runAtMinutes Int?
+  runAtMinutes        Int?
   /// Day of the week a weekly worker runs, in the owner's timezone: 0 is
   /// Sunday through 6 is Saturday, matching JavaScript's own numbering so no
   /// conversion sits between this column and the arithmetic. Null keeps
   /// whichever weekday the pending slot already falls on.
-  runAtWeekday Int?
+  runAtWeekday        Int?
   /// Day of the month a monthly worker runs, in the owner's timezone: 1 to 31.
   /// A day past the end of a month runs on that month's last day instead, and
   /// the month after returns to the chosen one. Null keeps whichever day the
   /// pending slot already falls on.
-  runAtDay    Int?
-  nextRunAt   DateTime?
+  runAtDay            Int?
+  nextRunAt           DateTime?
   /// Who currently holds the right to execute this worker, as an opaque token
   /// minted per acquisition. Null means nobody does.
   ///
@@ -71,10 +84,14 @@ model Routine {
   /// that takes over. What is guaranteed is that the older holder cannot
   /// release the newer one's claim — see `lib/execution-lease.ts`.
   executionLeaseUntil DateTime?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  runs        RunHistory[]
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  user                User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  runs                RunHistory[]
+  /// The watched page, when this is a `website` worker. Absent on every other
+  /// kind, which is why the relation is optional rather than the `kind` column
+  /// being the only thing that says so.
+  websiteSource       WebsiteSource?
 
   @@index([userId])
   /// The scheduler's only query: `status = 'active' AND nextRunAt <= now()`,
@@ -89,16 +106,16 @@ model Routine {
 }
 
 model RunHistory {
-  id         String    @id @default(cuid())
-  routineId  String
+  id           String    @id @default(cuid())
+  routineId    String
   /// Denormalised from the routine so runs can be scoped without a join.
-  userId     String
-  status     String    @default("running")
-  startedAt  DateTime  @default(now())
-  finishedAt DateTime?
+  userId       String
+  status       String    @default("running")
+  startedAt    DateTime  @default(now())
+  finishedAt   DateTime?
   /// What the model produced. **Only ever that** — a run that failed leaves it
   /// empty rather than borrowing it for a reason.
-  output     String    @default("")
+  output       String    @default("")
   /// Why a run failed, for whoever is looking into it. Null on every run that
   /// did not fail, which is what makes the two columns readable without
   /// consulting `status` first.
@@ -108,9 +125,96 @@ model RunHistory {
   /// a database driver's — so it belongs on the execution's own page and not
   /// in a list someone is scanning.
   errorMessage String?
-  routine    Routine   @relation(fields: [routineId], references: [id], onDelete: Cascade)
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  routine      Routine   @relation(fields: [routineId], references: [id], onDelete: Cascade)
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([routineId])
   @@index([userId])
+}
+
+/// The page a `website` worker watches, and the settings for watching it.
+///
+/// **Configuration, and only configuration.** What was last seen there lives in
+/// `WebsiteSnapshot`, which is a separate table for a reason: this row is small,
+/// edited by a person, and read whenever a worker is shown, while that one holds
+/// up to a couple of megabytes and is read only while a run is happening.
+/// Together in one table, every screen that wanted the URL would carry the page
+/// with it.
+///
+/// One row per worker at most — `routineId` is unique — so a worker watches one
+/// page. Several workers watching the same page, in one account or across
+/// accounts, is ordinary, which is why `url` carries no unique constraint.
+///
+/// **There is no owner column here, deliberately.** `RunHistory` carries one
+/// because runs are listed per account and the join would be on every activity
+/// page; nothing lists sources that way, so the same denormalisation would buy
+/// nothing and would make `Routine.userId = A` with `WebsiteSource.userId = B`
+/// a state the database is willing to hold. Ownership has one source of truth,
+/// and it is the routine.
+model WebsiteSource {
+  id        String           @id @default(cuid())
+  /// Unique because a worker watches one page. The relation being optional on
+  /// the other side is what lets a `prompt` worker have none. **It is also the
+  /// tenant key**: who owns this is whoever owns the routine.
+  routineId String           @unique
+  /// The address as the owner wrote it. **Validated when it is saved and again
+  /// before every fetch** — storing it is not a promise that it is still safe
+  /// to visit, and nothing here may be fetched without going through
+  /// `lib/watcher`.
+  url       String
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  routine   Routine          @relation(fields: [routineId], references: [id], onDelete: Cascade)
+  snapshot  WebsiteSnapshot?
+}
+
+/// What the watched page looked like when it was last successfully read.
+///
+/// **The baseline a change is measured against, and nothing else.** It is not
+/// run history: there is one row per source, overwritten in place, so watching a
+/// page for a year costs the same as watching it for a day. A table of every
+/// version would grow without limit and would need a retention policy that
+/// nothing has decided.
+///
+/// **The row does not exist until the first successful fetch.** That absence is
+/// the "no baseline yet" state — there is no half-made snapshot to represent,
+/// which is why the only nullable column here is one with a meaning of its own.
+///
+/// **`RunHistory.output` is not this.** That column holds what the model
+/// produced; this holds what the site served. Reading a snapshot out of run
+/// history would also lose it on the first failed run.
+model WebsiteSnapshot {
+  id                String        @id @default(cuid())
+  websiteSourceId   String        @unique
+  /// The page reduced to the text a comparison runs on — **not raw HTML**,
+  /// which is deliberately never stored: it is larger, and none of the
+  /// comparison or the summary needs it.
+  ///
+  /// `String` is `TEXT` on PostgreSQL, so the ceiling is the fetch limit
+  /// (`MAX_RESPONSE_BYTES`) rather than anything the column imposes.
+  normalizedContent String
+  /// A digest of the content above, so "did this change" is one comparison
+  /// rather than one of the largest strings in the database.
+  contentHash       String
+  /// When the page was last read successfully. Moves on every successful check,
+  /// including the ones that found nothing new.
+  lastCheckedAt     DateTime
+  /// When the content last differed from what was here before, or null if it
+  /// never has.
+  ///
+  /// **Null is what a first read leaves behind, and it is not a missing
+  /// value.** Establishing a baseline is not observing a change: there was
+  /// nothing to differ from, and setting this to the moment of the first fetch
+  /// would report a change to somebody who had not been watching yet. It stays
+  /// null until the page actually differs.
+  ///
+  /// Moves only when the baseline does, which is what makes "has anything
+  /// happened lately" a question this can answer and `RunHistory` cannot.
+  lastChangedAt     DateTime?
+  /// When the baseline was first established, which is the first successful
+  /// fetch. There is no `updatedAt`: it would say what `lastCheckedAt` already
+  /// says, and `RunHistory` sets the precedent for a model whose timestamps are
+  /// about the domain rather than about the row.
+  createdAt         DateTime      @default(now())
+  websiteSource     WebsiteSource @relation(fields: [websiteSourceId], references: [id], onDelete: Cascade)
 }

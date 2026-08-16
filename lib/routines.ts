@@ -3,6 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import {
   isRoutineFrequency,
+  isRoutineKind,
   isRoutineStatus,
   type Routine,
   type RoutineInput,
@@ -35,6 +36,18 @@ export function toRoutine(record: RoutineRecord): Routine {
     name: record.name,
     description: record.description,
     prompt: record.prompt,
+    // **The fallback direction is the one that does no external I/O.** A row
+    // whose kind cannot be read becomes a `prompt` worker, which sends its
+    // prompt to a model and reaches nothing else. Falling back the other way
+    // would mean an unreadable value could start a worker fetching, which is
+    // the one direction a default must never take.
+    //
+    // It is a display and dispatch default, not an authorisation check.
+    // **Execution has to branch on the kind explicitly** and treat a `website`
+    // worker with no source as a failure rather than quietly running its
+    // prompt — a silent fall-through there would produce a confident answer
+    // about a page nobody read.
+    kind: isRoutineKind(record.kind) ? record.kind : "prompt",
     status: isRoutineStatus(record.status) ? record.status : "draft",
     frequency: isRoutineFrequency(record.frequency)
       ? record.frequency
