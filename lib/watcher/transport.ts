@@ -16,8 +16,18 @@ export type Hop =
   | {
       kind: "page";
       status: number;
+      /** What the fetch accepted it as. The gate, narrowed. */
       contentType: SupportedContentType;
-      body: string;
+      /**
+       * The header exactly as it was sent, parameters and all.
+       *
+       * **Carried because the charset lives in it**, and the layer that needs
+       * the charset is not this one. Narrowing to the media type and dropping
+       * the rest is what made every page decode as UTF-8.
+       */
+      contentTypeHeader: string;
+      /** The body as it arrived. Nothing here decides what it means. */
+      body: Uint8Array;
       byteLength: number;
     };
 
@@ -176,20 +186,28 @@ async function readResponse(response: IncomingMessage): Promise<Hop> {
     );
   }
 
-  const contentType = parseContentType(header(response, "content-type"));
-  if (contentType === null) {
+  const contentTypeHeader = header(response, "content-type");
+  const contentType = parseContentType(contentTypeHeader);
+  if (contentType === null || contentTypeHeader === undefined) {
     throw new WatcherError(
       "unsupported-content-type",
-      "AutoOps can only read HTML and plain text pages.",
+      "AutoOps can only read HTML, XHTML and plain text pages.",
     );
   }
 
-  const { text, byteLength } = await readBodyWithLimit(
+  const { bytes, byteLength } = await readBodyWithLimit(
     response,
     MAX_RESPONSE_BYTES,
   );
 
-  return { kind: "page", status, contentType, body: text, byteLength };
+  return {
+    kind: "page",
+    status,
+    contentType,
+    contentTypeHeader,
+    body: bytes,
+    byteLength,
+  };
 }
 
 /** A header as a single string, ignoring the repeated form nothing here uses. */

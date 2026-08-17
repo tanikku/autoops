@@ -56,6 +56,30 @@ export type WatcherErrorKind =
   /** The body is not something this can read as text. */
   | "unsupported-content-type"
   /**
+   * The page named an encoding this does not decode.
+   *
+   * A refusal rather than an attempt: the alternative is to decode it as
+   * something else and store whatever comes out, which is a baseline made of
+   * mistakes.
+   */
+  | "unsupported-charset"
+  /**
+   * The bytes are not valid in the encoding they were said to be in.
+   *
+   * **Never a page full of replacement characters.** Decoding leniently would
+   * turn a broken response into a perfectly ordinary-looking snapshot that
+   * happens to be wrong, and the next fetch would compare against it.
+   */
+  | "invalid-encoding"
+  /**
+   * The response contradicted itself about its own encoding.
+   *
+   * A byte order mark says one thing and the header says another, and there is
+   * no reading of that where one of them is obviously right. Picking a side
+   * silently is how a page ends up decoded wrong and stored anyway.
+   */
+  | "encoding-conflict"
+  /**
    * The markup could not be turned into text at all.
    *
    * **Not "the HTML was invalid".** Broken markup is the ordinary case and the

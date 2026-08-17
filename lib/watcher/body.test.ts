@@ -11,9 +11,26 @@ describe("what counts as a page this can read", () => {
     ["  text/html  ", "text/html"],
     ["text/plain", "text/plain"],
     ["text/plain;charset=iso-8859-1", "text/plain"],
+    ["application/xhtml+xml", "application/xhtml+xml"],
+    ["application/xhtml+xml; charset=utf-8", "application/xhtml+xml"],
+    ["APPLICATION/XHTML+XML", "application/xhtml+xml"],
+    ["  application/xhtml+xml  ", "application/xhtml+xml"],
   ])("reads %s as %s", (header, expected) => {
     expect(parseContentType(header)).toBe(expected);
   });
+
+  /**
+   * **A wider list here is not a looser policy.** Every decision the security
+   * contract makes — address, port, scheme, redirect, size, time — happens
+   * before a byte of body is read, and none of them consults this list. What
+   * changes is only which text documents the fetch is prepared to hand on.
+   */
+  it.each(["application/pdf", "application/json", "image/png"])(
+    "still refuses %s",
+    (header) => {
+      expect(parseContentType(header)).toBeNull();
+    },
+  );
 
   it.each([
     "application/pdf",
@@ -60,22 +77,57 @@ async function limitKind(
 }
 
 describe("reading a body", () => {
-  it("joins the pieces back into one string", async () => {
-    const { text } = await readBodyWithLimit(
+  it("joins the pieces back into one run of bytes", async () => {
+    const { bytes } = await readBodyWithLimit(
       streamOf("<html>", "<body>hi</body>", "</html>"),
       1_000,
     );
 
-    expect(text).toBe("<html><body>hi</body></html>");
+    expect(Buffer.from(bytes).toString("utf-8")).toBe(
+      "<html><body>hi</body></html>",
+    );
+  });
+
+  /**
+   * **Nothing here decides what the bytes say.** Deciding used to happen here —
+   * everything was decoded as UTF-8 — and it meant a page in another encoding
+   * arrived already mangled, with the bytes that would have shown it gone.
+   */
+  it("hands back the bytes rather than a string", async () => {
+    const { bytes } = await readBodyWithLimit(streamOf("hi"), 1_000);
+
+    expect(bytes).toBeInstanceOf(Uint8Array);
+  });
+
+  /**
+   * Shift_JIS for 日本語. Not valid UTF-8 anywhere in it — if this were being
+   * decoded on the way through, the bytes would not survive the trip.
+   */
+  it("does not touch bytes that are invalid UTF-8", async () => {
+    const shiftJis = Uint8Array.from([
+      0x93, 0xfa, 0x96, 0x7b, 0x8c, 0xea,
+    ]);
+
+    const { bytes, byteLength } = await readBodyWithLimit(
+      Readable.from([Buffer.from(shiftJis)]),
+      1_000,
+    );
+
+    expect(Array.from(bytes)).toEqual(Array.from(shiftJis));
+    expect(byteLength).toBe(6);
   });
 
   it("reports the size in bytes rather than characters", async () => {
     // Three characters, nine bytes. The limit is a memory bound, so bytes are
     // the only unit that means anything to it.
-    const { text, byteLength } = await readBodyWithLimit(streamOf("あいう"), 1_000);
+    const { bytes, byteLength } = await readBodyWithLimit(
+      streamOf("あいう"),
+      1_000,
+    );
 
-    expect(text).toBe("あいう");
+    expect(Buffer.from(bytes).toString("utf-8")).toBe("あいう");
     expect(byteLength).toBe(9);
+    expect(bytes.byteLength).toBe(9);
   });
 
   it("reads a body that is exactly the limit", async () => {

@@ -62,12 +62,15 @@ function transportOf(...hops: Hop[]): Transport {
   });
 }
 
+const PAGE_BYTES = Buffer.from("<html>hi</html>", "utf-8");
+
 const page: Hop = {
   kind: "page",
   status: 200,
   contentType: "text/html",
-  body: "<html>hi</html>",
-  byteLength: 15,
+  contentTypeHeader: "text/html; charset=utf-8",
+  body: PAGE_BYTES,
+  byteLength: PAGE_BYTES.byteLength,
 };
 
 function redirectTo(location: string, status = 302): Hop {
@@ -107,9 +110,26 @@ describe("fetching a page", () => {
       url: "https://example.com/",
       status: 200,
       contentType: "text/html",
-      body: "<html>hi</html>",
-      byteLength: 15,
+      contentTypeHeader: "text/html; charset=utf-8",
+      body: PAGE_BYTES,
+      byteLength: PAGE_BYTES.byteLength,
     });
+  });
+
+  /**
+   * The fetch carries bytes and the header that says what they mean, and does
+   * nothing with either. Decoding is `lib/watcher/decode.ts`'s job precisely
+   * because it needs both, and this layer has deliberately not looked.
+   */
+  it("passes the body through as bytes, undecoded", async () => {
+    const result = await fetchWatchedPage("https://example.com/", {
+      resolve: resolverWith(),
+      transport: transportOf(page),
+      now,
+    });
+
+    expect(result.body).toBeInstanceOf(Uint8Array);
+    expect(Buffer.from(result.body).toString("utf-8")).toBe("<html>hi</html>");
   });
 
   it("hands the transport the addresses that were verified", async () => {

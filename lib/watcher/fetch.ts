@@ -14,8 +14,25 @@ export type FetchedPage = {
   /** The address the body came from, which is not always the one asked for. */
   url: string;
   status: number;
+  /** What the fetch accepted the response as. */
   contentType: SupportedContentType;
-  body: string;
+  /**
+   * The `Content-Type` header as it was sent, charset parameter included.
+   *
+   * The fetch does not act on the charset — it does not decode — but it is the
+   * only place the header exists, so dropping it here would be dropping it
+   * everywhere.
+   */
+  contentTypeHeader: string;
+  /**
+   * The body exactly as it arrived.
+   *
+   * **Bytes, not text.** What they say depends on an encoding this layer has
+   * deliberately not looked at; `lib/watcher/decode.ts` resolves that and turns
+   * them into a string. `Uint8Array` rather than `Buffer` because the stream
+   * this was read from already speaks it, and a `Buffer` satisfies it anyway.
+   */
+  body: Uint8Array;
   byteLength: number;
 };
 
@@ -89,6 +106,7 @@ export async function fetchWatchedPage(
         url: target.toString(),
         status: hop.status,
         contentType: hop.contentType,
+        contentTypeHeader: hop.contentTypeHeader,
         body: hop.body,
         byteLength: hop.byteLength,
       };

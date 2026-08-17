@@ -1,6 +1,7 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { decodeWebsiteContent } from "@/lib/watcher/decode";
 import { isWatcherError, type WatcherError } from "@/lib/watcher/errors";
 import { fetchWatchedPage } from "@/lib/watcher/fetch";
 import { USER_AGENT } from "@/lib/watcher/limits";
@@ -114,9 +115,40 @@ describe("the request that actually goes out", () => {
       kind: "page",
       status: 200,
       contentType: "text/html",
-      body: "<p>hi</p>",
+      contentTypeHeader: "text/html; charset=utf-8",
+      body: Uint8Array.from(Buffer.from("<p>hi</p>", "utf-8")),
       byteLength: 9,
     });
+  });
+
+  /**
+   * **The bytes that came off the socket are the bytes that come back.**
+   *
+   * Not a restatement of the test above: this body is Shift_JIS, which is
+   * invalid UTF-8 from its first byte. If anything on the way through were
+   * still decoding — as the read did until this sprint — these bytes would
+   * arrive as replacement characters and no later layer could tell they had
+   * ever been anything else.
+   */
+  it("hands back the exact bytes the server sent, whatever encoding they are in", async () => {
+    // 日本語 in Shift_JIS.
+    const sent = Buffer.from([0x93, 0xfa, 0x96, 0x7b, 0x8c, 0xea]);
+
+    handler = (_request, response) => {
+      response.writeHead(200, { "content-type": "text/html; charset=Shift_JIS" });
+      response.end(sent);
+    };
+
+    const hop = await nodeTransport(target(), ["127.0.0.1"], 5_000);
+
+    expect(hop.kind).toBe("page");
+    if (hop.kind !== "page") {
+      return;
+    }
+
+    expect(Array.from(hop.body)).toEqual(Array.from(sent));
+    expect(hop.byteLength).toBe(sent.byteLength);
+    expect(hop.contentTypeHeader).toBe("text/html; charset=Shift_JIS");
   });
 
   it("asks for the path and query it was given, and nothing more", async () => {
@@ -186,6 +218,60 @@ describe("what the transport makes of a real response", () => {
     });
   });
 
+  /**
+   * **XHTML has to survive the transport to be worth decoding.** The decoder
+   * has accepted `application/xhtml+xml` since it was written, and until the
+   * fetch accepted it too that acceptance was unreachable: every such response
+   * was refused several layers earlier.
+   */
+  it.each([
+    "application/xhtml+xml",
+    "application/xhtml+xml; charset=utf-8",
+    "APPLICATION/XHTML+XML",
+  ])("accepts a response served as %s", async (contentType) => {
+    handler = (_request, response) => {
+      response.writeHead(200, { "content-type": contentType });
+      response.end("<p>hi</p>");
+    };
+
+    const hop = await nodeTransport(target(), ["127.0.0.1"], 5_000);
+
+    expect(hop.kind).toBe("page");
+    if (hop.kind !== "page") {
+      return;
+    }
+
+    expect(hop.contentType).toBe("application/xhtml+xml");
+    expect(hop.contentTypeHeader).toBe(contentType);
+    expect(Buffer.from(hop.body).toString("utf-8")).toBe("<p>hi</p>");
+  });
+
+  /** Plain text stays readable here; it is the decoder that will not watch it. */
+  it("still accepts plain text", async () => {
+    handler = (_request, response) => {
+      response.writeHead(200, { "content-type": "text/plain" });
+      response.end("ok");
+    };
+
+    const hop = await nodeTransport(target(), ["127.0.0.1"], 5_000);
+
+    expect(hop.kind === "page" && hop.contentType).toBe("text/plain");
+  });
+
+  it.each(["application/json", "application/pdf", "image/png"])(
+    "still refuses %s",
+    async (contentType) => {
+      handler = (_request, response) => {
+        response.writeHead(200, { "content-type": contentType });
+        response.end("{}");
+      };
+
+      expect(await kindOf(nodeTransport(target(), ["127.0.0.1"], 5_000))).toBe(
+        "unsupported-content-type",
+      );
+    },
+  );
+
   it("refuses a body it cannot read as text", async () => {
     handler = (_request, response) => {
       response.writeHead(200, { "content-type": "application/pdf" });
@@ -222,6 +308,105 @@ describe("what the transport makes of a real response", () => {
     expect(await kindOf(nodeTransport(target(), ["127.0.0.1"], 100))).toBe(
       "timeout",
     );
+  });
+});
+
+/**
+ * **The two layers meeting, which is what B2.5 was for.**
+ *
+ * The fetch keeps the bytes and the header it was given; the decoder turns them
+ * into text using that header. Neither half is worth much alone, and until the
+ * fetch accepted XHTML the two could not be joined for it at all.
+ *
+ * **This is not the execution path.** Nothing schedules it, nothing stores the
+ * result, and no worker is involved — it exists to show that the boundary
+ * connects.
+ */
+describe("what the fetch hands over, the decoder can read", () => {
+  it.each([
+    ["text/html; charset=utf-8", "日本語"],
+    ["application/xhtml+xml", "日本語"],
+    ["application/xhtml+xml; charset=utf-8", "日本語"],
+  ])("decodes a page served as %s", async (contentType, expected) => {
+    const markup = `<html><body><p>${expected}</p></body></html>`;
+
+    handler = (_request, response) => {
+      response.writeHead(200, { "content-type": contentType });
+      response.end(Buffer.from(markup, "utf-8"));
+    };
+
+    const hop = await nodeTransport(target(), ["127.0.0.1"], 5_000);
+    expect(hop.kind).toBe("page");
+    if (hop.kind !== "page") {
+      return;
+    }
+
+    // Byte for byte what the server sent, before anything interprets it.
+    expect(Array.from(hop.body)).toEqual(
+      Array.from(Buffer.from(markup, "utf-8")),
+    );
+    expect(hop.contentTypeHeader).toBe(contentType);
+
+    const decoded = decodeWebsiteContent(hop.body, hop.contentTypeHeader);
+
+    expect(decoded.content).toBe(markup);
+    expect(decoded.content).toContain(expected);
+  });
+
+  /**
+   * A Shift_JIS page, which is the case the whole sprint exists for: the fetch
+   * cannot read these bytes as text and does not try, and the decoder reads
+   * them because the header said how.
+   */
+  it("decodes a page the fetch could not have decoded itself", async () => {
+    // <p>日本語</p> in Shift_JIS.
+    const body = Buffer.from([
+      0x3c, 0x70, 0x3e, 0x93, 0xfa, 0x96, 0x7b, 0x8c, 0xea, 0x3c, 0x2f, 0x70,
+      0x3e,
+    ]);
+
+    handler = (_request, response) => {
+      response.writeHead(200, { "content-type": "text/html; charset=Shift_JIS" });
+      response.end(body);
+    };
+
+    const hop = await nodeTransport(target(), ["127.0.0.1"], 5_000);
+    expect(hop.kind).toBe("page");
+    if (hop.kind !== "page") {
+      return;
+    }
+
+    expect(Array.from(hop.body)).toEqual(Array.from(body));
+    expect(decodeWebsiteContent(hop.body, hop.contentTypeHeader).content).toBe(
+      "<p>日本語</p>",
+    );
+  });
+
+  /**
+   * **The responsibilities stay apart.** Plain text is a document the fetch is
+   * happy to carry and not one Website Watcher watches, and each layer says so
+   * in its own right.
+   */
+  it("carries plain text that the decoder then refuses", async () => {
+    handler = (_request, response) => {
+      response.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+      response.end("just some text");
+    };
+
+    const hop = await nodeTransport(target(), ["127.0.0.1"], 5_000);
+    expect(hop.kind).toBe("page");
+    if (hop.kind !== "page") {
+      return;
+    }
+
+    expect(hop.contentType).toBe("text/plain");
+    expect(
+      await kindOf(
+        Promise.resolve().then(() =>
+          decodeWebsiteContent(hop.body, hop.contentTypeHeader),
+        ),
+      ),
+    ).toBe("unsupported-content-type");
   });
 });
 
