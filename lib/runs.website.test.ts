@@ -29,8 +29,10 @@ const mocks = vi.hoisted(() => ({
   markWebsiteSnapshotChecked: vi.fn(),
   createBaseline: vi.fn(),
   markCheckedIfCurrent: vi.fn(),
+  advanceIfCurrent: vi.fn(),
   fetchWatchedPage: vi.fn(),
   transaction: vi.fn(),
+  providerMode: vi.fn(),
 }));
 
 vi.mock("@/lib/execution-lease", async () => {
@@ -45,8 +47,18 @@ vi.mock("@/lib/execution-lease", async () => {
   };
 });
 
+/**
+ * The provider is created once, when the module loads, so its `mode` is read
+ * from a getter — that is what lets a test say "no key is configured" without
+ * reloading the module.
+ */
 vi.mock("@/lib/ai/factory", () => ({
-  createAIProvider: () => ({ execute: mocks.execute }),
+  createAIProvider: () => ({
+    get mode() {
+      return mocks.providerMode();
+    },
+    execute: mocks.execute,
+  }),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -82,6 +94,7 @@ vi.mock("@/lib/website-snapshots", async () => {
     markWebsiteSnapshotChecked: mocks.markWebsiteSnapshotChecked,
     createWebsiteSnapshotBaseline: mocks.createBaseline,
     markWebsiteSnapshotCheckedIfCurrent: mocks.markCheckedIfCurrent,
+    advanceWebsiteSnapshotIfCurrent: mocks.advanceIfCurrent,
   };
 });
 
@@ -212,9 +225,20 @@ function written() {
 function expectNothingWritten() {
   expect(mocks.createBaseline).not.toHaveBeenCalled();
   expect(mocks.markCheckedIfCurrent).not.toHaveBeenCalled();
+  expect(mocks.advanceIfCurrent).not.toHaveBeenCalled();
   expect(mocks.saveWebsiteSnapshot).not.toHaveBeenCalled();
   expect(mocks.markWebsiteSnapshotChecked).not.toHaveBeenCalled();
   expect(mocks.execute).not.toHaveBeenCalled();
+}
+
+/**
+ * The change survived: the content and digest a comparison runs against are
+ * still the old ones, so the next run reaches the same conclusion.
+ */
+function expectChangeNotConsumed() {
+  expect(mocks.advanceIfCurrent).not.toHaveBeenCalled();
+  expect(mocks.saveWebsiteSnapshot).not.toHaveBeenCalled();
+  expect(mocks.markWebsiteSnapshotChecked).not.toHaveBeenCalled();
 }
 
 /**
@@ -230,9 +254,13 @@ beforeEach(() => {
   mocks.acquire.mockReset().mockResolvedValue(LEASE);
   mocks.release.mockReset().mockResolvedValue("released");
   mocks.execute.mockReset().mockResolvedValue("a summary");
-  mocks.findUniqueOrThrow
-    .mockReset()
-    .mockResolvedValue({ userId: "user-1", prompt: "", kind: "website" });
+  mocks.findUniqueOrThrow.mockReset().mockResolvedValue({
+    userId: "user-1",
+    // For a website worker the prompt is the instruction applied when the page
+    // changes, not the thing that is sent on its own.
+    prompt: "Summarise what changed in three points.",
+    kind: "website",
+  });
   mocks.create.mockReset().mockResolvedValue(RUN_ROW);
   mocks.update
     .mockReset()
@@ -243,6 +271,8 @@ beforeEach(() => {
   mocks.markWebsiteSnapshotChecked.mockReset();
   mocks.createBaseline.mockReset().mockResolvedValue(undefined);
   mocks.markCheckedIfCurrent.mockReset().mockResolvedValue(true);
+  mocks.advanceIfCurrent.mockReset().mockResolvedValue(true);
+  mocks.providerMode.mockReset().mockReturnValue("real");
   mocks.fetchWatchedPage.mockReset().mockResolvedValue(fetched());
   // Stands in for the real thing by running the callback and handing it a
   // client. **Nothing here rolls anything back** — what these tests fix is the
@@ -543,17 +573,15 @@ describe("a page that has not changed", () => {
 });
 
 /**
- * **The case the whole design turns on.**
+ * **The case the whole feature turns on.**
  *
- * A change is found and then not acted on, because the part that acts on it is
- * not connected. Recording that as a completed run would say the work was done;
- * recording it as a failure says what actually happened.
- *
- * What moves is the time the page was looked at, and nothing else. The content
- * and the digest still describe the *old* page, so the same change is found
- * again next time — the run is spent, the change is not.
+ * A change is found, described by a model, and only then is the baseline moved
+ * past it. The ordering is the design: every way this can fail leaves the old
+ * content stored, so the change is still there to be dealt with next time. The
+ * opposite arrangement — move first, describe second — would spend the change
+ * on a run that could not use it.
  */
-describe("a page that has changed", () => {
+describe("a page that has changed, and was described", () => {
   const STALE = {
     ...matchingSnapshot(),
     normalizedContent: "Careers Not hiring",
@@ -562,58 +590,220 @@ describe("a page that has changed", () => {
 
   beforeEach(() => {
     mocks.getWebsiteSnapshot.mockResolvedValue(STALE);
+    mocks.execute.mockResolvedValue("Three positions became five.");
   });
 
-  it("records the check and fails the run in one transaction", async () => {
+  it("asks a model exactly once", async () => {
+    await runRoutine("worker-1");
+
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The worker's own instruction is what to do; the page's text is what to do
+   * it to. They travel in different halves of the request because one of them
+   * came from somebody else's server.
+   */
+  it("sends the instruction and the page's text separately", async () => {
+    await runRoutine("worker-1");
+
+    const request = mocks.execute.mock.calls[0][0];
+    expect(request.system).toContain("Summarise what changed in three points.");
+    expect(request.user).toContain("Careers Not hiring");
+    expect(request.user).toContain("Careers Hiring");
+    expect(request.system).not.toContain("Careers Not hiring");
+  });
+
+  it("does not send the address, or anything about who is watching", async () => {
+    await runRoutine("worker-1");
+
+    const request = mocks.execute.mock.calls[0][0];
+    const whole = `${request.system}\n${request.user}`;
+    expect(whole).not.toContain(SOURCE.url);
+    expect(whole).not.toContain("example.com");
+    expect(whole).not.toContain(SOURCE.id);
+    expect(whole).not.toContain("user-1");
+  });
+
+  it("moves the baseline and completes the run in one transaction", async () => {
     const run = await runRoutine("worker-1");
 
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
-    expect(mocks.markCheckedIfCurrent).toHaveBeenCalledTimes(1);
-    expect(run.status).toBe("failed");
-    expect(written().errorMessage).toBe(
-      "Website change processing is not available yet.",
-    );
-    expect(written().output).toBe("");
+    expect(mocks.advanceIfCurrent).toHaveBeenCalledTimes(1);
+    expect(run.status).toBe("completed");
+    expect(written().output).toBe("Three positions became five.");
+    expect(written().errorMessage).toBeNull();
   });
 
-  it("calls no model", async () => {
+  /** The write is conditional on the baseline that was described, and on nothing else. */
+  it("advances from the baseline it described to the page it read", async () => {
     await runRoutine("worker-1");
+
+    const [sourceId, expected, next, at, client] =
+      mocks.advanceIfCurrent.mock.calls[0];
+    expect(sourceId).toBe(SOURCE.id);
+    expect(expected).toBe(STALE);
+    expect(next).toEqual(CURRENT);
+    expect(at).toBeInstanceOf(Date);
+    expect(client).toBe(TX);
+  });
+
+  it("does not also record a check, which would be the same write twice", async () => {
+    await runRoutine("worker-1");
+
+    expect(mocks.markCheckedIfCurrent).not.toHaveBeenCalled();
+    expect(mocks.saveWebsiteSnapshot).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **The change is consumed exactly once.** Having moved the baseline to what
+   * the page now says, a second run over the same page finds nothing to report
+   * and asks no model.
+   */
+  it("leaves the page unchanged for the next run", async () => {
+    await runRoutine("worker-1");
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+
+    // The baseline is now what the page says.
+    mocks.getWebsiteSnapshot.mockResolvedValue(matchingSnapshot());
+    mocks.update.mockClear();
+
+    const second = await runRoutine("worker-1");
+
+    expect(second.status).toBe("completed");
+    expect(written().output).toBe("Website content has not changed.");
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * **Every one of these leaves the old content stored.** The run is spent; the
+ * change is not. The next run finds it again and can try once more — which is
+ * what makes it safe for none of these to retry.
+ */
+describe("a change that could not be described", () => {
+  const STALE = {
+    ...matchingSnapshot(),
+    normalizedContent: "Careers Not hiring",
+    contentHash: "0".repeat(64),
+  };
+
+  beforeEach(() => {
+    mocks.getWebsiteSnapshot.mockResolvedValue(STALE);
+    mocks.execute.mockResolvedValue("a summary");
+  });
+
+  /**
+   * **The stand-in answers everything with a fixed sentence.** Storing that as
+   * the summary and moving the baseline would consume a real change and leave a
+   * description of nothing behind. A prompt worker getting that sentence is
+   * confusing; here it loses the change.
+   */
+  it("refuses to run at all without a real provider", async () => {
+    mocks.providerMode.mockReturnValue("dummy");
+
+    const run = await runRoutine("worker-1");
 
     expect(mocks.execute).not.toHaveBeenCalled();
+    expect(run.status).toBe("failed");
+    expect(written().errorMessage).toBe(
+      "AI service is not configured for website change processing.",
+    );
+    expectChangeNotConsumed();
   });
 
-  /**
-   * **The one write, and the three non-writes.** Advancing any of these would
-   * consume the change: the next run would compare against the new page and
-   * find nothing to report, and the summary nobody produced would be lost.
-   */
-  it("moves only the time it was looked at", async () => {
+  it.each([
+    ["no instruction", ""],
+    ["only whitespace", "   \n\t "],
+    ["an instruction past the limit", "x".repeat(10_001)],
+  ])("refuses before calling a model when the worker has %s", async (
+    _name,
+    prompt,
+  ) => {
+    mocks.findUniqueOrThrow.mockResolvedValue({
+      userId: "user-1",
+      prompt,
+      kind: "website",
+    });
+
+    const run = await runRoutine("worker-1");
+
+    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(run.status).toBe("failed");
+    expect(written().errorMessage).toBe(
+      "Website change instructions are invalid.",
+    );
+    expectChangeNotConsumed();
+  });
+
+  it("accepts an instruction of exactly the limit", async () => {
+    mocks.findUniqueOrThrow.mockResolvedValue({
+      userId: "user-1",
+      prompt: "x".repeat(10_000),
+      kind: "website",
+    });
+
+    await runRoutine("worker-1");
+
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["the model failed", () => mocks.execute.mockRejectedValue(new Error("model down"))],
+    ["the model returned nothing", () => mocks.execute.mockResolvedValue("")],
+    ["the model returned only whitespace", () => mocks.execute.mockResolvedValue("  \n ")],
+  ])("records a failed run when %s", async (_name, arrange) => {
+    arrange();
+
+    const run = await runRoutine("worker-1");
+
+    expect(run.status).toBe("failed");
+    expect(written().errorMessage).toBe("Website change processing failed.");
+    expectChangeNotConsumed();
+  });
+
+  it("does not put the model's own words in the row", async () => {
+    mocks.execute.mockRejectedValue(new Error("api key sk-xyz rejected"));
+
+    await runRoutine("worker-1");
+
+    expect(written().errorMessage).not.toContain("sk-xyz");
+  });
+
+  /** The failure still records that the page was looked at, and nothing more. */
+  it("records the check and nothing else", async () => {
+    mocks.execute.mockRejectedValue(new Error("model down"));
+
     await runRoutine("worker-1");
 
     expect(mocks.markCheckedIfCurrent).toHaveBeenCalledTimes(1);
-    expect(mocks.createBaseline).not.toHaveBeenCalled();
-    expect(mocks.saveWebsiteSnapshot).not.toHaveBeenCalled();
-    expect(mocks.markWebsiteSnapshotChecked).not.toHaveBeenCalled();
+    expect(mocks.markCheckedIfCurrent.mock.calls[0][1]).toBe(STALE);
+    expect(mocks.advanceIfCurrent).not.toHaveBeenCalled();
   });
 
-  /**
-   * Stated as the property that matters: the stored content is still the old
-   * page, so a second run comparing the same current page reaches the same
-   * conclusion.
-   */
-  it("leaves the stored content stale, so the change is found again", async () => {
-    await runRoutine("worker-1");
-    const first = written().errorMessage;
+  it("leaves the change to be found again", async () => {
+    mocks.execute.mockRejectedValue(new Error("model down"));
 
+    await runRoutine("worker-1");
     mocks.update.mockClear();
-    await runRoutine("worker-1");
 
-    expect(mocks.getWebsiteSnapshot).toHaveBeenLastCalledWith(SOURCE.id);
-    expect(written().errorMessage).toBe(first);
-    expect(mocks.markCheckedIfCurrent.mock.calls[1][1]).toBe(STALE);
+    // The page still says the same new thing, and the baseline is still old.
+    const second = await runRoutine("worker-1");
+
+    expect(second.status).toBe("failed");
+    expect(mocks.execute).toHaveBeenCalledTimes(2);
   });
 
-  it("fails with a conflict when the baseline moved underneath it", async () => {
+  it("does not try the model twice in one run", async () => {
+    mocks.execute.mockRejectedValue(new Error("model down"));
+
+    await runRoutine("worker-1");
+
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails with a conflict when the baseline moved underneath the check", async () => {
+    mocks.execute.mockRejectedValue(new Error("model down"));
     mocks.markCheckedIfCurrent.mockResolvedValue(false);
 
     const run = await runRoutine("worker-1");
@@ -622,6 +812,63 @@ describe("a page that has changed", () => {
     expect(written().errorMessage).toBe(
       "Website state changed during execution.",
     );
+  });
+});
+
+/**
+ * **A summary that describes a transition from a baseline that no longer exists
+ * is not kept.** Another run dealt with the same change while this one was
+ * waiting for a model; writing this answer now would overwrite a newer state
+ * with an older story.
+ */
+describe("a description that arrived too late", () => {
+  beforeEach(() => {
+    mocks.getWebsiteSnapshot.mockResolvedValue({
+      ...matchingSnapshot(),
+      normalizedContent: "Careers Not hiring",
+      contentHash: "0".repeat(64),
+    });
+    mocks.execute.mockResolvedValue("Three positions became five.");
+  });
+
+  it("discards the summary when the baseline moved during the call", async () => {
+    mocks.advanceIfCurrent.mockResolvedValue(false);
+
+    const run = await runRoutine("worker-1");
+
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+    expect(run.status).toBe("failed");
+    expect(written().errorMessage).toBe(
+      "Website state changed during execution.",
+    );
+    expect(written().output).toBe("");
+  });
+
+  it("does not store the summary anywhere", async () => {
+    mocks.advanceIfCurrent.mockResolvedValue(false);
+
+    await runRoutine("worker-1");
+
+    const stored = JSON.stringify(mocks.update.mock.calls);
+    expect(stored).not.toContain("Three positions became five.");
+  });
+
+  it("does not ask the model again", async () => {
+    mocks.advanceIfCurrent.mockResolvedValue(false);
+
+    await runRoutine("worker-1");
+
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a transaction that threw the same way", async () => {
+    mocks.transaction.mockRejectedValue(new Error("deadlock detected"));
+
+    const run = await runRoutine("worker-1");
+
+    expect(run.status).toBe("failed");
+    expect(written().errorMessage).toBe("Execution failed.");
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -765,34 +1012,61 @@ describe("a pipeline that could not finish", () => {
  * comparison has not looked successfully, so it moves nothing at all.
  */
 describe("what each outcome moves", () => {
+  const changed = () =>
+    mocks.getWebsiteSnapshot.mockResolvedValue({
+      ...matchingSnapshot(),
+      contentHash: "0".repeat(64),
+      normalizedContent: "something else",
+    });
+
   it.each([
-    [
-      "no baseline",
-      () => mocks.getWebsiteSnapshot.mockResolvedValue(null),
-      "create",
-    ],
+    ["no baseline", () => mocks.getWebsiteSnapshot.mockResolvedValue(null), "create", 0],
     [
       "unchanged",
       () => mocks.getWebsiteSnapshot.mockResolvedValue(matchingSnapshot()),
       "checked",
+      0,
     ],
     [
-      "changed",
-      () =>
-        mocks.getWebsiteSnapshot.mockResolvedValue({
-          ...matchingSnapshot(),
-          contentHash: "0".repeat(64),
-          normalizedContent: "something else",
-        }),
-      "checked",
+      "changed, described",
+      () => {
+        changed();
+        mocks.execute.mockResolvedValue("a summary");
+      },
+      "advance",
+      1,
     ],
-    ["no source", () => mocks.getWebsiteSource.mockResolvedValue(null), "none"],
+    [
+      "changed, not described",
+      () => {
+        changed();
+        mocks.execute.mockRejectedValue(new Error("model down"));
+      },
+      "checked",
+      1,
+    ],
+    [
+      "changed, no real provider",
+      () => {
+        changed();
+        mocks.providerMode.mockReturnValue("dummy");
+      },
+      "checked",
+      0,
+    ],
+    ["no source", () => mocks.getWebsiteSource.mockResolvedValue(null), "none", 0],
     [
       "a failed fetch",
       () => mocks.fetchWatchedPage.mockRejectedValue(new Error("down")),
       "none",
+      0,
     ],
-  ])("%s moves %s", async (_name, arrange, expected) => {
+  ])("%s moves %s, with %i model calls", async (
+    _name,
+    arrange,
+    expected,
+    modelCalls,
+  ) => {
     arrange();
 
     await runRoutine("worker-1");
@@ -803,11 +1077,13 @@ describe("what each outcome moves", () => {
     expect(mocks.markCheckedIfCurrent.mock.calls.length).toBe(
       expected === "checked" ? 1 : 0,
     );
+    expect(mocks.advanceIfCurrent.mock.calls.length).toBe(
+      expected === "advance" ? 1 : 0,
+    );
     // Neither of the B1 helpers is ever right for this path.
     expect(mocks.saveWebsiteSnapshot).not.toHaveBeenCalled();
     expect(mocks.markWebsiteSnapshotChecked).not.toHaveBeenCalled();
-    // And no model, on any path at all.
-    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(mocks.execute).toHaveBeenCalledTimes(modelCalls);
   });
 
   it.each([

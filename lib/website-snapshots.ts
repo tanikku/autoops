@@ -136,6 +136,49 @@ export async function createWebsiteSnapshotBaseline(
 }
 
 /**
+ * Moves the baseline to what the page says now, but only while the old one is
+ * still the current one.
+ *
+ * **This is the only write that consumes a change**, which is why it is the
+ * last thing to happen and why it is conditional. By the time it runs, the
+ * change has been read, described, and the description stored alongside it in
+ * the same transaction. Advancing any earlier would mean a change could be
+ * passed over without anybody having been told what it was.
+ *
+ * The condition is the baseline that was compared against — content and digest
+ * both. A run that spent thirty seconds waiting for a model may find that
+ * another run has already dealt with the same change; it loses, writes nothing,
+ * and its work is discarded rather than overwriting a newer state.
+ *
+ * **`lastChangedAt` moves here and nowhere else.** It means "the content became
+ * this, and that was dealt with" — not "a change was noticed". Those are
+ * different facts and only one of them is worth acting on later.
+ */
+export async function advanceWebsiteSnapshotIfCurrent(
+  websiteSourceId: string,
+  expected: Pick<WebsiteSnapshot, "normalizedContent" | "contentHash">,
+  next: Pick<WebsiteSnapshot, "normalizedContent" | "contentHash">,
+  at: Date,
+  client: DbClient = prisma,
+): Promise<boolean> {
+  const { count } = await client.websiteSnapshot.updateMany({
+    where: {
+      websiteSourceId,
+      contentHash: expected.contentHash,
+      normalizedContent: expected.normalizedContent,
+    },
+    data: {
+      normalizedContent: next.normalizedContent,
+      contentHash: next.contentHash,
+      lastCheckedAt: at,
+      lastChangedAt: at,
+    },
+  });
+
+  return count === 1;
+}
+
+/**
  * Records that the page was read, but only while the baseline is still the one
  * the caller compared against.
  *

@@ -33,6 +33,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 const {
+  advanceWebsiteSnapshotIfCurrent,
   createWebsiteSnapshotBaseline,
   getWebsiteSnapshot,
   isWebsiteStateConflict,
@@ -147,6 +148,101 @@ describe("creating the first baseline", () => {
 
     expect(tx.websiteSnapshot.create).toHaveBeenCalledTimes(1);
     expect(mocks.create).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Moving the baseline past a change that has been dealt with.
+ *
+ * **The only write that consumes a change**, and the only one that touches
+ * `lastChangedAt`. It runs last, after a description of the change has been
+ * produced, and it is conditional on the old baseline still being current — a
+ * run that spent a minute waiting for a model may find another has already
+ * handled the same change.
+ */
+describe("advancing the baseline after a change was handled", () => {
+  const EXPECTED = { normalizedContent: "the page as text", contentHash: "abc123" };
+  const NEXT = { normalizedContent: "the page, differently", contentHash: "def456" };
+
+  it("matches on the baseline that was described", () => {
+    return advanceWebsiteSnapshotIfCurrent("source-1", EXPECTED, NEXT, LATER).then(
+      () => {
+        expect(mocks.updateMany.mock.calls[0][0].where).toEqual({
+          websiteSourceId: "source-1",
+          contentHash: "abc123",
+          normalizedContent: "the page as text",
+        });
+      },
+    );
+  });
+
+  it("writes the new content, the new digest and both timestamps", async () => {
+    await advanceWebsiteSnapshotIfCurrent("source-1", EXPECTED, NEXT, LATER);
+
+    expect(mocks.updateMany.mock.calls[0][0].data).toEqual({
+      normalizedContent: "the page, differently",
+      contentHash: "def456",
+      lastCheckedAt: LATER,
+      lastChangedAt: LATER,
+    });
+  });
+
+  /**
+   * `lastChangedAt` means "the content became this, and that was dealt with".
+   * This is the only place it moves.
+   */
+  it("is the write that dates the change", async () => {
+    await advanceWebsiteSnapshotIfCurrent("source-1", EXPECTED, NEXT, LATER);
+
+    expect(mocks.updateMany.mock.calls[0][0].data.lastChangedAt).toEqual(LATER);
+  });
+
+  it("writes nothing else", async () => {
+    await advanceWebsiteSnapshotIfCurrent("source-1", EXPECTED, NEXT, LATER);
+
+    expect(Object.keys(mocks.updateMany.mock.calls[0][0].data).sort()).toEqual([
+      "contentHash",
+      "lastChangedAt",
+      "lastCheckedAt",
+      "normalizedContent",
+    ]);
+  });
+
+  it("reports success when exactly one row matched", async () => {
+    expect(
+      await advanceWebsiteSnapshotIfCurrent("source-1", EXPECTED, NEXT, LATER),
+    ).toBe(true);
+  });
+
+  it("reports a conflict when the baseline had already moved", async () => {
+    mocks.updateMany.mockResolvedValue({ count: 0 });
+
+    expect(
+      await advanceWebsiteSnapshotIfCurrent("source-1", EXPECTED, NEXT, LATER),
+    ).toBe(false);
+  });
+
+  it("uses the client it was given", async () => {
+    const tx = {
+      websiteSnapshot: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    };
+
+    await advanceWebsiteSnapshotIfCurrent(
+      "source-1",
+      EXPECTED,
+      NEXT,
+      LATER,
+      tx as unknown as Parameters<typeof advanceWebsiteSnapshotIfCurrent>[4],
+    );
+
+    expect(tx.websiteSnapshot.updateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("uses the module's client when given none", async () => {
+    await advanceWebsiteSnapshotIfCurrent("source-1", EXPECTED, NEXT, LATER);
+
+    expect(mocks.updateMany).toHaveBeenCalledTimes(1);
   });
 });
 

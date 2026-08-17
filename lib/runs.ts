@@ -13,11 +13,19 @@ import {
   detectWebsiteChange,
   type WebsiteChangeState,
 } from "@/lib/watcher/change";
+import { buildWebsiteChangeContext } from "@/lib/watcher/change-context";
 import { decodeWebsiteContent } from "@/lib/watcher/decode";
 import { isWatcherError } from "@/lib/watcher/errors";
 import { fetchWatchedPage } from "@/lib/watcher/fetch";
 import { normalizeWebsiteContent } from "@/lib/watcher/normalize";
 import {
+  buildWebsiteChangeRequest,
+  MAX_WEBSITE_AI_REQUEST_CHARS,
+  websiteRequestSize,
+} from "@/lib/watcher/website-request";
+import { workerFieldLimits } from "@/lib/worker-input";
+import {
+  advanceWebsiteSnapshotIfCurrent,
   createWebsiteSnapshotBaseline,
   getWebsiteSnapshot,
   isWebsiteStateConflict,
@@ -307,7 +315,7 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
     // Both kinds share the lease, the run row, and the release below. What
     // differs is only what happens between them.
     return routine.kind === "website"
-      ? await executeWebsite(routineId, routine.userId)
+      ? await executeWebsite(routineId, routine.userId, routine.prompt)
       : await executePrompt(routineId, routine.userId, routine.prompt);
   } finally {
     // Every path out of the execution above comes through here — the result,
@@ -348,7 +356,10 @@ async function executePrompt(
   let output: string;
   try {
     const prompt = renderPrompt(routinePrompt, promptVariables());
-    output = await provider.execute(prompt);
+    // **No `system`.** A prompt worker's instruction and its material are the
+    // same text, exactly as they have always been — the field exists for the
+    // caller that has two separate things to send.
+    output = await provider.execute({ user: prompt });
   } catch (error) {
     // **The kind is logged, not stored**, and it is logged only here — this is
     // the one place the failure is a provider's. Naming a column for it means
@@ -379,18 +390,21 @@ const BASELINE_NOT_ESTABLISHED = "Website baseline is not established yet.";
 const CONTENT_UNCHANGED = "Website content has not changed.";
 
 /**
- * What a change currently amounts to.
+ * Why a change could not be dealt with.
  *
- * **A change is detected and then not acted on**, because the part that acts on
- * it — reading what changed, asking a model to describe it, moving the baseline
- * — is not connected yet. Recording that as a completed run would say the work
- * was done.
+ * **Each of these leaves the baseline where it was**, so the same change is
+ * found again on the next run and can be dealt with then. What they cost is one
+ * run; what they do not cost is the change.
  *
- * **The baseline does not move**, so the same change is found again next time.
- * That is what makes this safe to ship ahead of the rest: nothing is consumed.
+ * Short and fixed, because they are stored and read by the person whose worker
+ * it is. Whatever detail there is — a provider's own wording, the kind of
+ * failure, which stage it happened at — goes to the log, where it belongs.
  */
-const CHANGE_PROCESSING_UNAVAILABLE =
-  "Website change processing is not available yet.";
+const AI_NOT_CONFIGURED =
+  "AI service is not configured for website change processing.";
+const INSTRUCTIONS_INVALID = "Website change instructions are invalid.";
+const REQUEST_TOO_LARGE = "Website change request is too large.";
+const CHANGE_PROCESSING_FAILED = "Website change processing failed.";
 
 /** A website worker with nowhere to look. Configuration, not a failure to fetch. */
 const NO_WEBSITE_CONFIGURED = "This worker has no website address to watch.";
@@ -425,6 +439,7 @@ const STATE_CHANGED_DURING_RUN = "Website state changed during execution.";
 async function executeWebsite(
   routineId: string,
   userId: string,
+  routinePrompt: string,
 ): Promise<RunHistory> {
   // A row first, for the same reason a prompt worker gets one: an attempt that
   // reached execution is an attempt, however it turns out. One run, one row.
@@ -463,8 +478,167 @@ async function executeWebsite(
     return recordFailure(run.id, watcherFailureMessage(error));
   }
 
-  return finalizeWebsiteRun(routineId, run.id, inspection);
+  return inspection.change.state === "changed"
+    ? processWebsiteChange(routineId, run.id, routinePrompt, inspection)
+    : finalizeWebsiteRun(routineId, run.id, inspection);
 }
+
+/**
+ * Turns a detected change into something a person can read, and only then moves
+ * the baseline past it.
+ *
+ * ```
+ * can we? → what to say → what changed → ask the model → keep it, atomically
+ * ```
+ *
+ * **Every way this can fail leaves the baseline alone.** That is the property
+ * the whole ordering exists for: the change stays undealt-with, the next run
+ * finds it again, and nothing is lost except one run. The opposite arrangement
+ * — move the baseline, then try to describe the change — would spend the change
+ * on a run that could not use it.
+ *
+ * **The model is asked before anything is written and outside any transaction.**
+ * It can take minutes; a transaction held across it would hold a database
+ * connection for the same minutes.
+ */
+async function processWebsiteChange(
+  routineId: string,
+  runId: string,
+  routinePrompt: string,
+  inspection: WebsiteInspection,
+): Promise<WebsiteRunOutcome> {
+  const { websiteSourceId, baseline, current } = inspection;
+
+  if (baseline === null) {
+    // Unreachable by construction — `changed` implies a baseline — but the
+    // narrowing has to go somewhere, and treating it as a conflict is the
+    // reading that writes nothing.
+    return finalizeChecked(routineId, runId, websiteSourceId, null, {
+      status: "failed",
+      message: STATE_CHANGED_DURING_RUN,
+    });
+  }
+
+  const failWithoutAdvancing = (message: string) =>
+    finalizeChecked(routineId, runId, websiteSourceId, baseline, {
+      status: "failed",
+      message,
+    });
+
+  // **The stand-in cannot be allowed near this.** It answers everything with a
+  // fixed sentence; storing that as the summary and advancing the baseline
+  // would consume a change and leave a description of nothing in its place.
+  // A prompt worker getting that sentence is confusing. Here it is lossy.
+  if (provider.mode !== "real") {
+    console.error(
+      "[worker] website change needs a real provider — stand-in refused",
+      routineId,
+    );
+    return failWithoutAdvancing(AI_NOT_CONFIGURED);
+  }
+
+  // The instruction is checked again here rather than trusted from the form.
+  // The column has no length of its own, so a row written before the limit
+  // existed, or by anything that skipped the form, would otherwise arrive
+  // unbounded at a paid API.
+  const instruction = routinePrompt.trim();
+  if (
+    instruction.length === 0 ||
+    instruction.length > workerFieldLimits.prompt
+  ) {
+    console.error("[worker] website change instructions are unusable", routineId);
+    return failWithoutAdvancing(INSTRUCTIONS_INVALID);
+  }
+
+  const request = buildWebsiteChangeRequest(
+    instruction,
+    buildWebsiteChangeContext(
+      baseline.normalizedContent,
+      current.normalizedContent,
+    ),
+  );
+
+  if (websiteRequestSize(request) > MAX_WEBSITE_AI_REQUEST_CHARS) {
+    console.error("[worker] website change request exceeds the limit", routineId);
+    return failWithoutAdvancing(REQUEST_TOO_LARGE);
+  }
+
+  let output: string;
+  try {
+    output = await provider.execute(request);
+  } catch (error) {
+    console.error(
+      "[worker] website change processing failed —",
+      providerErrorKind(error),
+      "—",
+      error,
+    );
+    return failWithoutAdvancing(CHANGE_PROCESSING_FAILED);
+  }
+
+  // **An answer of nothing is not an answer.** Storing it would leave a run
+  // marked as dealt-with whose description is blank, and the baseline would
+  // have moved past the change that produced it.
+  if (output.trim().length === 0) {
+    console.error("[worker] website change produced no summary", routineId);
+    return failWithoutAdvancing(CHANGE_PROCESSING_FAILED);
+  }
+
+  return advanceWebsiteBaseline(routineId, runId, inspection, baseline, output);
+}
+
+/**
+ * Keeps the summary and moves the baseline past the change, together.
+ *
+ * **The only place a change is consumed.** Both writes are conditional on the
+ * baseline still being the one that was described: a run that spent a minute
+ * waiting for a model may find another run has already dealt with the same
+ * change, and in that case this one's work is discarded rather than written
+ * over the newer state.
+ *
+ * **A discarded summary is not stored on the failed run either.** It describes
+ * a transition from a baseline that no longer exists, so keeping it would mean
+ * a run whose output is about something that did not happen from here.
+ */
+async function advanceWebsiteBaseline(
+  routineId: string,
+  runId: string,
+  inspection: WebsiteInspection,
+  baseline: NonNullable<WebsiteInspection["baseline"]>,
+  output: string,
+): Promise<RunHistory> {
+  const finalizedAt = new Date();
+
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const advanced = await advanceWebsiteSnapshotIfCurrent(
+        inspection.websiteSourceId,
+        baseline,
+        inspection.current,
+        finalizedAt,
+        tx,
+      );
+
+      if (!advanced) {
+        throw new WebsiteStateConflictError(inspection.websiteSourceId);
+      }
+
+      return await recordSuccess(runId, output, tx);
+    });
+  } catch (error) {
+    console.error(
+      "[worker] website change could not be committed",
+      routineId,
+      isWebsiteStateConflict(error) ? "state-conflict" : "unknown",
+      error,
+    );
+
+    return recordFailure(runId, finalizationFailureMessage(error));
+  }
+}
+
+/** A finished website run, whichever way it finished. */
+type WebsiteRunOutcome = RunHistory;
 
 /** What one look at a page produced, and what it was compared against. */
 type WebsiteInspection = {
@@ -525,10 +699,9 @@ async function inspectWebsite(
  * `lastChangedAt` describe what the page *is*, and moving those is the step
  * after the change has actually been dealt with.
  *
- * **A detected change is still recorded as a failed run**, because the part
- * that acts on a change is not connected yet. The baseline keeps the old
- * content, so the same change is found again next time — the run is spent, the
- * change is not.
+ * **Only `initial` and `unchanged` come here.** A change goes the long way
+ * round — through a model — because moving the baseline past one is only safe
+ * once somebody has been told what it was.
  */
 async function finalizeWebsiteRun(
   routineId: string,
@@ -536,53 +709,110 @@ async function finalizeWebsiteRun(
   inspection: WebsiteInspection,
 ): Promise<RunHistory> {
   const { websiteSourceId, baseline, current, change } = inspection;
+
+  if (change.state === "initial") {
+    const finalizedAt = new Date();
+
+    return runFinalization(routineId, runId, async (tx) => {
+      // A create rather than an upsert: two runs can both find no baseline,
+      // and the second must be told rather than allowed to write over the
+      // first.
+      await createWebsiteSnapshotBaseline(
+        websiteSourceId,
+        {
+          normalizedContent: current.normalizedContent,
+          contentHash: current.contentHash,
+          at: finalizedAt,
+        },
+        tx,
+      );
+
+      return recordSuccess(runId, BASELINE_NOT_ESTABLISHED, tx);
+    });
+  }
+
+  return finalizeChecked(routineId, runId, websiteSourceId, baseline, {
+    status: "completed",
+    output: CONTENT_UNCHANGED,
+  });
+}
+
+/** What a run is to record once the page has been looked at successfully. */
+type CheckedOutcome =
+  | { status: "completed"; output: string }
+  | { status: "failed"; message: string };
+
+/**
+ * Records that the page was looked at, and what came of it, together.
+ *
+ * **The shared shape of every outcome that is not a change being dealt with.**
+ * The page was fetched, decoded, normalized and compared — that is what
+ * `lastCheckedAt` records, and it is true whether the comparison found nothing
+ * or found something this run could not process.
+ *
+ * **The content, the digest and `lastChangedAt` are untouched.** They describe
+ * what the page *is* and whether that has been dealt with; only
+ * `advanceWebsiteSnapshotIfCurrent` moves them.
+ *
+ * A baseline that has moved underneath this run makes the whole finalization
+ * void: its conclusion is about a state that no longer exists.
+ */
+async function finalizeChecked(
+  routineId: string,
+  runId: string,
+  websiteSourceId: string,
+  baseline: WebsiteInspection["baseline"],
+  outcome: CheckedOutcome,
+): Promise<RunHistory> {
   // One instant for the whole finalization, so the time the page was checked
   // and the time the run ended describe the same moment.
   const finalizedAt = new Date();
 
+  return runFinalization(routineId, runId, async (tx) => {
+    // A baseline is always present by the time anything is checked —
+    // `detectWebsiteChange` only answers `initial` when there is none. Treating
+    // its absence as a conflict is the reading that writes nothing.
+    if (baseline === null) {
+      throw new WebsiteStateConflictError(websiteSourceId);
+    }
+
+    const held = await markWebsiteSnapshotCheckedIfCurrent(
+      websiteSourceId,
+      baseline,
+      finalizedAt,
+      tx,
+    );
+
+    if (!held) {
+      // Throwing is how the snapshot write and the run write are abandoned
+      // together — returning would leave the run recorded against a baseline
+      // that had already moved.
+      throw new WebsiteStateConflictError(websiteSourceId);
+    }
+
+    return outcome.status === "completed"
+      ? recordSuccess(runId, outcome.output, tx)
+      : recordFailure(runId, outcome.message, tx);
+  });
+}
+
+/**
+ * Runs a finalization in one transaction, and records the attempt if it did not
+ * commit.
+ *
+ * **The second write is not part of the first, and must not be described as
+ * though it were.** Whatever the transaction did has been undone; this run
+ * still has to appear in the history as an attempt that happened and did not
+ * finish. It is best-effort — if it fails in turn, that leaves as a persistence
+ * error like any other, and nothing retries.
+ */
+async function runFinalization(
+  routineId: string,
+  runId: string,
+  finalize: (tx: DbClient) => Promise<RunHistory>,
+): Promise<RunHistory> {
   try {
-    return await prisma.$transaction(async (tx) => {
-      if (change.state === "initial") {
-        // A create rather than an upsert: two runs can both find no baseline,
-        // and the second must be told rather than allowed to write over the
-        // first.
-        await createWebsiteSnapshotBaseline(
-          websiteSourceId,
-          {
-            normalizedContent: current.normalizedContent,
-            contentHash: current.contentHash,
-            at: finalizedAt,
-          },
-          tx,
-        );
-
-        return await recordSuccess(runId, BASELINE_NOT_ESTABLISHED, tx);
-      }
-
-      // Not initial, so a baseline was read. Narrowing rather than asserting:
-      // `detectWebsiteChange` only answers `initial` when there was none.
-      if (baseline === null) {
-        throw new WebsiteStateConflictError(websiteSourceId);
-      }
-
-      const held = await markWebsiteSnapshotCheckedIfCurrent(
-        websiteSourceId,
-        baseline,
-        finalizedAt,
-        tx,
-      );
-
-      if (!held) {
-        // Throwing is how the snapshot write and the run write are abandoned
-        // together — returning would leave the run recorded against a baseline
-        // that had already moved.
-        throw new WebsiteStateConflictError(websiteSourceId);
-      }
-
-      return change.state === "unchanged"
-        ? await recordSuccess(runId, CONTENT_UNCHANGED, tx)
-        : await recordFailure(runId, CHANGE_PROCESSING_UNAVAILABLE, tx);
-    });
+    return await prisma.$transaction(finalize);
   } catch (error) {
     console.error(
       "[worker] website finalization did not commit",
@@ -591,12 +821,6 @@ async function finalizeWebsiteRun(
       error,
     );
 
-    // **Outside the transaction, and deliberately not part of it.** Whatever
-    // the transaction did has been undone, and this run still has to be
-    // accounted for — an attempt that happened and did not finish. It is a
-    // best-effort second write, not a second half of the first: if it fails in
-    // turn, that leaves as a persistence error like any other, and nothing
-    // retries.
     return recordFailure(runId, finalizationFailureMessage(error));
   }
 }

@@ -53,6 +53,70 @@ const create = vi.spyOn(Anthropic.Messages.prototype, "create");
 const provider = new ClaudeProvider("not-a-real-key");
 
 /**
+ * What actually reaches the SDK, which is the half of the request contract that
+ * cannot be checked from the outside.
+ */
+function sentRequest() {
+  return create.mock.calls[create.mock.calls.length - 1][0];
+}
+
+describe("what a request looks like on the wire", () => {
+  it("reaches a model, and says so", () => {
+    expect(provider.mode).toBe("real");
+  });
+
+  /**
+   * **A worker with one piece of text sends one piece of text.** Adding an
+   * empty instruction would be a field the model did not previously receive,
+   * for a caller that has nothing to put in it.
+   */
+  it("sends no instruction when the caller gave none", async () => {
+    create.mockResolvedValue(response());
+
+    await provider.execute({ user: "summarise this" });
+
+    expect(sentRequest()).not.toHaveProperty("system");
+    expect(sentRequest().messages).toEqual([
+      { role: "user", content: "summarise this" },
+    ]);
+  });
+
+  /**
+   * **Two separate things stay separate.** The instruction is what to do; the
+   * message is what to do it to — and for a website worker the second is text
+   * fetched from somebody else's server.
+   */
+  it("keeps the instruction apart from the material", async () => {
+    create.mockResolvedValue(response());
+
+    await provider.execute({ system: "the task", user: "the material" });
+
+    expect(sentRequest().system).toBe("the task");
+    expect(sentRequest().messages).toEqual([
+      { role: "user", content: "the material" },
+    ]);
+  });
+
+  it("does not put the material in the instruction, or the other way round", async () => {
+    create.mockResolvedValue(response());
+
+    await provider.execute({ system: "the task", user: "the material" });
+
+    expect(sentRequest().system).not.toContain("the material");
+    expect(JSON.stringify(sentRequest().messages)).not.toContain("the task");
+  });
+
+  it("still sends the same model and token ceiling", async () => {
+    create.mockResolvedValue(response());
+
+    await provider.execute({ system: "the task", user: "the material" });
+
+    expect(sentRequest().model).toBe("claude-opus-5");
+    expect(sentRequest().max_tokens).toBe(16000);
+  });
+});
+
+/**
  * A response the SDK would return, with `overrides` applied.
  *
  * **Only the two fields this provider reads are set.** A complete `Message`
@@ -74,7 +138,7 @@ function response(
 /** The kind `execute` reports for a provider that threw `error`. */
 async function kindFor(error: unknown): Promise<unknown> {
   create.mockRejectedValue(error);
-  return provider.execute("prompt").then(
+  return provider.execute({ user: "prompt" }).then(
     () => undefined,
     (thrown: unknown) => (thrown as ProviderError).kind,
   );
@@ -159,7 +223,7 @@ describe("something else entirely", () => {
   it("lets a thrown non-Error through untouched", async () => {
     create.mockRejectedValue("just a string");
 
-    await expect(provider.execute("prompt")).rejects.toBe("just a string");
+    await expect(provider.execute({ user: "prompt" })).rejects.toBe("just a string");
   });
 });
 
@@ -168,7 +232,7 @@ describe("what crosses the boundary", () => {
     const sdkError = new Anthropic.APIError(429, undefined, "slow down", undefined);
     create.mockRejectedValue(sdkError);
 
-    const thrown = await provider.execute("prompt").catch((error) => error);
+    const thrown = await provider.execute({ user: "prompt" }).catch((error) => error);
 
     expect(thrown).toBeInstanceOf(ProviderError);
     expect(thrown).not.toBeInstanceOf(Anthropic.APIError);
@@ -183,7 +247,7 @@ describe("what crosses the boundary", () => {
     const sdkError = new Anthropic.APIError(429, undefined, "slow down", undefined);
     create.mockRejectedValue(sdkError);
 
-    const thrown = await provider.execute("prompt").catch((error) => error);
+    const thrown = await provider.execute({ user: "prompt" }).catch((error) => error);
 
     expect(thrown.message).toBe(sdkError.message);
   });
@@ -192,7 +256,7 @@ describe("what crosses the boundary", () => {
     const sdkError = new Anthropic.APIError(500, undefined, "boom", undefined);
     create.mockRejectedValue(sdkError);
 
-    const thrown = await provider.execute("prompt").catch((error) => error);
+    const thrown = await provider.execute({ user: "prompt" }).catch((error) => error);
 
     expect(thrown.cause).toBe(sdkError);
   });
@@ -207,7 +271,7 @@ describe("a refusal", () => {
   it("is a failure even though the request succeeded", async () => {
     create.mockResolvedValue(response({ stop_reason: "refusal" }));
 
-    const thrown = await provider.execute("prompt").catch((error) => error);
+    const thrown = await provider.execute({ user: "prompt" }).catch((error) => error);
 
     expect(thrown).toBeInstanceOf(ProviderError);
     expect(thrown.kind).toBe("refused");
@@ -216,7 +280,7 @@ describe("a refusal", () => {
   it("says so in the wording the run will record", async () => {
     create.mockResolvedValue(response({ stop_reason: "refusal" }));
 
-    const thrown = await provider.execute("prompt").catch((error) => error);
+    const thrown = await provider.execute({ user: "prompt" }).catch((error) => error);
 
     expect(thrown.message).toBe("Claude declined to answer this prompt.");
   });
@@ -224,7 +288,7 @@ describe("a refusal", () => {
   it("has no cause, because nothing was thrown", async () => {
     create.mockResolvedValue(response({ stop_reason: "refusal" }));
 
-    const thrown = await provider.execute("prompt").catch((error) => error);
+    const thrown = await provider.execute({ user: "prompt" }).catch((error) => error);
 
     expect(thrown.cause).toBeUndefined();
   });
@@ -243,7 +307,7 @@ describe("with no stub in place", () => {
   it("is stopped before the network rather than by it", async () => {
     create.mockReset(); // puts the real method back, exactly as the accident did
 
-    const thrown = await provider.execute("prompt").catch((error) => error);
+    const thrown = await provider.execute({ user: "prompt" }).catch((error) => error);
 
     expect(thrown).toBeInstanceOf(ProviderError);
     expect(thrown.kind).toBe("unreachable");
@@ -255,7 +319,7 @@ describe("a response that worked", () => {
   it("returns the text", async () => {
     create.mockResolvedValue(response());
 
-    expect(await provider.execute("prompt")).toBe("an answer");
+    expect(await provider.execute({ user: "prompt" })).toBe("an answer");
   });
 
   it("joins several text blocks with newlines", async () => {
@@ -268,7 +332,7 @@ describe("a response that worked", () => {
       }),
     );
 
-    expect(await provider.execute("prompt")).toBe("first\nsecond");
+    expect(await provider.execute({ user: "prompt" })).toBe("first\nsecond");
   });
 
   it("ignores blocks that are not text", async () => {
@@ -281,7 +345,7 @@ describe("a response that worked", () => {
       }),
     );
 
-    expect(await provider.execute("prompt")).toBe("the answer");
+    expect(await provider.execute({ user: "prompt" })).toBe("the answer");
   });
 
   it("trims what it returns", async () => {
@@ -289,6 +353,6 @@ describe("a response that worked", () => {
       response({ content: [{ type: "text", text: "  padded  " }] }),
     );
 
-    expect(await provider.execute("prompt")).toBe("padded");
+    expect(await provider.execute({ user: "prompt" })).toBe("padded");
   });
 });

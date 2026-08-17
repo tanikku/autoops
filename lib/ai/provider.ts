@@ -1,5 +1,42 @@
+/**
+ * Whether a provider actually calls a model.
+ *
+ * **Asked because one caller must refuse to run without one.** A website worker
+ * that finds a change has to send it somewhere real: the stand-in would answer
+ * with its fixed sentence, that sentence would be stored as the summary, and
+ * the baseline would move past a change nobody ever read. A prompt worker
+ * getting a fixed answer is a confusing run; a website worker getting one loses
+ * the change.
+ *
+ * **It is a property of the provider, not a name.** Testing for a particular
+ * class would mean revisiting every caller the first time a second real
+ * provider exists — the question is "does this reach a model", and that is what
+ * this answers.
+ */
+export type AIProviderMode = "real" | "dummy";
+
+/**
+ * What is sent to a model: an instruction, and the material to apply it to.
+ *
+ * **The split exists because one of the two is not trusted.** A website
+ * worker's material is text fetched from somebody else's server, and putting it
+ * in the same message as the instruction would mean the model reads both as
+ * coming from the same place. Keeping them apart says which is which.
+ *
+ * Deliberately not a conversation. There is one instruction and one body of
+ * material, and a general message list would be a shape nothing here needs.
+ */
+export type AIExecutionRequest = {
+  /** The instruction. Omitted entirely by callers that have none. */
+  system?: string;
+  /** What the instruction is applied to. */
+  user: string;
+};
+
 export interface AIProvider {
-  execute(prompt: string): Promise<string>;
+  /** Whether this reaches a model. See `AIProviderMode`. */
+  readonly mode: AIProviderMode;
+  execute(request: AIExecutionRequest): Promise<string>;
 }
 
 /**

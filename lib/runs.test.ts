@@ -109,7 +109,7 @@ describe("runRoutine — which kind is being run", () => {
   it("runs a prompt worker's prompt", async () => {
     await runRoutine("worker-1");
 
-    expect(mocks.execute).toHaveBeenCalledWith("hello");
+    expect(mocks.execute).toHaveBeenCalledWith({ user: "hello" });
   });
 
   it.each(["", "Prompt", "PROMPT", "website ", "rss", "corrupt-value", "null"])(
@@ -167,7 +167,7 @@ describe("runRoutine — lease acquired", () => {
     const run = await runRoutine("worker-1");
 
     expect(mocks.create).toHaveBeenCalledTimes(1);
-    expect(mocks.execute).toHaveBeenCalledWith("hello");
+    expect(mocks.execute).toHaveBeenCalledWith({ user: "hello" });
     expect(run.status).toBe("completed");
   });
 

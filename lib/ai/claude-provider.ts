@@ -1,6 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import {
+  type AIExecutionRequest,
   type AIProvider,
+  type AIProviderMode,
   ProviderError,
   type ProviderErrorKind,
 } from "@/lib/ai/provider";
@@ -84,6 +86,8 @@ function classify(error: unknown): ProviderErrorKind {
 }
 
 export class ClaudeProvider implements AIProvider {
+  readonly mode: AIProviderMode = "real";
+
   private readonly client: Anthropic;
 
   constructor(apiKey: string) {
@@ -94,14 +98,19 @@ export class ClaudeProvider implements AIProvider {
     });
   }
 
-  async execute(prompt: string): Promise<string> {
+  async execute(request: AIExecutionRequest): Promise<string> {
     let message;
 
     try {
       message = await this.client.messages.create({
         model: MODEL,
         max_tokens: MAX_TOKENS,
-        messages: [{ role: "user", content: prompt }],
+        // **Absent rather than empty when there is no instruction.** A prompt
+        // worker has none, and its request has to reach the model as the one it
+        // reached before — a `system` of `undefined` would be a field that was
+        // not there previously.
+        ...(request.system === undefined ? {} : { system: request.system }),
+        messages: [{ role: "user", content: request.user }],
       });
     } catch (error) {
       // Anything that is not an `Error` is rethrown untouched: there is no
