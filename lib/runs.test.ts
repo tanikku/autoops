@@ -48,8 +48,12 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-const { latestExecutionFailureAt, runRoutine, RunPersistenceError } =
-  await import("@/lib/runs");
+const {
+  isUnsupportedRoutineKind,
+  latestExecutionFailureAt,
+  runRoutine,
+  RunPersistenceError,
+} = await import("@/lib/runs");
 const { ExecutionSuppressedError } = await import("@/lib/execution-lease");
 
 const LEASE = { token: "token-a", expiresAt: new Date("2026-08-10T12:15:00Z") };
@@ -76,11 +80,86 @@ beforeEach(() => {
   mocks.execute.mockReset().mockResolvedValue("done");
   mocks.findUniqueOrThrow
     .mockReset()
-    .mockResolvedValue({ userId: "user-1", prompt: "hello" });
+    .mockResolvedValue({ userId: "user-1", prompt: "hello", kind: "prompt" });
   mocks.create.mockReset().mockResolvedValue(RUN_ROW);
   mocks.update
     .mockReset()
     .mockImplementation(async ({ data }) => ({ ...RUN_ROW, ...data }));
+});
+
+/**
+ * **Which kind a worker is decides what runs, and an unreadable one runs
+ * nothing.**
+ *
+ * The reading conversion answers `prompt` for a value it does not recognise,
+ * which is right for a screen and wrong here: running a worker's prompt because
+ * its kind could not be read produces a confident model answer about work
+ * nobody asked for, recorded as a success. Execution asks the column instead.
+ */
+describe("runRoutine — which kind is being run", () => {
+  it("reads the kind from the row rather than from the conversion", async () => {
+    await runRoutine("worker-1");
+
+    expect(mocks.findUniqueOrThrow).toHaveBeenCalledWith({
+      where: { id: "worker-1" },
+      select: { userId: true, prompt: true, kind: true },
+    });
+  });
+
+  it("runs a prompt worker's prompt", async () => {
+    await runRoutine("worker-1");
+
+    expect(mocks.execute).toHaveBeenCalledWith("hello");
+  });
+
+  it.each(["", "Prompt", "PROMPT", "website ", "rss", "corrupt-value", "null"])(
+    "refuses to run a worker whose kind reads %o",
+    async (kind) => {
+      mocks.findUniqueOrThrow.mockResolvedValue({
+        userId: "user-1",
+        prompt: "hello",
+        kind,
+      });
+
+      await expect(runRoutine("worker-1")).rejects.toSatisfy(
+        isUnsupportedRoutineKind,
+      );
+    },
+  );
+
+  /**
+   * **Nothing at all happens**, which is why the refusal is before the lease.
+   * Refusing later would mean deciding what to record about a run that should
+   * never have been started.
+   */
+  it("takes no lease, records no run and calls nothing when the kind is unreadable", async () => {
+    mocks.findUniqueOrThrow.mockResolvedValue({
+      userId: "user-1",
+      prompt: "hello",
+      kind: "corrupt-value",
+    });
+
+    await expect(runRoutine("worker-1")).rejects.toThrow();
+
+    expect(mocks.acquire).not.toHaveBeenCalled();
+    expect(mocks.release).not.toHaveBeenCalled();
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.update).not.toHaveBeenCalled();
+    expect(mocks.execute).not.toHaveBeenCalled();
+  });
+
+  /** Not "already running", which is a run that could have happened. */
+  it("is not reported as a suppressed execution", async () => {
+    mocks.findUniqueOrThrow.mockResolvedValue({
+      userId: "user-1",
+      prompt: "hello",
+      kind: "corrupt-value",
+    });
+
+    await expect(runRoutine("worker-1")).rejects.not.toBeInstanceOf(
+      ExecutionSuppressedError,
+    );
+  });
 });
 
 describe("runRoutine — lease acquired", () => {

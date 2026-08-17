@@ -10,6 +10,17 @@ import {
 import { prisma } from "@/lib/prisma";
 import { promptVariables, renderPrompt } from "@/lib/prompt";
 import {
+  detectWebsiteChange,
+  type WebsiteChangeState,
+} from "@/lib/watcher/change";
+import { decodeWebsiteContent } from "@/lib/watcher/decode";
+import { isWatcherError } from "@/lib/watcher/errors";
+import { fetchWatchedPage } from "@/lib/watcher/fetch";
+import { normalizeWebsiteContent } from "@/lib/watcher/normalize";
+import { getWebsiteSnapshot } from "@/lib/website-snapshots";
+import { getWebsiteSource } from "@/lib/website-sources";
+import {
+  isRoutineKind,
   isRunStatus,
   type RunHistory,
   type RunHistoryDetail,
@@ -66,6 +77,40 @@ export class RunPersistenceError extends Error {
 /** Whether a rejection means the outcome could not be written down. */
 export function isRunPersistenceError(error: unknown): boolean {
   return error instanceof RunPersistenceError;
+}
+
+/**
+ * The row says this worker is something execution does not know how to run.
+ *
+ * **Nothing happens, and that is the point.** `toRoutine` reads an unrecognised
+ * kind as `prompt`, which is the right answer for a screen — it has to show
+ * something, and a worker that reaches nothing outside the process is the safe
+ * thing to show. It is the wrong answer for a run: executing a worker's prompt
+ * because its kind could not be read would produce a confident model answer
+ * about a page nobody fetched, recorded as a success.
+ *
+ * So the reading stays as it is and execution refuses instead. This is raised
+ * before the lease, before any row, and before anything leaves the process.
+ *
+ * The same minimal shape as `ExecutionSuppressedError` and
+ * `RunPersistenceError`: one class and one predicate, not a taxonomy.
+ */
+export class UnsupportedRoutineKindError extends Error {
+  readonly routineId: string;
+  /** What the column actually held. Kept off the message, which is read aloud. */
+  readonly kind: string;
+
+  constructor(routineId: string, kind: string) {
+    super(`Worker ${routineId} has a kind execution does not recognise.`);
+    this.name = "UnsupportedRoutineKindError";
+    this.routineId = routineId;
+    this.kind = kind;
+  }
+}
+
+/** Whether a rejection means the worker's kind could not be acted on. */
+export function isUnsupportedRoutineKind(error: unknown): boolean {
+  return error instanceof UnsupportedRoutineKindError;
 }
 
 /**
@@ -228,10 +273,24 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
   // reports itself as missing. Acquiring first would match no row and be
   // indistinguishable from contention — the dispatcher counts a vanished
   // worker as a failed hand-off, and that should not quietly become silence.
+  //
+  // **The kind comes from here rather than from `toRoutine`.** What is wanted
+  // is the value the column holds, not the value a reader would be shown: the
+  // conversion answers `prompt` for anything it cannot read, and running on
+  // that answer is the one thing this must not do.
   const routine = await prisma.routine.findUniqueOrThrow({
     where: { id: routineId },
-    select: { userId: true, prompt: true },
+    select: { userId: true, prompt: true, kind: true },
   });
+
+  // **Before the lease, before the row, before anything leaves the process.**
+  // A worker whose kind cannot be read has no correct execution, so it gets
+  // none — no lease taken, no run recorded, no request made. Refusing later
+  // would mean deciding what to write down about a run that should not have
+  // been started.
+  if (!isRoutineKind(routine.kind)) {
+    throw new UnsupportedRoutineKindError(routineId, routine.kind);
+  }
 
   const lease = await acquireExecutionLease(routineId);
   if (lease === null) {
@@ -239,7 +298,11 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
   }
 
   try {
-    return await execute(routineId, routine.userId, routine.prompt);
+    // Both kinds share the lease, the run row, and the release below. What
+    // differs is only what happens between them.
+    return routine.kind === "website"
+      ? await executeWebsite(routineId, routine.userId)
+      : await executePrompt(routineId, routine.userId, routine.prompt);
   } finally {
     // Every path out of the execution above comes through here — the result,
     // the failure, and the writes that record either. **The release cannot
@@ -250,12 +313,16 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
 }
 
 /**
- * The execution itself, once the right to run it is held.
+ * A prompt worker's execution, once the right to run it is held.
  *
  * Split out so the lease has a single, obvious span: everything in here
  * happens while it is held, and the caller's `finally` gives it back.
+ *
+ * **Unchanged by the arrival of website workers.** They take a different
+ * branch above rather than a flag inside this one, so what a prompt worker
+ * does is exactly what it did.
  */
-async function execute(
+async function executePrompt(
   routineId: string,
   userId: string,
   routinePrompt: string,
@@ -287,10 +354,154 @@ async function execute(
       error,
     );
 
-    return recordFailure(run.id, error);
+    return recordFailure(run.id, providerFailureMessage(error));
   }
 
   return recordSuccess(run.id, output);
+}
+
+/**
+ * What a website worker's run says when nothing went wrong.
+ *
+ * **Written by AutoOps, not by a model**, which is the whole difference between
+ * these and a prompt worker's output: no model is called on either of these
+ * paths, so the row has to say something for itself. They are fixed sentences
+ * rather than composed ones so that two runs of the same worker in the same
+ * state are identical.
+ */
+const BASELINE_NOT_ESTABLISHED = "Website baseline is not established yet.";
+const CONTENT_UNCHANGED = "Website content has not changed.";
+
+/**
+ * What a change currently amounts to.
+ *
+ * **A change is detected and then not acted on**, because the part that acts on
+ * it — reading what changed, asking a model to describe it, moving the baseline
+ * — is not connected yet. Recording that as a completed run would say the work
+ * was done.
+ *
+ * **The baseline does not move**, so the same change is found again next time.
+ * That is what makes this safe to ship ahead of the rest: nothing is consumed.
+ */
+const CHANGE_PROCESSING_UNAVAILABLE =
+  "Website change processing is not available yet.";
+
+/** A website worker with nowhere to look. Configuration, not a failure to fetch. */
+const NO_WEBSITE_CONFIGURED = "This worker has no website address to watch.";
+
+/**
+ * A website worker's execution, once the right to run it is held.
+ *
+ * ```
+ * source → fetch → decode → normalize → baseline → compare
+ * ```
+ *
+ * **Every step is somebody else's module.** Nothing here parses HTML, resolves
+ * a charset, or decides what counts as a change; doing any of that a second
+ * time in here is how two answers to the same question start disagreeing.
+ *
+ * **Nothing here writes a snapshot, and nothing calls a model.** Both belong to
+ * the same later step: moving a baseline is only safe once the work the change
+ * triggered has succeeded, and there is no such work yet. Until then every
+ * outcome leaves the stored state exactly as it found it.
+ */
+async function executeWebsite(
+  routineId: string,
+  userId: string,
+): Promise<RunHistory> {
+  // A row first, for the same reason a prompt worker gets one: an attempt that
+  // reached execution is an attempt, however it turns out. One run, one row.
+  const run = await prisma.runHistory.create({
+    data: { routineId, userId, status: "running" },
+  });
+
+  let change: WebsiteChangeState;
+
+  try {
+    // Scoped to the owner, through the routine — a source has no owner column
+    // of its own, and this is the only thing that says who it belongs to.
+    const source = await getWebsiteSource(routineId, userId);
+    if (source === null) {
+      // **Not a fallback to running the prompt.** A website worker with no
+      // address configured has nothing to do, and doing something else instead
+      // would answer a question nobody asked.
+      console.error("[worker] website run has no source configured", routineId);
+      return recordFailure(run.id, NO_WEBSITE_CONFIGURED);
+    }
+
+    change = await inspectWebsite(source.id, source.url);
+  } catch (error) {
+    // **The kind is logged, not stored**, the same standing the provider's kind
+    // has. Nothing about the page itself is logged — not the body, not the
+    // text, not the address.
+    console.error(
+      "[worker] website run failed —",
+      watcherFailureKind(error),
+      "—",
+      error,
+    );
+
+    return recordFailure(run.id, watcherFailureMessage(error));
+  }
+
+  if (change.state === "changed") {
+    console.warn(
+      "[worker] website changed, but change processing is not connected",
+      routineId,
+    );
+
+    return recordFailure(run.id, CHANGE_PROCESSING_UNAVAILABLE);
+  }
+
+  return recordSuccess(
+    run.id,
+    change.state === "initial" ? BASELINE_NOT_ESTABLISHED : CONTENT_UNCHANGED,
+  );
+}
+
+/**
+ * Reads the page and says how it compares with the baseline held for it.
+ *
+ * **Read-only, all the way through.** The snapshot is fetched to compare
+ * against and nothing is written back, so this can be called twice and leave
+ * the same state behind both times.
+ */
+async function inspectWebsite(
+  websiteSourceId: string,
+  url: string,
+): Promise<WebsiteChangeState> {
+  // Every address check, redirect check, size limit and timeout lives in here.
+  const page = await fetchWatchedPage(url);
+  // Bytes and the header that says what they mean — the fetch decodes neither.
+  const decoded = decodeWebsiteContent(page.body, page.contentTypeHeader);
+  const current = normalizeWebsiteContent(decoded.content, decoded.mediaType);
+  const baseline = await getWebsiteSnapshot(websiteSourceId);
+
+  return detectWebsiteChange(baseline, current);
+}
+
+/** The provider's own wording, which is what a failed run has always stored. */
+function providerFailureMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : "Execution failed.";
+}
+
+/** The kind of a watcher failure, for the log. `unknown` for anything else. */
+function watcherFailureKind(error: unknown): string {
+  return isWatcherError(error) ? error.kind : "unknown";
+}
+
+/**
+ * What a failed website run records.
+ *
+ * **Only a watcher failure's own wording is stored.** Those sentences are
+ * written to be read by the person whose worker it is and carry none of what
+ * must not travel — no resolved address, no response body, no page text. Any
+ * other failure is something unexpected, and an unexpected error's message is
+ * not written for anybody; it goes to the log and the row gets a fixed
+ * sentence instead.
+ */
+function watcherFailureMessage(error: unknown): string {
+  return isWatcherError(error) ? error.message : "Execution failed.";
 }
 
 /**
@@ -331,9 +542,10 @@ async function recordSuccess(
 /**
  * Writes down that the run failed, and why.
  *
- * **The reason goes in its own column and `output` stays empty.** The string
- * is the failure's own wording, unchanged — a provider's message, a refusal's
- * sentence, or the stand-in for something thrown that was not an `Error`.
+ * **The reason goes in its own column and `output` stays empty.** The caller
+ * decides what the sentence is, because what may safely be stored differs by
+ * where the failure came from — a provider's message travels as it is, and an
+ * unexpected error's does not.
  *
  * When even this cannot be written, the failure leaves as a persistence error
  * rather than as a `failed` run: there is no row saying so, and returning one
@@ -342,7 +554,7 @@ async function recordSuccess(
  */
 async function recordFailure(
   runId: string,
-  cause: unknown,
+  errorMessage: string,
 ): Promise<RunHistory> {
   try {
     const failed = await prisma.runHistory.update({
@@ -351,8 +563,7 @@ async function recordFailure(
         status: "failed",
         finishedAt: new Date(),
         output: "",
-        errorMessage:
-          cause instanceof Error ? cause.message : "Execution failed.",
+        errorMessage,
       },
     });
 
