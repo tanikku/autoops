@@ -7,7 +7,7 @@ import {
   ExecutionSuppressedError,
   releaseExecutionLease,
 } from "@/lib/execution-lease";
-import { prisma } from "@/lib/prisma";
+import { type DbClient, prisma } from "@/lib/prisma";
 import { promptVariables, renderPrompt } from "@/lib/prompt";
 import {
   detectWebsiteChange,
@@ -17,7 +17,13 @@ import { decodeWebsiteContent } from "@/lib/watcher/decode";
 import { isWatcherError } from "@/lib/watcher/errors";
 import { fetchWatchedPage } from "@/lib/watcher/fetch";
 import { normalizeWebsiteContent } from "@/lib/watcher/normalize";
-import { getWebsiteSnapshot } from "@/lib/website-snapshots";
+import {
+  createWebsiteSnapshotBaseline,
+  getWebsiteSnapshot,
+  isWebsiteStateConflict,
+  markWebsiteSnapshotCheckedIfCurrent,
+  WebsiteStateConflictError,
+} from "@/lib/website-snapshots";
 import { getWebsiteSource } from "@/lib/website-sources";
 import {
   isRoutineKind,
@@ -390,6 +396,16 @@ const CHANGE_PROCESSING_UNAVAILABLE =
 const NO_WEBSITE_CONFIGURED = "This worker has no website address to watch.";
 
 /**
+ * Somebody else moved the baseline while this run was looking at the page.
+ *
+ * **Not a failure of the page and not a failure of the platform.** The run did
+ * its work on a state that is no longer current, so its conclusion is about
+ * something that has already been superseded. Nothing is written, and the next
+ * run starts from what is there now.
+ */
+const STATE_CHANGED_DURING_RUN = "Website state changed during execution.";
+
+/**
  * A website worker's execution, once the right to run it is held.
  *
  * ```
@@ -400,10 +416,11 @@ const NO_WEBSITE_CONFIGURED = "This worker has no website address to watch.";
  * a charset, or decides what counts as a change; doing any of that a second
  * time in here is how two answers to the same question start disagreeing.
  *
- * **Nothing here writes a snapshot, and nothing calls a model.** Both belong to
- * the same later step: moving a baseline is only safe once the work the change
- * triggered has succeeded, and there is no such work yet. Until then every
- * outcome leaves the stored state exactly as it found it.
+ * **The reading is separate from the writing, and only the writing is in a
+ * transaction.** Fetching a page takes seconds and can take twenty; holding a
+ * database transaction open across it would hold one of ten connections for
+ * the duration and put the network in the middle of something that should only
+ * ever contain two writes.
  */
 async function executeWebsite(
   routineId: string,
@@ -415,7 +432,7 @@ async function executeWebsite(
     data: { routineId, userId, status: "running" },
   });
 
-  let change: WebsiteChangeState;
+  let inspection: WebsiteInspection;
 
   try {
     // Scoped to the owner, through the routine — a source has no owner column
@@ -429,7 +446,7 @@ async function executeWebsite(
       return recordFailure(run.id, NO_WEBSITE_CONFIGURED);
     }
 
-    change = await inspectWebsite(source.id, source.url);
+    inspection = await inspectWebsite(source.id, source.url);
   } catch (error) {
     // **The kind is logged, not stored**, the same standing the provider's kind
     // has. Nothing about the page itself is logged — not the body, not the
@@ -441,35 +458,36 @@ async function executeWebsite(
       error,
     );
 
+    // Nothing got as far as comparing, so nothing about the stored state is
+    // touched — not even the time it was last looked at.
     return recordFailure(run.id, watcherFailureMessage(error));
   }
 
-  if (change.state === "changed") {
-    console.warn(
-      "[worker] website changed, but change processing is not connected",
-      routineId,
-    );
-
-    return recordFailure(run.id, CHANGE_PROCESSING_UNAVAILABLE);
-  }
-
-  return recordSuccess(
-    run.id,
-    change.state === "initial" ? BASELINE_NOT_ESTABLISHED : CONTENT_UNCHANGED,
-  );
+  return finalizeWebsiteRun(routineId, run.id, inspection);
 }
+
+/** What one look at a page produced, and what it was compared against. */
+type WebsiteInspection = {
+  websiteSourceId: string;
+  /** What was stored before this run, or null if nothing was. */
+  baseline: Awaited<ReturnType<typeof getWebsiteSnapshot>>;
+  current: ReturnType<typeof normalizeWebsiteContent>;
+  change: WebsiteChangeState;
+};
 
 /**
  * Reads the page and says how it compares with the baseline held for it.
  *
- * **Read-only, all the way through.** The snapshot is fetched to compare
- * against and nothing is written back, so this can be called twice and leave
- * the same state behind both times.
+ * **Read-only, all the way through**, and outside any transaction: this is the
+ * part that talks to the network, and it does so with nothing held open behind
+ * it. What it produces is everything the write below needs, including the
+ * baseline it decided against — which is what lets that write insist the
+ * baseline has not moved since.
  */
 async function inspectWebsite(
   websiteSourceId: string,
   url: string,
-): Promise<WebsiteChangeState> {
+): Promise<WebsiteInspection> {
   // Every address check, redirect check, size limit and timeout lives in here.
   const page = await fetchWatchedPage(url);
   // Bytes and the header that says what they mean — the fetch decodes neither.
@@ -477,7 +495,117 @@ async function inspectWebsite(
   const current = normalizeWebsiteContent(decoded.content, decoded.mediaType);
   const baseline = await getWebsiteSnapshot(websiteSourceId);
 
-  return detectWebsiteChange(baseline, current);
+  return {
+    websiteSourceId,
+    baseline,
+    current,
+    change: detectWebsiteChange(baseline, current),
+  };
+}
+
+/**
+ * Writes down what the page turned out to be, and what was found, together.
+ *
+ * **One transaction, two writes, no network.** The baseline and the run have to
+ * agree: a baseline that moved without a run saying so leaves a change nobody
+ * was told about, and a run recorded as finished against a baseline that did
+ * not move says work happened that did not. Both go in, or neither does.
+ *
+ * **What the write insists on is that nothing moved underneath it.** The
+ * comparison was made against a baseline read seconds earlier, and another run
+ * may have advanced it since. Every write here is conditional on that baseline
+ * still being the current one — a create that the unique constraint decides, or
+ * an update that matches on the content and digest that were compared. Losing
+ * that race is not a failure of the page; it means this run's conclusion is
+ * about a state that has been superseded, so nothing of it is kept.
+ *
+ * **`lastCheckedAt` moves and nothing else does.** It means "this page was
+ * fetched, decoded, normalized and compared, successfully, at this time" — a
+ * fact about the looking, not about the page. The content, the digest and
+ * `lastChangedAt` describe what the page *is*, and moving those is the step
+ * after the change has actually been dealt with.
+ *
+ * **A detected change is still recorded as a failed run**, because the part
+ * that acts on a change is not connected yet. The baseline keeps the old
+ * content, so the same change is found again next time — the run is spent, the
+ * change is not.
+ */
+async function finalizeWebsiteRun(
+  routineId: string,
+  runId: string,
+  inspection: WebsiteInspection,
+): Promise<RunHistory> {
+  const { websiteSourceId, baseline, current, change } = inspection;
+  // One instant for the whole finalization, so the time the page was checked
+  // and the time the run ended describe the same moment.
+  const finalizedAt = new Date();
+
+  try {
+    return await prisma.$transaction(async (tx) => {
+      if (change.state === "initial") {
+        // A create rather than an upsert: two runs can both find no baseline,
+        // and the second must be told rather than allowed to write over the
+        // first.
+        await createWebsiteSnapshotBaseline(
+          websiteSourceId,
+          {
+            normalizedContent: current.normalizedContent,
+            contentHash: current.contentHash,
+            at: finalizedAt,
+          },
+          tx,
+        );
+
+        return await recordSuccess(runId, BASELINE_NOT_ESTABLISHED, tx);
+      }
+
+      // Not initial, so a baseline was read. Narrowing rather than asserting:
+      // `detectWebsiteChange` only answers `initial` when there was none.
+      if (baseline === null) {
+        throw new WebsiteStateConflictError(websiteSourceId);
+      }
+
+      const held = await markWebsiteSnapshotCheckedIfCurrent(
+        websiteSourceId,
+        baseline,
+        finalizedAt,
+        tx,
+      );
+
+      if (!held) {
+        // Throwing is how the snapshot write and the run write are abandoned
+        // together — returning would leave the run recorded against a baseline
+        // that had already moved.
+        throw new WebsiteStateConflictError(websiteSourceId);
+      }
+
+      return change.state === "unchanged"
+        ? await recordSuccess(runId, CONTENT_UNCHANGED, tx)
+        : await recordFailure(runId, CHANGE_PROCESSING_UNAVAILABLE, tx);
+    });
+  } catch (error) {
+    console.error(
+      "[worker] website finalization did not commit",
+      routineId,
+      isWebsiteStateConflict(error) ? "state-conflict" : "unknown",
+      error,
+    );
+
+    // **Outside the transaction, and deliberately not part of it.** Whatever
+    // the transaction did has been undone, and this run still has to be
+    // accounted for — an attempt that happened and did not finish. It is a
+    // best-effort second write, not a second half of the first: if it fails in
+    // turn, that leaves as a persistence error like any other, and nothing
+    // retries.
+    return recordFailure(runId, finalizationFailureMessage(error));
+  }
+}
+
+/** What a run records when its outcome could not be committed. */
+function finalizationFailureMessage(error: unknown): string {
+  return isWebsiteStateConflict(error)
+    ? STATE_CHANGED_DURING_RUN
+    : "Execution failed.";
 }
 
 /** The provider's own wording, which is what a failed run has always stored. */
@@ -515,9 +643,10 @@ function watcherFailureMessage(error: unknown): string {
 async function recordSuccess(
   runId: string,
   output: string,
+  client: DbClient = prisma,
 ): Promise<RunHistory> {
   try {
-    const finished = await prisma.runHistory.update({
+    const finished = await client.runHistory.update({
       where: { id: runId },
       data: {
         status: "completed",
@@ -555,9 +684,10 @@ async function recordSuccess(
 async function recordFailure(
   runId: string,
   errorMessage: string,
+  client: DbClient = prisma,
 ): Promise<RunHistory> {
   try {
-    const failed = await prisma.runHistory.update({
+    const failed = await client.runHistory.update({
       where: { id: runId },
       data: {
         status: "failed",

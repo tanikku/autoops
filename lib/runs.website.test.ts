@@ -27,7 +27,10 @@ const mocks = vi.hoisted(() => ({
   getWebsiteSnapshot: vi.fn(),
   saveWebsiteSnapshot: vi.fn(),
   markWebsiteSnapshotChecked: vi.fn(),
+  createBaseline: vi.fn(),
+  markCheckedIfCurrent: vi.fn(),
   fetchWatchedPage: vi.fn(),
+  transaction: vi.fn(),
 }));
 
 vi.mock("@/lib/execution-lease", async () => {
@@ -50,6 +53,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     routine: { findUniqueOrThrow: mocks.findUniqueOrThrow },
     runHistory: { create: mocks.create, update: mocks.update },
+    $transaction: mocks.transaction,
   },
 }));
 
@@ -58,15 +62,28 @@ vi.mock("@/lib/website-sources", () => ({
 }));
 
 /**
- * **The write side is mocked so that calling it would be visible.** These are
- * not used by anything below; they are here so that a snapshot write appearing
- * in the execution path shows up as a called spy rather than as nothing.
+ * The two helpers execution uses, plus the two it must not.
+ *
+ * **The B1 pair is mocked so that reaching for it would be visible.** Neither
+ * is safe for this path — one upserts, the other matches on the source alone —
+ * and a call to either would show up below as a called spy rather than as
+ * nothing at all.
  */
-vi.mock("@/lib/website-snapshots", () => ({
-  getWebsiteSnapshot: mocks.getWebsiteSnapshot,
-  saveWebsiteSnapshot: mocks.saveWebsiteSnapshot,
-  markWebsiteSnapshotChecked: mocks.markWebsiteSnapshotChecked,
-}));
+vi.mock("@/lib/website-snapshots", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/website-snapshots")>(
+      "@/lib/website-snapshots",
+    );
+
+  return {
+    ...actual,
+    getWebsiteSnapshot: mocks.getWebsiteSnapshot,
+    saveWebsiteSnapshot: mocks.saveWebsiteSnapshot,
+    markWebsiteSnapshotChecked: mocks.markWebsiteSnapshotChecked,
+    createWebsiteSnapshotBaseline: mocks.createBaseline,
+    markWebsiteSnapshotCheckedIfCurrent: mocks.markCheckedIfCurrent,
+  };
+});
 
 /** The one step that would leave the process. Everything else stays real. */
 vi.mock("@/lib/watcher/fetch", () => ({
@@ -123,8 +140,11 @@ vi.mock("@/lib/watcher/change", async () => {
   };
 });
 
-const { runRoutine } = await import("@/lib/runs");
+const { runRoutine, RunPersistenceError } = await import("@/lib/runs");
 const { WatcherError } = await import("@/lib/watcher/errors");
+const { WebsiteStateConflictError } = await vi.importActual<
+  typeof import("@/lib/website-snapshots")
+>("@/lib/website-snapshots");
 const { normalizeWebsiteContent } = await vi.importActual<
   typeof import("@/lib/watcher/normalize")
 >("@/lib/watcher/normalize");
@@ -185,12 +205,26 @@ function written() {
   return mocks.update.mock.calls[mocks.update.mock.calls.length - 1][0].data;
 }
 
-/** Every way the stored state could have been moved, and none of them were. */
+/**
+ * The stored state was not touched at all — not the baseline, not even the
+ * time it was last looked at — and no model was called.
+ */
 function expectNothingWritten() {
+  expect(mocks.createBaseline).not.toHaveBeenCalled();
+  expect(mocks.markCheckedIfCurrent).not.toHaveBeenCalled();
   expect(mocks.saveWebsiteSnapshot).not.toHaveBeenCalled();
   expect(mocks.markWebsiteSnapshotChecked).not.toHaveBeenCalled();
   expect(mocks.execute).not.toHaveBeenCalled();
 }
+
+/**
+ * The client the transaction hands its callback.
+ *
+ * It carries the same run-history spy as the module client, so a write made
+ * through the transaction is visible to the same assertions — what
+ * distinguishes them is which object the repository helper was handed.
+ */
+const TX = { runHistory: { update: mocks.update } };
 
 beforeEach(() => {
   mocks.acquire.mockReset().mockResolvedValue(LEASE);
@@ -207,7 +241,18 @@ beforeEach(() => {
   mocks.getWebsiteSnapshot.mockReset().mockResolvedValue(null);
   mocks.saveWebsiteSnapshot.mockReset();
   mocks.markWebsiteSnapshotChecked.mockReset();
+  mocks.createBaseline.mockReset().mockResolvedValue(undefined);
+  mocks.markCheckedIfCurrent.mockReset().mockResolvedValue(true);
   mocks.fetchWatchedPage.mockReset().mockResolvedValue(fetched());
+  // Stands in for the real thing by running the callback and handing it a
+  // client. **Nothing here rolls anything back** — what these tests fix is the
+  // orchestration: which writes are asked for, in one call, and what happens
+  // when that call does not succeed.
+  mocks.transaction
+    .mockReset()
+    .mockImplementation(async (run: (tx: unknown) => Promise<unknown>) =>
+      run(TX),
+    );
   decodeSpy.mockReset();
   normalizeSpy.mockReset();
   compareSpy.mockReset();
@@ -354,29 +399,88 @@ describe("what each step of the pipeline is given", () => {
   });
 });
 
+/**
+ * **The baseline and the run are written together or not at all.**
+ *
+ * A baseline that moved without a run saying so leaves a change nobody was
+ * told about; a run recorded as finished against a baseline that did not move
+ * says work happened that did not. One transaction is what stops either.
+ */
 describe("a page with no baseline yet", () => {
   beforeEach(() => {
     mocks.getWebsiteSnapshot.mockResolvedValue(null);
   });
 
-  it("completes the run", async () => {
+  it("creates the baseline and completes the run in one transaction", async () => {
     const run = await runRoutine("worker-1");
 
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.createBaseline).toHaveBeenCalledTimes(1);
     expect(run.status).toBe("completed");
     expect(written().output).toBe("Website baseline is not established yet.");
     expect(written().errorMessage).toBeNull();
   });
 
-  /**
-   * **The baseline is not created here.** Creating one and recording the run
-   * are two writes that have to succeed together, and making them do so is the
-   * next step's job. Until then the worker starts from nothing every time,
-   * which is wasteful and safe — the opposite trade would lose a change.
-   */
-  it("does not create the baseline it just found missing", async () => {
+  it("stores what the page says now, with no change ever recorded", async () => {
     await runRoutine("worker-1");
 
-    expectNothingWritten();
+    const [sourceId, baseline] = mocks.createBaseline.mock.calls[0];
+    expect(sourceId).toBe(SOURCE.id);
+    expect(baseline).toEqual({
+      normalizedContent: CURRENT.normalizedContent,
+      contentHash: CURRENT.contentHash,
+      at: expect.any(Date),
+    });
+    expect(baseline).not.toHaveProperty("lastChangedAt");
+  });
+
+  it("does both writes through the transaction's client", async () => {
+    await runRoutine("worker-1");
+
+    expect(mocks.createBaseline.mock.calls[0][2]).toBe(TX);
+    expect(mocks.update.mock.calls[0][0]).toBeDefined();
+  });
+
+  /** An upsert would let a second run write over a first one's baseline. */
+  it("never reaches for the upsert helper", async () => {
+    await runRoutine("worker-1");
+
+    expect(mocks.saveWebsiteSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("calls no model", async () => {
+    await runRoutine("worker-1");
+
+    expect(mocks.execute).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Two runs can both find no baseline. The one that loses the unique
+   * constraint has done its work against a state that no longer exists, so
+   * none of it is kept.
+   */
+  it("fails the run when another execution created the baseline first", async () => {
+    mocks.createBaseline.mockRejectedValue(
+      new WebsiteStateConflictError(SOURCE.id),
+    );
+
+    const run = await runRoutine("worker-1");
+
+    expect(run.status).toBe("failed");
+    expect(written().errorMessage).toBe(
+      "Website state changed during execution.",
+    );
+  });
+
+  it("does not complete a run that lost the race", async () => {
+    mocks.createBaseline.mockRejectedValue(
+      new WebsiteStateConflictError(SOURCE.id),
+    );
+
+    await runRoutine("worker-1");
+
+    const outputs = mocks.update.mock.calls.map((call) => call[0].data.status);
+    expect(outputs).not.toContain("completed");
   });
 });
 
@@ -385,18 +489,56 @@ describe("a page that has not changed", () => {
     mocks.getWebsiteSnapshot.mockResolvedValue(matchingSnapshot());
   });
 
-  it("completes the run", async () => {
+  it("records the check and completes the run in one transaction", async () => {
     const run = await runRoutine("worker-1");
 
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.markCheckedIfCurrent).toHaveBeenCalledTimes(1);
     expect(run.status).toBe("completed");
     expect(written().output).toBe("Website content has not changed.");
   });
 
-  /** Even the time it was last looked at stays where it was. */
-  it("does not touch the snapshot at all", async () => {
+  /**
+   * **The condition is the baseline that was compared against.** Another run
+   * may have advanced it in the seconds this one spent fetching, and a write
+   * that did not say so would land on a state this run never saw.
+   */
+  it("writes only while the baseline is still the one it compared", async () => {
+    const snapshot = matchingSnapshot();
+    mocks.getWebsiteSnapshot.mockResolvedValue(snapshot);
+
     await runRoutine("worker-1");
 
-    expectNothingWritten();
+    const [sourceId, expected, at, client] =
+      mocks.markCheckedIfCurrent.mock.calls[0];
+    expect(sourceId).toBe(SOURCE.id);
+    expect(expected).toBe(snapshot);
+    expect(at).toBeInstanceOf(Date);
+    expect(client).toBe(TX);
+  });
+
+  it("never reaches for the helper that matches on the source alone", async () => {
+    await runRoutine("worker-1");
+
+    expect(mocks.markWebsiteSnapshotChecked).not.toHaveBeenCalled();
+    expect(mocks.saveWebsiteSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("calls no model", async () => {
+    await runRoutine("worker-1");
+
+    expect(mocks.execute).not.toHaveBeenCalled();
+  });
+
+  it("fails the run when the baseline moved underneath it", async () => {
+    mocks.markCheckedIfCurrent.mockResolvedValue(false);
+
+    const run = await runRoutine("worker-1");
+
+    expect(run.status).toBe("failed");
+    expect(written().errorMessage).toBe(
+      "Website state changed during execution.",
+    );
   });
 });
 
@@ -405,22 +547,28 @@ describe("a page that has not changed", () => {
  *
  * A change is found and then not acted on, because the part that acts on it is
  * not connected. Recording that as a completed run would say the work was done;
- * recording it as a failure says what actually happened. And because the
- * baseline does not move, the same change is found again next time — nothing is
- * consumed by a run that could not use it.
+ * recording it as a failure says what actually happened.
+ *
+ * What moves is the time the page was looked at, and nothing else. The content
+ * and the digest still describe the *old* page, so the same change is found
+ * again next time — the run is spent, the change is not.
  */
 describe("a page that has changed", () => {
+  const STALE = {
+    ...matchingSnapshot(),
+    normalizedContent: "Careers Not hiring",
+    contentHash: "0".repeat(64),
+  };
+
   beforeEach(() => {
-    mocks.getWebsiteSnapshot.mockResolvedValue({
-      ...matchingSnapshot(),
-      normalizedContent: "Careers Not hiring",
-      contentHash: "0".repeat(64),
-    });
+    mocks.getWebsiteSnapshot.mockResolvedValue(STALE);
   });
 
-  it("fails the run rather than reporting work that did not happen", async () => {
+  it("records the check and fails the run in one transaction", async () => {
     const run = await runRoutine("worker-1");
 
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.markCheckedIfCurrent).toHaveBeenCalledTimes(1);
     expect(run.status).toBe("failed");
     expect(written().errorMessage).toBe(
       "Website change processing is not available yet.",
@@ -434,12 +582,118 @@ describe("a page that has changed", () => {
     expect(mocks.execute).not.toHaveBeenCalled();
   });
 
-  /** The change survives, which is what makes shipping this half safe. */
-  it("leaves the baseline where it was, so the change is found again", async () => {
+  /**
+   * **The one write, and the three non-writes.** Advancing any of these would
+   * consume the change: the next run would compare against the new page and
+   * find nothing to report, and the summary nobody produced would be lost.
+   */
+  it("moves only the time it was looked at", async () => {
     await runRoutine("worker-1");
 
+    expect(mocks.markCheckedIfCurrent).toHaveBeenCalledTimes(1);
+    expect(mocks.createBaseline).not.toHaveBeenCalled();
     expect(mocks.saveWebsiteSnapshot).not.toHaveBeenCalled();
     expect(mocks.markWebsiteSnapshotChecked).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Stated as the property that matters: the stored content is still the old
+   * page, so a second run comparing the same current page reaches the same
+   * conclusion.
+   */
+  it("leaves the stored content stale, so the change is found again", async () => {
+    await runRoutine("worker-1");
+    const first = written().errorMessage;
+
+    mocks.update.mockClear();
+    await runRoutine("worker-1");
+
+    expect(mocks.getWebsiteSnapshot).toHaveBeenLastCalledWith(SOURCE.id);
+    expect(written().errorMessage).toBe(first);
+    expect(mocks.markCheckedIfCurrent.mock.calls[1][1]).toBe(STALE);
+  });
+
+  it("fails with a conflict when the baseline moved underneath it", async () => {
+    mocks.markCheckedIfCurrent.mockResolvedValue(false);
+
+    const run = await runRoutine("worker-1");
+
+    expect(run.status).toBe("failed");
+    expect(written().errorMessage).toBe(
+      "Website state changed during execution.",
+    );
+  });
+});
+
+/**
+ * **The finalization is one call, and the failure record is a second.**
+ *
+ * They are not atomic with each other, and that is deliberate: whatever the
+ * transaction attempted has been abandoned, and the attempt still has to appear
+ * in the history. It is a best-effort write, not a second half of the first.
+ */
+describe("a finalization that did not commit", () => {
+  beforeEach(() => {
+    mocks.getWebsiteSnapshot.mockResolvedValue(matchingSnapshot());
+  });
+
+  it("records a failed run when the transaction threw", async () => {
+    mocks.transaction.mockRejectedValue(new Error("deadlock detected"));
+
+    const run = await runRoutine("worker-1");
+
+    expect(run.status).toBe("failed");
+    expect(written().errorMessage).toBe("Execution failed.");
+  });
+
+  it("does not put the database's own words in the row", async () => {
+    mocks.transaction.mockRejectedValue(
+      new Error('duplicate key value violates constraint "x" at 10.0.0.5'),
+    );
+
+    await runRoutine("worker-1");
+
+    expect(written().errorMessage).not.toContain("10.0.0.5");
+  });
+
+  it("writes the failure outside the transaction", async () => {
+    mocks.transaction.mockRejectedValue(new Error("deadlock detected"));
+
+    await runRoutine("worker-1");
+
+    // The only update that ran is the one after the transaction rejected.
+    expect(mocks.update).toHaveBeenCalledTimes(1);
+    expect(mocks.update.mock.calls[0][0].data.status).toBe("failed");
+  });
+
+  it("does not try again", async () => {
+    mocks.transaction.mockRejectedValue(new Error("deadlock detected"));
+
+    await runRoutine("worker-1");
+
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * When even the failure cannot be written down, the existing persistence
+   * error leaves as it always has. **Nothing retries.**
+   */
+  it("leaves as a persistence error when the failure could not be recorded", async () => {
+    mocks.transaction.mockRejectedValue(new Error("deadlock detected"));
+    mocks.update.mockRejectedValue(new Error("write failed"));
+
+    await expect(runRoutine("worker-1")).rejects.toBeInstanceOf(
+      RunPersistenceError,
+    );
+    expect(mocks.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("still gives the lease back", async () => {
+    mocks.transaction.mockRejectedValue(new Error("deadlock detected"));
+
+    await runRoutine("worker-1");
+
+    expect(mocks.release).toHaveBeenCalledWith("worker-1", LEASE.token);
   });
 });
 
@@ -503,15 +757,24 @@ describe("a pipeline that could not finish", () => {
 });
 
 /**
- * Stated once, in one place, because it is the property that makes this
- * shippable ahead of the rest: **no outcome moves the stored state.**
+ * **What each outcome is allowed to move**, stated once so the whole contract
+ * can be read in one place.
+ *
+ * `lastCheckedAt` says the page was fetched, decoded, normalized and compared
+ * successfully — a fact about the looking. Anything that failed before the
+ * comparison has not looked successfully, so it moves nothing at all.
  */
-describe("across every outcome", () => {
+describe("what each outcome moves", () => {
   it.each([
-    ["no baseline", () => mocks.getWebsiteSnapshot.mockResolvedValue(null)],
+    [
+      "no baseline",
+      () => mocks.getWebsiteSnapshot.mockResolvedValue(null),
+      "create",
+    ],
     [
       "unchanged",
       () => mocks.getWebsiteSnapshot.mockResolvedValue(matchingSnapshot()),
+      "checked",
     ],
     [
       "changed",
@@ -521,25 +784,43 @@ describe("across every outcome", () => {
           contentHash: "0".repeat(64),
           normalizedContent: "something else",
         }),
+      "checked",
     ],
-    [
-      "no source",
-      () => mocks.getWebsiteSource.mockResolvedValue(null),
-    ],
+    ["no source", () => mocks.getWebsiteSource.mockResolvedValue(null), "none"],
     [
       "a failed fetch",
       () => mocks.fetchWatchedPage.mockRejectedValue(new Error("down")),
+      "none",
     ],
-  ])("writes nothing to the snapshot and calls no model — %s", async (
-    _name,
-    arrange,
-  ) => {
+  ])("%s moves %s", async (_name, arrange, expected) => {
     arrange();
 
     await runRoutine("worker-1");
 
+    expect(mocks.createBaseline.mock.calls.length).toBe(
+      expected === "create" ? 1 : 0,
+    );
+    expect(mocks.markCheckedIfCurrent.mock.calls.length).toBe(
+      expected === "checked" ? 1 : 0,
+    );
+    // Neither of the B1 helpers is ever right for this path.
     expect(mocks.saveWebsiteSnapshot).not.toHaveBeenCalled();
     expect(mocks.markWebsiteSnapshotChecked).not.toHaveBeenCalled();
+    // And no model, on any path at all.
     expect(mocks.execute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["no source", () => mocks.getWebsiteSource.mockResolvedValue(null)],
+    [
+      "a failed fetch",
+      () => mocks.fetchWatchedPage.mockRejectedValue(new Error("down")),
+    ],
+  ])("does not open a transaction for %s", async (_name, arrange) => {
+    arrange();
+
+    await runRoutine("worker-1");
+
+    expect(mocks.transaction).not.toHaveBeenCalled();
   });
 });

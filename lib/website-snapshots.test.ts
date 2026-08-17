@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
   upsert: vi.fn(),
   updateMany: vi.fn(),
+  create: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -26,13 +27,17 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: mocks.findUnique,
       upsert: mocks.upsert,
       updateMany: mocks.updateMany,
+      create: mocks.create,
     },
   },
 }));
 
 const {
+  createWebsiteSnapshotBaseline,
   getWebsiteSnapshot,
+  isWebsiteStateConflict,
   markWebsiteSnapshotChecked,
+  markWebsiteSnapshotCheckedIfCurrent,
   saveWebsiteSnapshot,
 } = await import("@/lib/website-snapshots");
 
@@ -54,6 +59,200 @@ beforeEach(() => {
   mocks.findUnique.mockReset().mockResolvedValue(SNAPSHOT_ROW);
   mocks.upsert.mockReset().mockResolvedValue(SNAPSHOT_ROW);
   mocks.updateMany.mockReset().mockResolvedValue({ count: 1 });
+  mocks.create.mockReset().mockResolvedValue(SNAPSHOT_ROW);
+});
+
+/**
+ * Establishing the first baseline, and the race that makes it a create.
+ *
+ * **Two runs can both find no baseline.** An upsert would let the second write
+ * over the first, and the change the first was about to report would be gone
+ * with it. A create lets the unique constraint decide, and the loser is told
+ * rather than silently promoted to a winner.
+ */
+describe("creating the first baseline", () => {
+  const BASELINE = {
+    normalizedContent: "the page as text",
+    contentHash: "abc123",
+    at: FIRST,
+  };
+
+  it("creates, and does not upsert", async () => {
+    await createWebsiteSnapshotBaseline("source-1", BASELINE);
+
+    expect(mocks.create).toHaveBeenCalledTimes(1);
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+
+  it("writes the source, the content, the digest and when it was read", async () => {
+    await createWebsiteSnapshotBaseline("source-1", BASELINE);
+
+    expect(mocks.create.mock.calls[0][0].data).toEqual({
+      websiteSourceId: "source-1",
+      normalizedContent: "the page as text",
+      contentHash: "abc123",
+      lastCheckedAt: FIRST,
+    });
+  });
+
+  /** A first read is not a change, so the column that dates one stays unset. */
+  it("leaves lastChangedAt out entirely", async () => {
+    await createWebsiteSnapshotBaseline("source-1", BASELINE);
+
+    expect(mocks.create.mock.calls[0][0].data).not.toHaveProperty(
+      "lastChangedAt",
+    );
+  });
+
+  /**
+   * **The unique constraint is the race protection**, and losing it has to
+   * surface. Turning it into "fine, it exists now" would be the upsert again.
+   */
+  it("reports a unique violation as a conflict", async () => {
+    mocks.create.mockRejectedValue(
+      Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
+    );
+
+    await expect(
+      createWebsiteSnapshotBaseline("source-1", BASELINE),
+    ).rejects.toSatisfy(isWebsiteStateConflict);
+  });
+
+  it("says nothing about the content in the conflict", async () => {
+    mocks.create.mockRejectedValue(
+      Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
+    );
+
+    await expect(
+      createWebsiteSnapshotBaseline("source-1", BASELINE),
+    ).rejects.toThrow("Website state changed during execution.");
+  });
+
+  it("lets any other database failure through as it is", async () => {
+    mocks.create.mockRejectedValue(new Error("connection lost"));
+
+    await expect(
+      createWebsiteSnapshotBaseline("source-1", BASELINE),
+    ).rejects.toThrow("connection lost");
+  });
+
+  it("uses the client it was given", async () => {
+    const tx = { websiteSnapshot: { create: vi.fn().mockResolvedValue(SNAPSHOT_ROW) } };
+
+    await createWebsiteSnapshotBaseline(
+      "source-1",
+      BASELINE,
+      tx as unknown as Parameters<typeof createWebsiteSnapshotBaseline>[2],
+    );
+
+    expect(tx.websiteSnapshot.create).toHaveBeenCalledTimes(1);
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Recording a check, but only while the baseline is the one that was compared
+ * against.
+ *
+ * **The condition is what makes this safe to combine with the run's own
+ * write.** Seconds pass between reading a baseline and writing; another run may
+ * have advanced it. Matching on what was read means the write lands on the
+ * state the decision was about, or not at all.
+ */
+describe("recording a check against the baseline that was compared", () => {
+  const EXPECTED = {
+    normalizedContent: "the page as text",
+    contentHash: "abc123",
+  };
+
+  it("matches on the source, the digest and the content", async () => {
+    await markWebsiteSnapshotCheckedIfCurrent("source-1", EXPECTED, LATER);
+
+    expect(mocks.updateMany.mock.calls[0][0].where).toEqual({
+      websiteSourceId: "source-1",
+      contentHash: "abc123",
+      normalizedContent: "the page as text",
+    });
+  });
+
+  /**
+   * **Both, not just the digest.** The comparison that produced this decision
+   * insisted on the two agreeing; the condition holds the database to the same
+   * standard rather than a weaker one.
+   */
+  it("does not settle for the digest alone", async () => {
+    await markWebsiteSnapshotCheckedIfCurrent("source-1", EXPECTED, LATER);
+
+    expect(mocks.updateMany.mock.calls[0][0].where).toHaveProperty(
+      "normalizedContent",
+    );
+  });
+
+  it("moves when it was last read, and nothing else", async () => {
+    await markWebsiteSnapshotCheckedIfCurrent("source-1", EXPECTED, LATER);
+
+    const { data } = mocks.updateMany.mock.calls[0][0];
+    expect(data).toEqual({ lastCheckedAt: LATER });
+    expect(Object.keys(data)).toEqual(["lastCheckedAt"]);
+  });
+
+  it.each(["normalizedContent", "contentHash", "lastChangedAt"])(
+    "never writes %s",
+    async (field) => {
+      await markWebsiteSnapshotCheckedIfCurrent("source-1", EXPECTED, LATER);
+
+      expect(mocks.updateMany.mock.calls[0][0].data).not.toHaveProperty(field);
+    },
+  );
+
+  it("reports success when exactly one row matched", async () => {
+    expect(
+      await markWebsiteSnapshotCheckedIfCurrent("source-1", EXPECTED, LATER),
+    ).toBe(true);
+  });
+
+  it("reports a conflict when nothing matched", async () => {
+    mocks.updateMany.mockResolvedValue({ count: 0 });
+
+    expect(
+      await markWebsiteSnapshotCheckedIfCurrent("source-1", EXPECTED, LATER),
+    ).toBe(false);
+  });
+
+  /**
+   * The source is unique, so more than one is impossible — and treating it as
+   * fine anyway would mean the number that says "this landed where it was
+   * meant to" had stopped being checked.
+   */
+  it("does not treat any other count as success", async () => {
+    mocks.updateMany.mockResolvedValue({ count: 2 });
+
+    expect(
+      await markWebsiteSnapshotCheckedIfCurrent("source-1", EXPECTED, LATER),
+    ).toBe(false);
+  });
+
+  it("uses the client it was given", async () => {
+    const tx = {
+      websiteSnapshot: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    };
+
+    await markWebsiteSnapshotCheckedIfCurrent(
+      "source-1",
+      EXPECTED,
+      LATER,
+      tx as unknown as Parameters<typeof markWebsiteSnapshotCheckedIfCurrent>[3],
+    );
+
+    expect(tx.websiteSnapshot.updateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("uses the module's client when given none", async () => {
+    await markWebsiteSnapshotCheckedIfCurrent("source-1", EXPECTED, LATER);
+
+    expect(mocks.updateMany).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("having no baseline yet", () => {
