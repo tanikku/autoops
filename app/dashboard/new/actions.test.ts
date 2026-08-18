@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   ensureUser: vi.fn(),
   getUserTimezone: vi.fn(),
   createRoutine: vi.fn(),
+  createWebsiteSource: vi.fn(),
+  transaction: vi.fn(),
   revalidatePath: vi.fn(),
   redirect: vi.fn(),
 }));
@@ -27,6 +29,17 @@ vi.mock("@/lib/users", () => ({
   getUserTimezone: mocks.getUserTimezone,
 }));
 vi.mock("@/lib/routines", () => ({ createRoutine: mocks.createRoutine }));
+vi.mock("@/lib/website-sources", () => ({
+  createWebsiteSource: mocks.createWebsiteSource,
+}));
+// The transaction itself is the boundary under test, so the fake runs the
+// callback and hands it a marker: what the assertions want to see is that both
+// writes were given the *same* client, and that it was not the module's.
+vi.mock("@/lib/prisma", () => ({
+  prisma: { $transaction: mocks.transaction },
+}));
+
+const TX = { tag: "transaction-client" } as const;
 
 const { createRoutineAction } = await import("@/app/dashboard/new/actions");
 
@@ -40,6 +53,7 @@ function form(overrides?: Record<string, string>) {
   data.set("status", "active");
   data.set("frequency", "daily");
   data.set("runAt", "09:00");
+  data.set("kind", "prompt");
   for (const [key, value] of Object.entries(overrides ?? {})) {
     data.set(key, value);
   }
@@ -58,6 +72,10 @@ beforeEach(() => {
   mocks.ensureUser.mockReset().mockResolvedValue(undefined);
   mocks.getUserTimezone.mockReset().mockResolvedValue("Asia/Tokyo");
   mocks.createRoutine.mockReset().mockResolvedValue({ id: "worker-1" });
+  mocks.createWebsiteSource.mockReset().mockResolvedValue({ id: "source-1" });
+  mocks.transaction
+    .mockReset()
+    .mockImplementation((run: (tx: unknown) => Promise<unknown>) => run(TX));
   mocks.revalidatePath.mockReset();
   mocks.redirect.mockReset().mockImplementation((to: string) => {
     throw new RedirectSignal(to);
@@ -195,6 +213,9 @@ describe("createRoutineAction", () => {
     const data = new FormData();
     data.set("name", "Daily digest");
     data.set("prompt", "");
+    // Status and frequency are what this is about; the kind has no fallback and
+    // is asserted on its own below.
+    data.set("kind", "prompt");
 
     expect((await createRoutineAction(null, data))?.status).toBe("success");
   });
@@ -217,5 +238,185 @@ describe("createRoutineAction", () => {
     expect(result?.status).toBe("error");
     expect(result?.message).toBe("Could not create the worker.");
     expect(result?.values?.name).toBe("Daily digest");
+  });
+});
+
+/**
+ * Hiring a worker that watches a page.
+ *
+ * The thing being fixed here is that a website worker is two rows, and that a
+ * routine saying it watches something while nothing says what is worse than no
+ * routine at all: it appears in the dashboard, looks finished, and fails every
+ * run. So the assertions are mostly about the pair — same transaction, both
+ * writes, and nothing left behind when the second one fails.
+ */
+describe("createRoutineAction — website workers", () => {
+  function website(overrides?: Record<string, string>) {
+    return form({
+      kind: "website",
+      websiteUrl: "https://example.com/news",
+      prompt: "Tell me what changed.",
+      ...overrides,
+    });
+  }
+
+  it("creates the worker and its source in one transaction", async () => {
+    const result = await createRoutineAction(null, website());
+
+    expect(result?.status).toBe("success");
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.createRoutine).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "website" }),
+      "google-sub-1",
+      TX,
+    );
+    expect(mocks.createWebsiteSource).toHaveBeenCalledWith(
+      "worker-1",
+      "https://example.com/news",
+      TX,
+    );
+  });
+
+  /**
+   * The routine has to exist before anything can point at it, and both writes
+   * have to be inside the transaction — a source written through the module's
+   * own client would survive a rollback of the routine it belongs to.
+   */
+  it("writes the routine first, and both inside the transaction", async () => {
+    await createRoutineAction(null, website());
+
+    expect(
+      mocks.transaction.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.createRoutine.mock.invocationCallOrder[0]);
+    expect(mocks.createRoutine.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.createWebsiteSource.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("reports a failed source without claiming the worker was created", async () => {
+    mocks.createWebsiteSource.mockRejectedValue(new Error("boom"));
+
+    const result = await createRoutineAction(null, website());
+
+    expect(result?.status).toBe("error");
+    expect(result?.message).toBe("Could not create the worker.");
+    expect(result?.values?.websiteUrl).toBe("https://example.com/news");
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("stores the canonical address rather than the string as typed", async () => {
+    await createRoutineAction(
+      null,
+      website({ websiteUrl: "https://Example.com/news#section" }),
+    );
+
+    expect(mocks.createWebsiteSource).toHaveBeenCalledWith(
+      "worker-1",
+      "https://example.com/news",
+      TX,
+    );
+  });
+
+  it("keeps a manual website worker, and still gives it a source", async () => {
+    const result = await createRoutineAction(
+      null,
+      website({ frequency: "manual", status: "active" }),
+    );
+
+    expect(result?.status).toBe("success");
+    expect(mocks.createWebsiteSource).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["blank", ""],
+    ["not a URL at all", "example"],
+    ["a scheme this does not fetch", "ftp://example.com/news"],
+    ["carrying credentials", "https://user:pass@example.com/news"],
+    ["on another port", "https://example.com:8443/news"],
+    // `https:///news` is *not* in this list on purpose: the URL parser reads it
+    // as the host `news`, so it is a syntactically fine address that simply
+    // will not resolve — a question asked at fetch time, not here.
+    ["nothing but a scheme", "https://"],
+  ])("refuses an address that is %s", async (_label, websiteUrl) => {
+    const result = await createRoutineAction(null, website({ websiteUrl }));
+
+    expect(result?.status).toBe("error");
+    expect(result?.errors?.websiteUrl).toBeDefined();
+    expect(mocks.ensureUser).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.createRoutine).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Not the wording `parseWatchUrl` throws: those describe a fetch being
+   * refused, and the person here is looking at the box they typed in.
+   */
+  it("says what belongs in the field rather than which rule was broken", async () => {
+    const result = await createRoutineAction(
+      null,
+      website({ websiteUrl: "ftp://example.com/news" }),
+    );
+
+    expect(result?.errors?.websiteUrl).toBe(
+      "Enter a full website address, like https://example.com/news.",
+    );
+  });
+
+  it("requires instructions even when nothing would run it unattended", async () => {
+    const result = await createRoutineAction(
+      null,
+      website({ prompt: "", status: "draft", frequency: "manual" }),
+    );
+
+    expect(result?.status).toBe("error");
+    expect(result?.errors?.prompt).toBeDefined();
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A kind is the one field with no fallback, and this is why: defaulting an
+ * unreadable one to `prompt` would answer a question nobody asked, by creating
+ * a worker that ignores the address submitted with it.
+ */
+describe("createRoutineAction — the kind itself", () => {
+  it.each([
+    ["absent", undefined],
+    ["blank", ""],
+    ["a value the app does not know", "webhook"],
+  ])("refuses a submission whose kind is %s", async (_label, kind) => {
+    const data = form();
+    if (kind === undefined) {
+      data.delete("kind");
+    } else {
+      data.set("kind", kind);
+    }
+
+    const result = await createRoutineAction(null, data);
+
+    expect(result?.status).toBe("error");
+    expect(mocks.ensureUser).not.toHaveBeenCalled();
+    expect(mocks.createRoutine).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The half of the pair that is easy to get wrong in the other direction: a
+   * prompt worker must never acquire a page to watch, however the form was
+   * submitted.
+   */
+  it("creates no source for a prompt worker, even one submitted with an address", async () => {
+    const result = await createRoutineAction(
+      null,
+      form({ websiteUrl: "https://example.com/news" }),
+    );
+
+    expect(result?.status).toBe("success");
+    expect(mocks.createRoutine).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "prompt" }),
+      "google-sub-1",
+    );
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.createWebsiteSource).not.toHaveBeenCalled();
   });
 });

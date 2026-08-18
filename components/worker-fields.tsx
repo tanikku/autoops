@@ -16,6 +16,7 @@ import {
   routineStatuses,
   weekdays,
   type RoutineFrequency,
+  type RoutineKind,
   type RoutineStatus,
 } from "@/types";
 
@@ -49,6 +50,7 @@ export type WorkerFieldValues = {
   name?: string;
   description?: string;
   prompt?: string;
+  websiteUrl?: string;
   frequency?: RoutineFrequency | null;
   status?: RoutineStatus | null;
   /** `HH:mm`, as an `<input type="time">` carries it. */
@@ -67,7 +69,12 @@ export type WorkerFieldValues = {
  * Kept beside the markup deliberately: reordering the fields without
  * reordering this list would send the user to the wrong one.
  */
-const fieldOrder: WorkerFieldName[] = ["name", "description", "prompt"];
+const fieldOrder: WorkerFieldName[] = [
+  "name",
+  "description",
+  "websiteUrl",
+  "prompt",
+];
 
 /**
  * Brings the first rejected field into view and focuses it.
@@ -143,6 +150,7 @@ function CountedField({
   error,
   required,
   multiline,
+  hidden,
 }: {
   field: WorkerFieldName;
   label: string;
@@ -151,6 +159,20 @@ function CountedField({
   error?: string;
   required?: boolean;
   multiline?: boolean;
+  /**
+   * Kept in the page but out of sight, rather than removed.
+   *
+   * **An unmounted field forgets what was typed in it.** The address box
+   * belongs to one kind of worker, and someone who types an address, looks at
+   * the other kind, and comes back should find it still there — unmounting
+   * would hand them an empty box and no explanation. `display: none` also takes
+   * it out of the accessibility tree, so nothing reads out a field that is not
+   * on screen.
+   *
+   * It is still submitted, which is safe because `readWorkerForm` drops an
+   * address on any submission that is not creating a website worker.
+   */
+  hidden?: boolean;
 }) {
   const limit = workerFieldLimits[field];
   const [length, setLength] = useState(defaultValue?.length ?? 0);
@@ -175,7 +197,7 @@ function CountedField({
   };
 
   return (
-    <div className="grid gap-2">
+    <div className={hidden ? "hidden" : "grid gap-2"}>
       <div className="flex items-baseline justify-between gap-4">
         <Label htmlFor={field}>{label}</Label>
         <span
@@ -217,9 +239,19 @@ function CountedField({
 export function WorkerFields({
   values,
   errors = {},
+  kind = "prompt",
 }: {
   values: WorkerFieldValues;
   errors?: WorkerFieldErrors;
+  /**
+   * What the worker being described does, which changes two fields.
+   *
+   * **Defaulted, so the edit form is unaffected.** A kind cannot be changed
+   * after a worker exists, and the edit form neither renders a selector nor
+   * submits the field; leaving the default here is what keeps that form
+   * rendering exactly as it did.
+   */
+  kind?: RoutineKind;
 }) {
   // The only controlled field, and only because another one depends on it: a
   // time of day is meaningless for a manual worker, so the select has to be
@@ -234,6 +266,8 @@ export function WorkerFields({
   const [status, setStatus] = useState<RoutineStatus>(
     values.status ?? "draft",
   );
+
+  const website = kind === "website";
 
   return (
     <>
@@ -254,12 +288,34 @@ export function WorkerFields({
         error={errors.description}
       />
 
+      {/* Between the description and the prompt because that is the order the
+          worker is read in: what it is called, what it is for, where it looks,
+          and then what to do about what it finds. */}
+      <CountedField
+        field="websiteUrl"
+        label="Website address"
+        hidden={!website}
+        defaultValue={values.websiteUrl}
+        placeholder="https://example.com/news"
+        error={errors.websiteUrl}
+      />
+
+      {/* **The prompt means something different for each kind**, so it is asked
+          for differently. A prompt worker's prompt is the whole job. A website
+          worker's runs only after a change has been found, with the old and new
+          text already in front of the model — asking for "instructions sent on
+          every run" there would invite a description of the page rather than of
+          what to do about it. */}
       <CountedField
         field="prompt"
-        label="Prompt"
+        label={website ? "When the page changes" : "Prompt"}
         multiline
         defaultValue={values.prompt}
-        placeholder="Instructions sent to the AI on every run."
+        placeholder={
+          website
+            ? "What should the AI do when this page changes?"
+            : "Instructions sent to the AI on every run."
+        }
         error={errors.prompt}
       />
 

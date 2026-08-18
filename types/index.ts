@@ -68,6 +68,16 @@ export type Routine = {
   updatedAt: Date;
 };
 
+/**
+ * The fields of a worker that may be written after it exists.
+ *
+ * **`kind` is deliberately absent.** What a worker *is* is decided when it is
+ * hired and never afterwards: a prompt worker turned into a website worker
+ * would have no page to watch, and a website worker turned into a prompt one
+ * would leave its source and baseline behind, pointing at nothing. Leaving the
+ * field out of this type is what makes that structural — `updateRoutine` takes
+ * a `Partial` of it, so there is no shape it can be handed that carries a kind.
+ */
 export type RoutineInput = {
   name: string;
   description: string;
@@ -78,6 +88,16 @@ export type RoutineInput = {
   runAtWeekday: number | null;
   runAtDay: number | null;
   nextRunAt: Date | null;
+};
+
+/**
+ * The same fields, plus the one that is only ever set once.
+ *
+ * Creation is the only moment a kind is chosen, so it is the only input type
+ * that carries one.
+ */
+export type CreateRoutineInput = RoutineInput & {
+  kind: RoutineKind;
 };
 
 export const weekdays = [

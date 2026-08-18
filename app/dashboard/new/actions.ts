@@ -1,19 +1,39 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { prisma } from "@/lib/prisma";
 import { createRoutine } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
 import { requireProvisionedUserId, requireUserId } from "@/lib/session";
 import { getUserTimezone } from "@/lib/users";
+import { isWatcherError } from "@/lib/watcher/errors";
+import { parseWatchUrl } from "@/lib/watcher/url";
+import { createWebsiteSource } from "@/lib/website-sources";
 import {
   hasWorkerFormErrors,
   readWorkerForm,
   summarizeWorkerFormErrors,
-  validateWorkerForm,
+  validateCreateWorkerForm,
   type WorkerFieldErrors,
   type WorkerFormInput,
 } from "@/lib/worker-input";
-import type { ActionResult } from "@/types";
+import type { ActionResult, CreateRoutineInput } from "@/types";
+
+/**
+ * What the address field says when the URL is not one AutoOps would fetch.
+ *
+ * **One message for every way of getting it wrong**, rather than the kind-by-kind
+ * wording `parseWatchUrl` throws. Those messages were written for a fetch that
+ * is being refused, where the reader is looking at a stored worker; here the
+ * reader is looking at the box they just typed in, and the useful thing to say
+ * is what belongs in it.
+ *
+ * **It does not say the address is reachable, or safe.** Nothing has been
+ * resolved or requested at this point — that happens on every run, in
+ * `lib/watcher`, and a page that passes here can still be refused there.
+ */
+const INVALID_WEBSITE_URL =
+  "Enter a full website address, like https://example.com/news.";
 
 /**
  * A rejected submission carries the values and the per-field messages back.
@@ -49,7 +69,22 @@ export async function createRoutineAction(
   const status = input.status ?? "draft";
   const frequency = input.frequency ?? "manual";
 
-  const errors = validateWorkerForm(input, { status, frequency });
+  // **The one field with no fallback.** Status and frequency default because a
+  // worker that does not say is a quiet one, and both can be changed afterwards
+  // anyway. A kind cannot: it decides what gets created alongside the worker and
+  // is the one thing editing will not revisit. Defaulting an unreadable value to
+  // `prompt` would answer a question nobody asked — and would do it by creating
+  // a worker that ignores the address that was submitted with it.
+  if (input.kind === null) {
+    return {
+      status: "error",
+      message: "Choose whether this worker runs a prompt or watches a page.",
+      values: input,
+    };
+  }
+
+  const kind = input.kind;
+  const errors = validateCreateWorkerForm(input, { status, frequency });
   if (hasWorkerFormErrors(errors)) {
     return {
       status: "error",
@@ -57,6 +92,32 @@ export async function createRoutineAction(
       values: input,
       errors,
     };
+  }
+
+  // **Parsed here, before anything is written, and never inside the
+  // transaction.** What gets stored is the canonical form `URL` produces rather
+  // than the string as typed, so the address a run fetches is the one that was
+  // checked. Still only syntax: see `INVALID_WEBSITE_URL`.
+  let websiteUrl: string | null = null;
+  if (kind === "website") {
+    try {
+      websiteUrl = parseWatchUrl(input.websiteUrl).toString();
+    } catch (error) {
+      if (!isWatcherError(error)) {
+        throw error;
+      }
+
+      const urlErrors: WorkerFieldErrors = {
+        websiteUrl: INVALID_WEBSITE_URL,
+      };
+
+      return {
+        status: "error",
+        message: summarizeWorkerFormErrors(urlErrors),
+        values: input,
+        errors: urlErrors,
+      };
+    }
   }
 
   // The owner comes from the session, never from the submitted form — the same
@@ -74,27 +135,44 @@ export async function createRoutineAction(
   const runAtDay = frequency === "monthly" ? input.runAtDay : null;
   const timezone = await getUserTimezone(userId);
 
+  const routine: CreateRoutineInput = {
+    name: input.name,
+    description: input.description,
+    prompt: input.prompt,
+    kind,
+    status,
+    frequency,
+    runAtMinutes,
+    runAtWeekday,
+    runAtDay,
+    nextRunAt: calculateNextRunAt({
+      frequency,
+      runAtMinutes,
+      runAtWeekday,
+      runAtDay,
+      timezone,
+    }),
+  };
+
   try {
-    await createRoutine(
-      {
-        name: input.name,
-        description: input.description,
-        prompt: input.prompt,
-        status,
-        frequency,
-        runAtMinutes,
-        runAtWeekday,
-        runAtDay,
-        nextRunAt: calculateNextRunAt({
-          frequency,
-          runAtMinutes,
-          runAtWeekday,
-          runAtDay,
-          timezone,
-        }),
-      },
-      userId,
-    );
+    if (websiteUrl === null) {
+      await createRoutine(routine, userId);
+    } else {
+      // **Both rows or neither.** A website worker is the pair — a routine that
+      // says it watches something and a source that says what. Written apart,
+      // the failure is not "creation failed" but a worker that exists, appears
+      // in the dashboard, and fails every run because there is nothing to
+      // fetch; nobody looking at it could tell it from one that was made
+      // correctly. The transaction is what makes a half-made watcher
+      // unrepresentable rather than merely unlikely.
+      //
+      // There is nothing to retry: a rollback leaves the account exactly as it
+      // was, and the person is still on the form.
+      await prisma.$transaction(async (tx) => {
+        const created = await createRoutine(routine, userId, tx);
+        await createWebsiteSource(created.id, websiteUrl, tx);
+      });
+    }
   } catch (error) {
     console.error("[worker] create failed", error);
     return {

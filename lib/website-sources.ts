@@ -1,6 +1,6 @@
 import "server-only";
 
-import { prisma } from "@/lib/prisma";
+import { type DbClient, prisma } from "@/lib/prisma";
 import type { WebsiteSource } from "@/types";
 
 type WebsiteSourceRecord = Awaited<
@@ -49,6 +49,42 @@ export async function getWebsiteSource(
   });
 
   return record ? toWebsiteSource(record) : null;
+}
+
+/**
+ * Attaches a page to a worker that has just been hired.
+ *
+ * **Create-only, and separate from `saveWebsiteSource` for that reason.** An
+ * upsert is the right shape for editing an existing watcher, where "there is
+ * already a row" is the ordinary case. Here it would be a bug going quiet: a
+ * worker being created has no source yet, so a row already sitting on that
+ * `routineId` means something is wrong with how we got here, and a `create`
+ * lets the unique constraint say so instead of overwriting whatever was there.
+ *
+ * **No ownership check, unlike its neighbour, because there is nothing yet to
+ * own.** `saveWebsiteSource` is reached from a request naming a worker the
+ * caller may not have, so it proves ownership before writing. This is reached
+ * only from creation, inside the transaction that is making the routine, with
+ * a `routineId` the caller just produced under its own `userId` — re-reading
+ * the row to ask who owns it would be asking the question of a row we wrote a
+ * statement ago. **That makes the caller responsible for it**: this must not be
+ * given a `routineId` that arrived from a form.
+ *
+ * **The URL is not validated here**, the same as `saveWebsiteSource` — whether
+ * an address may be fetched is `lib/watcher`'s question, asked again before
+ * every request. What is stored is expected to be canonical already.
+ *
+ * Takes a client because the routine and its source have to land together or
+ * not at all; a routine of kind `website` with nothing to watch is a worker
+ * that can only fail.
+ */
+export async function createWebsiteSource(
+  routineId: string,
+  url: string,
+  client: DbClient = prisma,
+): Promise<WebsiteSource> {
+  const record = await client.websiteSource.create({ data: { routineId, url } });
+  return toWebsiteSource(record);
 }
 
 /**

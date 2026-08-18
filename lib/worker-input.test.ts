@@ -3,6 +3,7 @@ import {
   hasWorkerFormErrors,
   readWorkerForm,
   summarizeWorkerFormErrors,
+  validateCreateWorkerForm,
   validateWorkerForm,
   workerFieldLimits,
   type WorkerFormContext,
@@ -24,6 +25,8 @@ function input(overrides?: Partial<WorkerFormInput>): WorkerFormInput {
     name: "Daily digest",
     description: "",
     prompt: "",
+    websiteUrl: "",
+    kind: null,
     status: null,
     frequency: null,
     runAtMinutes: null,
@@ -238,5 +241,194 @@ describe("summarizeWorkerFormErrors", () => {
     expect(hasWorkerFormErrors(validateWorkerForm(input(), context()))).toBe(
       false,
     );
+  });
+});
+
+/**
+ * What a kind changes, and what it must not.
+ *
+ * The address is the obvious part. The part worth pinning down is the drop: a
+ * URL that arrives on a submission which is not creating a website worker has
+ * to disappear before anything downstream can act on it, because the thing
+ * downstream would do is give a prompt worker a page to watch.
+ */
+describe("readWorkerForm — kind", () => {
+  function form(fields: Record<string, string>) {
+    const data = new FormData();
+    data.set("name", "Daily digest");
+    for (const [key, value] of Object.entries(fields)) {
+      data.set(key, value);
+    }
+    return data;
+  }
+
+  it.each(["prompt", "website"] as const)("reads %s", (kind) => {
+    expect(readWorkerForm(form({ kind })).kind).toBe(kind);
+  });
+
+  it.each([
+    ["absent", {}],
+    ["blank", { kind: "" }],
+    ["a value the app does not know", { kind: "webhook" }],
+    ["nearly right", { kind: "Website" }],
+  ])("reads a kind that is %s as null", (_label, fields) => {
+    expect(readWorkerForm(form(fields)).kind).toBeNull();
+  });
+
+  it("keeps the address on a website submission", () => {
+    const parsed = readWorkerForm(
+      form({ kind: "website", websiteUrl: "  https://example.com/news  " }),
+    );
+
+    expect(parsed.websiteUrl).toBe("https://example.com/news");
+  });
+
+  it.each([
+    ["a prompt worker", { kind: "prompt" }],
+    ["a submission with no kind", {}],
+    ["a submission with an unreadable kind", { kind: "webhook" }],
+  ])("drops the address on %s", (_label, fields) => {
+    const parsed = readWorkerForm(
+      form({ ...fields, websiteUrl: "https://example.com/news" }),
+    );
+
+    expect(parsed.websiteUrl).toBe("");
+  });
+});
+
+/**
+ * The rules that only exist because a worker can watch a page.
+ *
+ * Two things are being held apart here. A website worker is asked for more than
+ * a prompt worker is — an address, and instructions whatever its status. And a
+ * prompt worker is asked for exactly what it always was, because the shared
+ * validator is still the one deciding: nothing here loosens a rule, and the
+ * edit form, which never sends a kind, cannot reach any of it.
+ */
+describe("validateCreateWorkerForm — website workers", () => {
+  function website(overrides?: Partial<WorkerFormInput>): WorkerFormInput {
+    return input({
+      kind: "website",
+      websiteUrl: "https://example.com/news",
+      prompt: "Tell me what changed.",
+      ...overrides,
+    });
+  }
+
+  it("accepts a complete website worker", () => {
+    expect(validateCreateWorkerForm(website(), context())).toEqual({});
+  });
+
+  it("requires an address", () => {
+    const errors = validateCreateWorkerForm(
+      website({ websiteUrl: "" }),
+      context(),
+    );
+
+    expect(errors.websiteUrl).toBeDefined();
+  });
+
+  it("rejects an address longer than the limit", () => {
+    const long = `https://example.com/${"a".repeat(workerFieldLimits.websiteUrl)}`;
+
+    expect(
+      validateCreateWorkerForm(website({ websiteUrl: long }), context())
+        .websiteUrl,
+    ).toBeDefined();
+  });
+
+  it("accepts an address exactly at the limit", () => {
+    const exact = `https://example.com/${"a".repeat(
+      workerFieldLimits.websiteUrl - "https://example.com/".length,
+    )}`;
+
+    expect(exact).toHaveLength(workerFieldLimits.websiteUrl);
+    expect(
+      validateCreateWorkerForm(website({ websiteUrl: exact }), context())
+        .websiteUrl,
+    ).toBeUndefined();
+  });
+
+  /**
+   * The rule that differs from a prompt worker's. A watcher with no
+   * instructions still fetches, still stores a baseline, and still notices a
+   * change — and then has nothing to do about it.
+   */
+  it.each([
+    ["draft", "manual"],
+    ["draft", "daily"],
+    ["paused", "weekly"],
+    ["active", "manual"],
+    ["active", "daily"],
+  ] as const)(
+    "requires instructions on a %s worker running %s",
+    (status, frequency) => {
+      const errors = validateCreateWorkerForm(
+        website({ prompt: "" }),
+        context({ status, frequency }),
+      );
+
+      expect(errors.prompt).toBeDefined();
+    },
+  );
+
+  it("rejects instructions longer than the prompt limit", () => {
+    const errors = validateCreateWorkerForm(
+      website({ prompt: "a".repeat(workerFieldLimits.prompt + 1) }),
+      context(),
+    );
+
+    expect(errors.prompt).toBeDefined();
+  });
+
+  it("accepts instructions exactly at the prompt limit", () => {
+    const errors = validateCreateWorkerForm(
+      website({ prompt: "a".repeat(workerFieldLimits.prompt) }),
+      context(),
+    );
+
+    expect(errors.prompt).toBeUndefined();
+  });
+
+  it("still requires a name", () => {
+    expect(
+      validateCreateWorkerForm(website({ name: "" }), context()).name,
+    ).toBeDefined();
+  });
+});
+
+/** A prompt worker is validated exactly as it was before kinds existed. */
+describe("validateCreateWorkerForm — prompt workers", () => {
+  it.each([
+    ["draft", "daily"],
+    ["paused", "monthly"],
+    ["active", "manual"],
+  ] as const)("keeps its blank prompt on a %s %s worker", (status, frequency) => {
+    const errors = validateCreateWorkerForm(
+      input({ kind: "prompt", prompt: "" }),
+      context({ status, frequency }),
+    );
+
+    expect(errors).toEqual({});
+  });
+
+  it("still refuses a blank prompt when AutoOps would run it unattended", () => {
+    const errors = validateCreateWorkerForm(
+      input({ kind: "prompt", prompt: "" }),
+      context({ status: "active", frequency: "daily" }),
+    );
+
+    expect(errors.prompt).toBe(
+      "Prompt is required for scheduled active workers.",
+    );
+  });
+
+  it("never asks a prompt worker for an address", () => {
+    const errors = validateCreateWorkerForm(
+      input({ kind: "prompt", prompt: "Summarise this." }),
+      context({ status: "active", frequency: "daily" }),
+    );
+
+    expect(errors.websiteUrl).toBeUndefined();
   });
 });

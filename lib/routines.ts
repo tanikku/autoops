@@ -1,7 +1,8 @@
 import "server-only";
 
-import { prisma } from "@/lib/prisma";
+import { type DbClient, prisma } from "@/lib/prisma";
 import {
+  type CreateRoutineInput,
   isRoutineFrequency,
   isRoutineKind,
   isRoutineStatus,
@@ -78,11 +79,29 @@ export async function getRoutine(
   return record ? toRoutine(record) : null;
 }
 
+/**
+ * Hires a worker.
+ *
+ * **The only write that sets a kind.** `CreateRoutineInput` carries one and
+ * `RoutineInput` does not, so what a worker is gets decided here and nowhere
+ * else — `updateRoutine` below takes a `Partial<RoutineInput>` and therefore
+ * has no shape that could carry a kind to change it to.
+ *
+ * The kind is written rather than left to the column's default. The default
+ * exists so that rows created before watchers did read as prompt workers; a new
+ * row should say what it is, and relying on the default would mean the answer
+ * lived in the schema for some rows and in the code for others.
+ *
+ * **Takes a client so a caller can make this part of something larger.** A
+ * website worker is a routine *and* a source, and half of that pair is not a
+ * worker — see `createWebsiteSource`.
+ */
 export async function createRoutine(
-  input: RoutineInput,
+  input: CreateRoutineInput,
   userId: string,
+  client: DbClient = prisma,
 ): Promise<Routine> {
-  const record = await prisma.routine.create({ data: { ...input, userId } });
+  const record = await client.routine.create({ data: { ...input, userId } });
   return toRoutine(record);
 }
 
