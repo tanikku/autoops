@@ -189,7 +189,7 @@ export async function getRun(
 ): Promise<RunHistoryDetail | null> {
   const found = await prisma.runHistory.findFirst({
     where: { id, userId },
-    include: { routine: { select: { name: true, prompt: true } } },
+    include: { routine: { select: { name: true, prompt: true, kind: true } } },
   });
 
   if (!found) {
@@ -201,6 +201,11 @@ export async function getRun(
     ...toRun(record),
     routineName: routine.name,
     routinePrompt: routine.prompt,
+    // **Narrowed rather than defaulted.** A prompt run and a website run put
+    // different things in that prompt column — instructions sent as they are,
+    // against instructions applied to a change that was found — so a kind
+    // nobody recognises has to stay unrecognised all the way to the page.
+    routineKind: isRoutineKind(routine.kind) ? routine.kind : null,
   };
 }
 

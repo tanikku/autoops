@@ -12,11 +12,12 @@ import { WorkerHealthSummary } from "@/components/worker-health";
 import { formatDateTimeWithSeconds } from "@/lib/datetime";
 import { summarizeRuns } from "@/lib/health";
 import { isRunOverdue } from "@/lib/overview";
-import { getRoutine } from "@/lib/routines";
+import { getRoutineWithStoredKind } from "@/lib/routines";
 import { listRunsForWorker } from "@/lib/runs";
 import { requireUserId } from "@/lib/session";
 import { getUserTimezone } from "@/lib/users";
-import type { RoutineFrequency, RoutineStatus } from "@/types";
+import { getWebsiteSource } from "@/lib/website-sources";
+import type { RoutineFrequency, RoutineKind, RoutineStatus } from "@/types";
 
 export const metadata: Metadata = {
   title: "Worker — AutoOps",
@@ -48,6 +49,11 @@ const frequencyLabels: Record<RoutineFrequency, string> = {
   monthly: "Monthly",
 };
 
+const kindLabels: Record<RoutineKind, string> = {
+  prompt: "Prompt",
+  website: "Website",
+};
+
 
 function Detail({
   label,
@@ -73,9 +79,28 @@ export default async function WorkerDetailPage({
   const userId = await requireUserId();
   // A worker owned by someone else is indistinguishable from one that does not
   // exist: both 404, so the id is never confirmed.
-  const worker = await getRoutine(id, userId);
+  //
+  // **The kind arrives unrepaired.** Everything below that says what this
+  // worker *is* — the type it reports, whether it names a page — is a claim,
+  // and `getRoutine` would have answered "prompt" for a row nothing can read.
+  // A page is allowed to say it does not know; it is not allowed to guess.
+  const found = await getRoutineWithStoredKind(id, userId);
 
-  if (!worker) {
+  if (!found) {
+    notFound();
+  }
+
+  const { routine: worker, kind } = found;
+
+  // **Only a website worker has a page, and only it is asked for one.**
+  const source =
+    kind === "website" ? await getWebsiteSource(worker.id, userId) : null;
+
+  // A website worker with nothing to watch is a state that should not exist.
+  // Falling back to the prompt worker's surface would hide it behind a screen
+  // that looks perfectly ordinary — so it gets the same answer as a worker
+  // that is not here, which is what it effectively is.
+  if (kind === "website" && !source) {
     notFound();
   }
 
@@ -126,6 +151,15 @@ export default async function WorkerDetailPage({
                 {/* No separate Schedule row: it would restate the frequency in
                     other words. The card carries the phrased version, which is
                     the only place without a Frequency row of its own. */}
+                {/* **Shown, never offered**, the same as on the edit form:
+                    what a worker does is decided when it is hired and the rest
+                    of it is built on that answer. A kind this version does not
+                    recognise says so rather than picking one — the row exists,
+                    and nothing here can honestly describe it. */}
+                <Detail
+                  label="Worker type"
+                  value={kind === null ? "Unrecognised" : kindLabels[kind]}
+                />
                 <Detail
                   label="Frequency"
                   value={frequencyLabels[worker.frequency]}
@@ -170,6 +204,33 @@ export default async function WorkerDetailPage({
               </dl>
             </CardContent>
           </Card>
+
+          {/* **What it watches, and what it is told to do about it** — the two
+              things a website worker has that the card above cannot describe.
+              Nothing here fetches the address: it is the stored canonical
+              string, shown as text. Whether it can be reached is asked on
+              every run, in `lib/watcher`, and never by a page.
+
+              `break-all` because an address may be thousands of characters and
+              carries no spaces to wrap at; the whole of it stays selectable
+              rather than being cut short. */}
+          {source ? (
+            <Card className="mt-4">
+              <CardContent>
+                <h2 className="text-sm font-medium tracking-tight">
+                  Watched page
+                </h2>
+                <p className="mt-2 text-sm break-all">{source.url}</p>
+
+                <h2 className="mt-6 text-sm font-medium tracking-tight">
+                  Change instructions
+                </h2>
+                <p className="mt-2 text-sm whitespace-pre-wrap break-words">
+                  {worker.prompt || "—"}
+                </p>
+              </CardContent>
+            </Card>
+          ) : null}
 
           <div className="mt-6 flex flex-wrap gap-2">
             <Button

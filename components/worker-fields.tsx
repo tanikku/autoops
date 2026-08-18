@@ -240,6 +240,7 @@ export function WorkerFields({
   values,
   errors = {},
   kind = "prompt",
+  websiteUrlNote,
 }: {
   values: WorkerFieldValues;
   errors?: WorkerFieldErrors;
@@ -252,6 +253,16 @@ export function WorkerFields({
    * rendering exactly as it did.
    */
   kind?: RoutineKind;
+  /**
+   * Something the caller needs said about changing the address.
+   *
+   * **Passed in rather than written here, because it is only true in one
+   * place.** Editing an address abandons a comparison that already exists;
+   * hiring a worker has nothing to abandon, so the same sentence on the create
+   * form would describe a consequence that cannot happen. Shown only for a
+   * website worker, which is the only kind with an address at all.
+   */
+  websiteUrlNote?: string;
 }) {
   // The only controlled field, and only because another one depends on it: a
   // time of day is meaningless for a manual worker, so the select has to be
@@ -299,6 +310,10 @@ export function WorkerFields({
         placeholder="https://example.com/news"
         error={errors.websiteUrl}
       />
+
+      {website && websiteUrlNote ? (
+        <p className="-mt-4 text-xs text-muted-foreground">{websiteUrlNote}</p>
+      ) : null}
 
       {/* **The prompt means something different for each kind**, so it is asked
           for differently. A prompt worker's prompt is the whole job. A website

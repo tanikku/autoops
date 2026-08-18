@@ -83,12 +83,27 @@ export default async function RunDetailPage({
     notFound();
   }
 
-  // The rendered prompt is not stored, so it is reconstructed from the values
-  // the run would have seen when it started.
-  const renderedPrompt = renderPrompt(
-    run.routinePrompt,
-    promptVariables(run.startedAt),
-  );
+  // **Only a prompt run has a rendered prompt to show.**
+  //
+  // What a prompt run sends is the worker's prompt with its variables filled
+  // in, and nothing else — so reconstructing it from the values the run would
+  // have seen when it started reproduces the request faithfully, which is why
+  // it is not stored.
+  //
+  // A website run sends something else entirely: a system instruction the
+  // platform writes, the worker's instructions inside it, and a bounded
+  // excerpt of what actually changed on the page. **None of that is stored**,
+  // and the excerpt could not be reconstructed at any price — the page has
+  // moved on. Running the same reconstruction here would produce a plausible
+  // block of text under a heading claiming it is what was sent, which is worse
+  // than showing nothing: it would be wrong in a way nobody could detect.
+  //
+  // A kind this version does not recognise gets the same silence, for the same
+  // reason — a guess about which of the two it was is still a guess.
+  const renderedPrompt =
+    run.routineKind === "prompt"
+      ? renderPrompt(run.routinePrompt, promptVariables(run.startedAt))
+      : null;
 
   return (
     <div className="flex flex-1 flex-col bg-background">
@@ -133,8 +148,21 @@ export default async function RunDetailPage({
           />
         </dl>
 
-        <Block label="Prompt" value={run.routinePrompt} />
-        <Block label="Rendered Prompt" value={renderedPrompt} />
+        {/* The same column, and two different things in it. A prompt worker's
+            is the instruction the run sends; a website worker's is what to do
+            about a change once one has been found. Naming both "Prompt" was
+            accurate for one of them. */}
+        {run.routineKind === null ? null : (
+          <Block
+            label={
+              run.routineKind === "website" ? "Change instructions" : "Prompt"
+            }
+            value={run.routinePrompt}
+          />
+        )}
+        {renderedPrompt === null ? null : (
+          <Block label="Rendered Prompt" value={renderedPrompt} />
+        )}
         {/*
           A failed run has no output, and calling its reason one was the older
           shape of this page: the two shared a column, so the heading described

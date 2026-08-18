@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * What a stored row is allowed to become on the way out.
@@ -11,9 +11,13 @@ import { describe, expect, it, vi } from "vitest";
  * outside the process, and `website` fetches.
  */
 
-vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+const mocks = vi.hoisted(() => ({ findFirst: vi.fn() }));
 
-const { toRoutine } = await import("@/lib/routines");
+vi.mock("@/lib/prisma", () => ({
+  prisma: { routine: { findFirst: mocks.findFirst } },
+}));
+
+const { getRoutineWithStoredKind, toRoutine } = await import("@/lib/routines");
 
 const NOW = new Date("2026-08-13T12:00:00.000Z");
 
@@ -79,5 +83,63 @@ describe("what else the row carries outwards", () => {
 
     expect(routine).not.toHaveProperty("executionOwner");
     expect(routine).not.toHaveProperty("executionLeaseUntil");
+  });
+});
+
+/**
+ * The same column, read without the repair.
+ *
+ * `toRoutine` answers `prompt` for anything it cannot read, and that is right
+ * for a screen that has to render something. It is wrong wherever the kind
+ * decides what happens next — a page stating "Prompt" about a row nobody can
+ * read has said something it does not know, and a form offering to save it
+ * would write the guess in. This is what those boundaries ask instead.
+ */
+describe("reading the kind as stored", () => {
+  beforeEach(() => {
+    mocks.findFirst.mockReset();
+  });
+
+  it.each(["prompt", "website"])("reports %s, which it recognises", async (kind) => {
+    mocks.findFirst.mockResolvedValue(record({ kind }));
+
+    const found = await getRoutineWithStoredKind("worker-1", "user-1");
+
+    expect(found?.kind).toBe(kind);
+    expect(found?.routine.id).toBe("worker-1");
+  });
+
+  it.each(["", "Website", "rss", "webhook", "prompt "])(
+    "reports %o as no kind at all, rather than as prompt",
+    async (kind) => {
+      mocks.findFirst.mockResolvedValue(record({ kind }));
+
+      expect((await getRoutineWithStoredKind("worker-1", "user-1"))?.kind).toBe(
+        null,
+      );
+    },
+  );
+
+  /**
+   * The worker still comes back, because a page has to show something: the
+   * display default lives on `routine.kind`, and the honest answer lives beside
+   * it. Callers that decide anything read the second one.
+   */
+  it("still hands back the worker, with the display default intact", async () => {
+    mocks.findFirst.mockResolvedValue(record({ kind: "webhook" }));
+
+    const found = await getRoutineWithStoredKind("worker-1", "user-1");
+
+    expect(found?.routine.kind).toBe("prompt");
+    expect(found?.kind).toBeNull();
+  });
+
+  it("scopes the read to the owner", async () => {
+    mocks.findFirst.mockResolvedValue(null);
+
+    expect(await getRoutineWithStoredKind("worker-1", "user-1")).toBeNull();
+    expect(mocks.findFirst).toHaveBeenCalledWith({
+      where: { id: "worker-1", userId: "user-1" },
+    });
   });
 });

@@ -8,6 +8,7 @@ import {
   isRoutineStatus,
   type Routine,
   type RoutineInput,
+  type RoutineKind,
 } from "@/types";
 
 export type RoutineRecord = Awaited<
@@ -106,19 +107,47 @@ export async function createRoutine(
 }
 
 /**
+ * A worker, and what it is — with "nothing we recognise" kept as an answer.
+ *
+ * **`getRoutine` cannot express this, deliberately.** `toRoutine` turns an
+ * unreadable kind into `prompt` so that a list or a card can still render, and
+ * that default is right for display: showing a worker is harmless, and every
+ * screen needs *something*. It is wrong everywhere the kind decides what
+ * happens next. A page that says "Prompt" about a row nobody can read has
+ * stated a fact it does not have; a form that offers to save it would write
+ * that guess in, converting a worker by accident.
+ *
+ * So this hands the caller both halves and lets it choose. `kind` is null when
+ * the stored value is not one this version knows — and null is not `prompt`.
+ */
+export type RoutineWithStoredKind = {
+  routine: Routine;
+  kind: RoutineKind | null;
+};
+
+export async function getRoutineWithStoredKind(
+  id: string,
+  userId: string,
+): Promise<RoutineWithStoredKind | null> {
+  const record = await prisma.routine.findFirst({ where: { id, userId } });
+
+  if (!record) {
+    return null;
+  }
+
+  return {
+    routine: toRoutine(record),
+    kind: isRoutineKind(record.kind) ? record.kind : null,
+  };
+}
+
+/**
  * The worker as something that is about to be changed.
  *
- * **Reads the kind strictly, where `getRoutine` reads it forgivingly.** That
- * difference is the point. `toRoutine` turns an unreadable kind into `prompt`
- * so that a page can still render — a display default, chosen because showing
- * a worker is harmless. Editing is not display: the same default there would
- * offer a form for a worker nobody can describe, and saving it would write the
- * answer in, making a stored value nothing understands into a `prompt` worker
- * by way of a form nobody meant as a conversion.
- *
- * So a kind this version of the application does not know is treated as no
- * worker at all — the same answer as somebody else's, and for a related
- * reason: in both cases there is nothing here this caller may safely change.
+ * **A kind nothing recognises is treated as no worker at all** — the same
+ * answer as somebody else's, and for a related reason: in both cases there is
+ * nothing here this caller may safely change. Offering a form for a worker
+ * nobody can describe would end in saving an answer that was never given.
  *
  * Returning null rather than throwing keeps the caller's shape: the edit page
  * and the edit action both already have to answer "no such worker".
@@ -127,22 +156,22 @@ export async function getRoutineForEdit(
   id: string,
   userId: string,
 ): Promise<Routine | null> {
-  const record = await prisma.routine.findFirst({ where: { id, userId } });
+  const found = await getRoutineWithStoredKind(id, userId);
 
-  if (!record) {
+  if (!found) {
     return null;
   }
 
-  if (!isRoutineKind(record.kind)) {
+  if (found.kind === null) {
     // Worth a line, because it means a row exists that this deployment cannot
     // account for. The id only — nothing about the account or its contents.
     console.warn(
-      `[worker] refusing to edit a worker of an unrecognised kind — id=${record.id}`,
+      `[worker] refusing to edit a worker of an unrecognised kind — id=${found.routine.id}`,
     );
     return null;
   }
 
-  return toRoutine(record);
+  return found.routine;
 }
 
 /**

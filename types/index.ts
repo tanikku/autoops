@@ -170,8 +170,22 @@ export type RunHistory = {
 /** A run joined with the name of the routine it belongs to. */
 export type RunHistoryEntry = RunHistory & { routineName: string };
 
-/** A single run joined with the routine fields the detail view shows. */
-export type RunHistoryDetail = RunHistoryEntry & { routinePrompt: string };
+/**
+ * A single run joined with the routine fields the detail view shows.
+ *
+ * **`routineKind` is null when the stored kind is not one this version knows**,
+ * and null is not `prompt`. What a run is shown as decides which of two
+ * different things its prompt column means, so a guess here would be a page
+ * describing a request that was never made.
+ *
+ * It is read from the worker as it stands now rather than from the run, which
+ * stores no kind of its own. That holds because a kind is fixed when a worker
+ * is created and nothing can change it afterwards — see `RoutineInput`.
+ */
+export type RunHistoryDetail = RunHistoryEntry & {
+  routinePrompt: string;
+  routineKind: RoutineKind | null;
+};
 
 export function isRunStatus(value: string): value is RunStatus {
   return (runStatuses as readonly string[]).includes(value);

@@ -22,6 +22,38 @@ const kindLabels: Record<RoutineKind, string> = {
   website: "Website",
 };
 
+/**
+ * What moving a watcher costs, said before it is moved.
+ *
+ * A baseline only means anything against the page it was taken from, so
+ * changing the address throws it away — otherwise the next check would compare
+ * two unrelated documents and report the whole of one as a change. That is the
+ * right behaviour and it is invisible, which is the only reason this sentence
+ * exists.
+ *
+ * **Every clause is held to what execution actually does**, because a sentence
+ * about a mechanism nobody can see is believed:
+ *
+ * - *the next successful check*, not the next one. A check that cannot fetch
+ *   the page writes no baseline and leaves the worker where it was, so
+ *   promising one on the next check would promise something a failure breaks.
+ * - *instead of treating the new page as a detected change*, rather than
+ *   "reports no changes". Establishing a first baseline is its own outcome —
+ *   there was nothing to differ from — and it is the outcome worth naming,
+ *   because the alternative it rules out is the whole of a new page arriving
+ *   as though it had just changed.
+ * - *past runs are kept*, because what is thrown away is the stored comparison
+ *   point and nothing else. Nothing is fetched when the form is saved, and no
+ *   model is involved in establishing a baseline.
+ *
+ * No confirmation dialog goes with it. A baseline is an internal comparison
+ * point rather than anything the person wrote, and a check rebuilds it.
+ */
+export const BASELINE_RESET_NOTE =
+  "Changing the address resets the comparison baseline. On the next " +
+  "successful check, AutoOps establishes a new baseline instead of treating " +
+  "the new page as a detected change. Past runs are kept.";
+
 function SaveButton() {
   const { pending } = useFormStatus();
 
@@ -93,6 +125,7 @@ export function WorkerEditForm({
         }
         errors={state?.errors}
         kind={worker.kind}
+        websiteUrlNote={BASELINE_RESET_NOTE}
       />
 
       <div className="flex gap-2">

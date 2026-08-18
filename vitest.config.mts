@@ -35,6 +35,20 @@ const rootDir = dirname(fileURLToPath(import.meta.url));
 const serverOnlyUnderReactServer = `${rootDir}/node_modules/server-only/empty.js`;
 
 export default defineConfig({
+  /**
+   * Compiles the JSX in a page or component, which `tsconfig.json` does not.
+   *
+   * It says `"preserve"` because Next.js does the transform itself, with its
+   * own runtime — correct for the build, and nothing at all for Vitest, which
+   * hands `.tsx` to esbuild and gets JSX back out. Naming the automatic runtime
+   * here is the whole of what a test needs to import a page: no renderer, no
+   * DOM, no new dependency. React is already a dependency of the application.
+   *
+   * `oxc` rather than `esbuild`: Vite 8 transforms with oxc, and setting both
+   * makes it say so and ignore the other one.
+   */
+  oxc: { jsx: { runtime: "automatic" } },
+
   resolve: {
     alias: {
       "@/": `${rootDir}/`,
