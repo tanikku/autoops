@@ -26,6 +26,15 @@ const MAX_TOKENS = 16000;
 const TIMEOUT_MS = 600_000;
 
 /**
+ * The same allowance, per request.
+ *
+ * The client is constructed with it, so a caller that says nothing gets exactly
+ * what it got before. Passing it again on every call is what makes the
+ * override below a single expression rather than two code paths.
+ */
+const DEFAULT_TIMEOUT_MS = TIMEOUT_MS;
+
+/**
  * **No retries.** The SDK would otherwise try three times, and nobody chose
  * that: a timed-out generation is billed whether or not it is used, so the
  * default quietly turns one late worker into thirty minutes and three charges.
@@ -111,6 +120,12 @@ export class ClaudeProvider implements AIProvider {
         // not there previously.
         ...(request.system === undefined ? {} : { system: request.system }),
         messages: [{ role: "user", content: request.user }],
+      }, {
+        // **Per call, because one kind of work has a shorter deadline than the
+        // provider's own.** Omitting it here would leave every caller with the
+        // ten minutes the client was built with, including the one that has to
+        // finish inside a scheduled tick.
+        timeout: request.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       });
     } catch (error) {
       // Anything that is not an `Error` is rethrown untouched: there is no

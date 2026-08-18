@@ -8,6 +8,30 @@ import { advanceSchedule } from "@/lib/schedule";
 import { type DueWorker, getDueWorkers } from "@/lib/scheduler";
 import { getUserTimezone } from "@/lib/users";
 
+/**
+ * How long a tick may spend before it stops starting new workers.
+ *
+ * **Cooperative, not a deadline.** Nothing is cancelled when this passes: a
+ * worker already running keeps its fetch, its model call, and the transaction
+ * that records what it did. What changes is that the next one is not started.
+ * Killing work in flight would mean a run that reached a provider and was
+ * billed for, with nothing written down about it.
+ *
+ * **Four minutes, against Railway's five.** The tick answers an HTTP request,
+ * and a response that takes longer than five minutes without sending anything
+ * is cut off at the edge — losing the tick's own log line and its heartbeat
+ * along with it. A minute of headroom is what a worker started at 3:59 has to
+ * finish in, and it is not enough for the worst case: a single run may take ten
+ * minutes on its own. **This bounds how many long runs a tick strings
+ * together, not how long one of them lasts.**
+ *
+ * **Deliberately not `TICK_WARN_THRESHOLD_MS`.** That one decides whether a log
+ * line is a warning and changes nothing about what runs; this one changes what
+ * runs and writes nothing. Sharing a number between the two would mean tuning
+ * the log altered execution.
+ */
+export const MAX_TICK_EXECUTION_MS = 240_000;
+
 /** What one tick did: the workers handed off, and how many could not be. */
 export type DispatchResult = {
   dispatched: string[];
@@ -78,8 +102,27 @@ export async function dispatchDueWorkers(now: Date): Promise<DispatchResult> {
 
   const dispatched: string[] = [];
   let failed = 0;
+  // One reading for the whole tick, so every decision below is measured from
+  // the same instant. `now` is the schedule's idea of the time and is used for
+  // slot arithmetic; this is the wall clock, and the two must not be confused.
+  const tickStartedAt = Date.now();
 
-  for (const worker of dueWorkers) {
+  for (const [index, worker] of dueWorkers.entries()) {
+    // **Before the claim, which is the whole point.** A claim moves the slot
+    // on whether or not the run then happens, so checking afterwards would
+    // spend slots on workers this tick has already decided not to start. Asked
+    // here, a worker that is not reached keeps its slot and is due again on the
+    // next tick.
+    const elapsedMs = Date.now() - tickStartedAt;
+    if (elapsedMs >= MAX_TICK_EXECUTION_MS) {
+      console.warn(
+        "[dispatcher] tick execution budget reached — " +
+          `elapsed_ms=${elapsedMs} started=${dispatched.length + failed} ` +
+          `due=${dueWorkers.length} not_started=${dueWorkers.length - index}`,
+      );
+      break;
+    }
+
     try {
       if (!(await claimSlot(worker, now))) {
         continue;

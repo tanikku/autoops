@@ -523,3 +523,17 @@ describe("latestExecutionFailureAt", () => {
     expect(await latestExecutionFailureAt()).toBeNull();
   });
 });
+
+/**
+ * **A prompt worker's request is the whole of its run**, so it keeps the
+ * provider's own allowance rather than borrowing a shorter one from a caller
+ * that has other work to fit around.
+ */
+describe("runRoutine — how long a prompt worker is given", () => {
+  it("asks for no particular deadline", async () => {
+    await runRoutine("worker-1");
+
+    expect(mocks.execute).toHaveBeenCalledWith({ user: "hello" });
+    expect(mocks.execute.mock.calls[0][0]).not.toHaveProperty("timeoutMs");
+  });
+});

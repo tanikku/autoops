@@ -10,6 +10,25 @@ import { isRoutineFrequency, type Routine, type RoutineStatus } from "@/types";
 const ENABLED_STATUS: RoutineStatus = "active";
 
 /**
+ * How many due workers one tick will even look at.
+ *
+ * **A bound on the work a tick can decide to take on**, applied in the query so
+ * that a platform with a thousand due workers loads five rows rather than a
+ * thousand. Without it the cost of a tick grows with the number of workers that
+ * happen to be due, which is exactly the number nobody controls.
+ *
+ * **It is not a bound on how long a tick takes.** Five workers each waiting on
+ * a slow model is still five slow workers; what stops that is the dispatcher's
+ * own budget, which it checks between them. The two limits answer different
+ * questions and neither replaces the other.
+ *
+ * What it costs is that a backlog drains five at a time. Every tick takes the
+ * five oldest slots, so nothing is starved — it is a queue, not a lottery — and
+ * anything not reached stays due, with its slot unspent, for the next tick.
+ */
+export const MAX_DISPATCHES_PER_TICK = 5;
+
+/**
  * A due worker, carrying only what dispatching one needs.
  *
  * **A projection of `Routine` rather than a type of its own**, so the columns
@@ -68,6 +87,9 @@ export async function getDueWorkers(now: Date): Promise<DueWorker[]> {
       nextRunAt: { lte: now },
     },
     orderBy: { nextRunAt: "asc" },
+    // Oldest slot first, so a capped read is the front of the queue rather
+    // than an arbitrary five of it.
+    take: MAX_DISPATCHES_PER_TICK,
     select: dueWorkerColumns,
   });
 

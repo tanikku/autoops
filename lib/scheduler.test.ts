@@ -20,7 +20,9 @@ vi.mock("@/lib/prisma", () => ({
   prisma: { routine: { findMany } },
 }));
 
-const { getDueWorkers } = await import("@/lib/scheduler");
+const { getDueWorkers, MAX_DISPATCHES_PER_TICK } = await import(
+  "@/lib/scheduler",
+);
 
 const NOW = new Date("2026-08-10T09:05:00.000Z");
 
@@ -116,5 +118,53 @@ describe("getDueWorkers", () => {
     const [worker] = await getDueWorkers(NOW);
 
     expect(worker.frequency).toBe("monthly");
+  });
+});
+
+/**
+ * **How many due workers one tick will even look at.**
+ *
+ * The cap is in the query rather than applied to its result: a platform with a
+ * thousand due workers should load five rows, not a thousand and then discard
+ * most of them. What is not reached keeps its slot and is due again next tick,
+ * so a backlog drains oldest-first rather than being lost.
+ */
+describe("how much of the backlog one tick takes", () => {
+  it("asks the database for at most five", async () => {
+    expect((await queryFor()).take).toBe(MAX_DISPATCHES_PER_TICK);
+  });
+
+  it("caps at five rather than at some other number", () => {
+    expect(MAX_DISPATCHES_PER_TICK).toBe(5);
+  });
+
+  /**
+   * The cap and the ordering only make sense together: taking five of an
+   * unordered set would strand whichever workers kept losing the draw.
+   */
+  it("still takes the oldest slots first", async () => {
+    const query = await queryFor();
+
+    expect(query.orderBy).toEqual({ nextRunAt: "asc" });
+    expect(query.take).toBe(MAX_DISPATCHES_PER_TICK);
+  });
+
+  it("does not decide anything else about which workers are due", async () => {
+    const query = await queryFor();
+
+    expect(query.where).toEqual({
+      status: "active",
+      nextRunAt: { lte: NOW },
+    });
+  });
+
+  /** The dispatcher receives what the query returned, and nothing is re-filtered. */
+  it("hands on every row the query returned", async () => {
+    const records = [1, 2, 3, 4, 5].map((n) =>
+      dueRecord({ id: `worker-${n}` }),
+    );
+    findMany.mockResolvedValue(records);
+
+    expect(await getDueWorkers(NOW)).toHaveLength(5);
   });
 });

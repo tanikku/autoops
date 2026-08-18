@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ExecutionSuppressedError } from "@/lib/execution-lease";
 import { RunPersistenceError } from "@/lib/runs";
 import type { DueWorker } from "@/lib/scheduler";
@@ -35,7 +35,9 @@ vi.mock("@/lib/routines", () => ({ claimRoutineSlot: mocks.claimRoutineSlot }));
 vi.mock("@/lib/queue", () => ({ enqueueRoutine: mocks.enqueueRoutine }));
 vi.mock("@/lib/users", () => ({ getUserTimezone: mocks.getUserTimezone }));
 
-const { dispatchDueWorkers } = await import("@/lib/dispatcher");
+const { dispatchDueWorkers, MAX_TICK_EXECUTION_MS } = await import(
+  "@/lib/dispatcher",
+);
 
 const NOW = new Date("2026-08-10T09:05:00.000Z");
 const SLOT = new Date("2026-08-10T09:00:00.000Z");
@@ -318,5 +320,159 @@ describe("dispatchDueWorkers", () => {
       dispatched: ["worker-1"],
       failed: 0,
     });
+  });
+});
+
+/**
+ * **How long a tick keeps starting new work.**
+ *
+ * Cooperative, and that word carries the whole design. Nothing is cancelled
+ * when the budget passes: a worker already running keeps its fetch, its model
+ * call, and the writes that record what it did — aborting those would leave a
+ * run that reached a provider, was billed for, and has nothing written down.
+ * What the budget changes is whether the *next* worker is started.
+ *
+ * The check sits before the claim, which is the part that matters. A claim
+ * moves a worker's slot on whether or not the run then happens, so checking
+ * afterwards would spend slots on workers this tick had already decided to skip.
+ */
+describe("the time a tick may spend starting work", () => {
+  /** Only `Date` is faked: nothing here waits on a timer. */
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-18T09:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Makes each hand-off take `ms` of wall clock. */
+  function eachRunTakes(ms: number) {
+    mocks.enqueueRoutine.mockImplementation(async () => {
+      vi.advanceTimersByTime(ms);
+      return { status: "completed" };
+    });
+  }
+
+  it("starts the next worker while there is budget left", async () => {
+    mocks.getDueWorkers.mockResolvedValue([due("worker-1"), due("worker-2")]);
+    eachRunTakes(1_000);
+
+    const result = await dispatchDueWorkers(NOW);
+
+    expect(result.dispatched).toEqual(["worker-1", "worker-2"]);
+  });
+
+  it("stops before starting a worker once the budget is gone", async () => {
+    mocks.getDueWorkers.mockResolvedValue([due("worker-1"), due("worker-2")]);
+    eachRunTakes(MAX_TICK_EXECUTION_MS);
+
+    const result = await dispatchDueWorkers(NOW);
+
+    expect(result.dispatched).toEqual(["worker-1"]);
+    expect(mocks.enqueueRoutine).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * **The worker that is not reached must keep its slot.** Claiming first and
+   * checking afterwards would advance `nextRunAt` for a run that never
+   * happened, and the worker would wait a whole cadence for a turn it was
+   * never given.
+   */
+  it("does not claim the slot of a worker it will not start", async () => {
+    mocks.getDueWorkers.mockResolvedValue([due("worker-1"), due("worker-2")]);
+    eachRunTakes(MAX_TICK_EXECUTION_MS);
+
+    await dispatchDueWorkers(NOW);
+
+    expect(mocks.claimRoutineSlot).toHaveBeenCalledTimes(1);
+    expect(mocks.claimRoutineSlot.mock.calls[0][0]).toBe("worker-1");
+  });
+
+  /** It was never attempted, so it is neither a success nor a failure. */
+  it("counts a worker it never started as neither dispatched nor failed", async () => {
+    mocks.getDueWorkers.mockResolvedValue([due("worker-1"), due("worker-2")]);
+    eachRunTakes(MAX_TICK_EXECUTION_MS);
+
+    const result = await dispatchDueWorkers(NOW);
+
+    expect(result.dispatched).not.toContain("worker-2");
+    expect(result.failed).toBe(0);
+  });
+
+  /**
+   * The budget is checked between workers, never during one. A worker that was
+   * inside the budget when it started runs to completion even though it is what
+   * exhausted it.
+   */
+  it("lets a worker that overruns the budget finish", async () => {
+    mocks.getDueWorkers.mockResolvedValue([
+      due("worker-1"),
+      due("worker-2"),
+      due("worker-3"),
+    ]);
+    // The first leaves a little budget; the second consumes far more than the
+    // rest of it and is still allowed to finish.
+    const durations = [1_000, MAX_TICK_EXECUTION_MS, 1_000];
+    let call = 0;
+    mocks.enqueueRoutine.mockImplementation(async () => {
+      vi.advanceTimersByTime(durations[call]);
+      call += 1;
+      return { status: "completed" };
+    });
+
+    const result = await dispatchDueWorkers(NOW);
+
+    expect(result.dispatched).toEqual(["worker-1", "worker-2"]);
+    expect(mocks.enqueueRoutine).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops at exactly the budget, not only past it", async () => {
+    mocks.getDueWorkers.mockResolvedValue([due("worker-1"), due("worker-2")]);
+    eachRunTakes(MAX_TICK_EXECUTION_MS);
+
+    await dispatchDueWorkers(NOW);
+
+    expect(mocks.enqueueRoutine).toHaveBeenCalledTimes(1);
+  });
+
+  it("says so once, when it stops", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mocks.getDueWorkers.mockResolvedValue([due("worker-1"), due("worker-2")]);
+    eachRunTakes(MAX_TICK_EXECUTION_MS);
+
+    await dispatchDueWorkers(NOW);
+
+    const budgetLines = warn.mock.calls
+      .map((call) => String(call[0]))
+      .filter((line) => line.includes("budget"));
+
+    expect(budgetLines).toHaveLength(1);
+    expect(budgetLines[0]).toMatch(/elapsed_ms=/);
+    warn.mockRestore();
+  });
+
+  /** Nothing about the worker itself belongs in an operational line. */
+  it("does not put anything about the worker in that line", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mocks.getDueWorkers.mockResolvedValue([
+      due("worker-1"),
+      due("secret-worker-id"),
+    ]);
+    eachRunTakes(MAX_TICK_EXECUTION_MS);
+
+    await dispatchDueWorkers(NOW);
+
+    const line = warn.mock.calls
+      .map((call) => String(call[0]))
+      .find((text) => text.includes("budget"));
+
+    expect(line).not.toContain("secret-worker-id");
+    warn.mockRestore();
+  });
+
+  it("has a budget shorter than the response Railway allows", () => {
+    expect(MAX_TICK_EXECUTION_MS).toBe(240_000);
   });
 });

@@ -14,6 +14,22 @@ import type { WebsiteChangeContext } from "@/lib/watcher/change-context";
 export const MAX_WEBSITE_AI_REQUEST_CHARS = 40_000;
 
 /**
+ * How long the model is given to describe one change.
+ *
+ * **Shorter than the provider's own allowance because this call is not the
+ * whole run.** A prompt worker's request is its entire execution and gets the
+ * full ten minutes. A website change is one step inside a scheduled tick that
+ * has already spent time fetching, and that has to finish while an HTTP
+ * response is still open, so it is given two minutes and the tick keeps the
+ * rest.
+ *
+ * It is not a guess at how long a summary takes: describing a bounded excerpt
+ * is a small request, and two minutes is generous for one. What it prevents is
+ * a single hung call holding a tick for ten.
+ */
+export const WEBSITE_AI_TIMEOUT_MS = 120_000;
+
+/**
  * What is said about the page's own text before any of it is read.
  *
  * **The material is somebody else's writing, and it is treated as material.**
@@ -72,6 +88,7 @@ export function buildWebsiteChangeRequest(
   const note = context.truncated ? `${TRUNCATION_NOTE}\n\n` : "";
 
   return {
+    timeoutMs: WEBSITE_AI_TIMEOUT_MS,
     system: `${PLATFORM_INSTRUCTION}\n${instruction}`,
     user: `WEBSITE CHANGE DATA
 

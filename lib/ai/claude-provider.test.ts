@@ -356,3 +356,55 @@ describe("a response that worked", () => {
     expect(await provider.execute({ user: "prompt" })).toBe("padded");
   });
 });
+
+/**
+ * **How long one call is given, and why it is not always the same.**
+ *
+ * A prompt worker's request is the whole of its run and gets the provider's
+ * full allowance. A website change is one step inside a scheduled tick that has
+ * already spent time fetching and has to finish while an HTTP response is still
+ * open, so it asks for less. The provider does not know which is which — it
+ * uses what it was given, or its own default.
+ */
+describe("how long a request is allowed to take", () => {
+  /** The per-call options the SDK was handed. */
+  function sentOptions() {
+    return create.mock.calls[create.mock.calls.length - 1][1];
+  }
+
+  it("gives a caller that asks for nothing the provider's own allowance", async () => {
+    create.mockResolvedValue(response());
+
+    await provider.execute({ user: "prompt" });
+
+    expect(sentOptions()?.timeout).toBe(600_000);
+  });
+
+  it("gives a caller that asks for less exactly that", async () => {
+    create.mockResolvedValue(response());
+
+    await provider.execute({ user: "material", timeoutMs: 120_000 });
+
+    expect(sentOptions()?.timeout).toBe(120_000);
+  });
+
+  /** A shorter deadline changes the deadline and nothing else. */
+  it("changes nothing else about the request", async () => {
+    create.mockResolvedValue(response());
+
+    await provider.execute({
+      system: "the task",
+      user: "the material",
+      timeoutMs: 120_000,
+    });
+
+    expect(sentRequest().model).toBe("claude-opus-5");
+    expect(sentRequest().max_tokens).toBe(16000);
+    expect(sentRequest().system).toBe("the task");
+    expect(sentRequest().messages).toEqual([
+      { role: "user", content: "the material" },
+    ]);
+    expect(sentRequest()).not.toHaveProperty("timeout");
+    expect(sentRequest()).not.toHaveProperty("timeoutMs");
+  });
+});

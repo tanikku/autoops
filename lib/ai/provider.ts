@@ -31,6 +31,17 @@ export type AIExecutionRequest = {
   system?: string;
   /** What the instruction is applied to. */
   user: string;
+  /**
+   * How long this one call may take, when the caller has a reason to differ
+   * from the provider's own allowance.
+   *
+   * **Set by callers whose work sits inside a larger budget.** A website change
+   * is one step of a scheduled tick that also has to fetch a page and finish
+   * inside the time an HTTP response is allowed; a prompt worker is the whole
+   * of its run and is given the provider's full allowance. Omitted means the
+   * provider decides, which is what every existing caller does.
+   */
+  timeoutMs?: number;
 };
 
 export interface AIProvider {

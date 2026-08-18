@@ -155,6 +155,9 @@ vi.mock("@/lib/watcher/change", async () => {
 
 const { runRoutine, RunPersistenceError } = await import("@/lib/runs");
 const { WatcherError } = await import("@/lib/watcher/errors");
+const { WEBSITE_AI_TIMEOUT_MS } = await vi.importActual<
+  typeof import("@/lib/watcher/website-request")
+>("@/lib/watcher/website-request");
 const { WebsiteStateConflictError } = await vi.importActual<
   typeof import("@/lib/website-snapshots")
 >("@/lib/website-snapshots");
@@ -1098,5 +1101,53 @@ describe("what each outcome moves", () => {
     await runRoutine("worker-1");
 
     expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * **A website change gets less time than a prompt worker does.**
+ *
+ * The model call is one step inside a scheduled tick that has already spent
+ * time fetching and has to finish while an HTTP response is still open. A
+ * prompt worker's call is the whole of its run and keeps the provider's own
+ * ten minutes.
+ */
+describe("how long a change may take to describe", () => {
+  beforeEach(() => {
+    mocks.getWebsiteSnapshot.mockResolvedValue({
+      ...matchingSnapshot(),
+      normalizedContent: "Careers Not hiring",
+      contentHash: "0".repeat(64),
+    });
+    mocks.execute.mockResolvedValue("a summary");
+  });
+
+  it("asks for two minutes", async () => {
+    await runRoutine("worker-1");
+
+    expect(mocks.execute.mock.calls[0][0].timeoutMs).toBe(
+      WEBSITE_AI_TIMEOUT_MS,
+    );
+    expect(WEBSITE_AI_TIMEOUT_MS).toBe(120_000);
+  });
+
+  /** The deadline is part of the request, alongside the two halves of it. */
+  it("still sends the instruction and the material", async () => {
+    await runRoutine("worker-1");
+
+    const request = mocks.execute.mock.calls[0][0];
+    expect(request.system).toContain("Summarise what changed in three points.");
+    expect(request.user).toContain("Careers Not hiring");
+  });
+
+  /** Applied to the capability, so a hand-started run is bounded too. */
+  it("applies the same deadline however the run was started", async () => {
+    await runRoutine("worker-1");
+    const scheduled = mocks.execute.mock.calls[0][0].timeoutMs;
+
+    mocks.execute.mockClear();
+    await runRoutine("worker-1");
+
+    expect(mocks.execute.mock.calls[0][0].timeoutMs).toBe(scheduled);
   });
 });
