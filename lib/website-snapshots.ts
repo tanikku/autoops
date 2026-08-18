@@ -94,6 +94,37 @@ export async function getWebsiteSnapshot(
 }
 
 /**
+ * Throws away the baseline, so the next run starts over.
+ *
+ * **What this is for is a watcher being pointed somewhere else.** A baseline is
+ * only meaningful against the page it was taken from; kept across a change of
+ * address, the next run would compare two unrelated documents and report the
+ * whole of one as having changed — with the AI asked to explain a difference
+ * that is really two different websites. Deleting it puts the worker back into
+ * the state it was hired in: no baseline, so the next run establishes one and
+ * involves no model at all.
+ *
+ * **Nothing to delete is a success.** A worker edited before it has ever run
+ * has no snapshot yet, and that is the ordinary case rather than a problem —
+ * treating it as one would make a brand-new website worker the only kind whose
+ * address cannot be corrected. The count is returned for callers that want to
+ * say what happened; none has to read it.
+ *
+ * Scoped to the one source. `websiteSourceId` is unique on the table, so this
+ * removes at most one row, and never another worker's.
+ */
+export async function deleteWebsiteSnapshot(
+  websiteSourceId: string,
+  client: DbClient = prisma,
+): Promise<number> {
+  const { count } = await client.websiteSnapshot.deleteMany({
+    where: { websiteSourceId },
+  });
+
+  return count;
+}
+
+/**
  * Establishes the first baseline for a source, and only the first.
  *
  * **A create, never an upsert**, which is the whole difference between this and

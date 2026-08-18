@@ -105,17 +105,76 @@ export async function createRoutine(
   return toRoutine(record);
 }
 
+/**
+ * The worker as something that is about to be changed.
+ *
+ * **Reads the kind strictly, where `getRoutine` reads it forgivingly.** That
+ * difference is the point. `toRoutine` turns an unreadable kind into `prompt`
+ * so that a page can still render — a display default, chosen because showing
+ * a worker is harmless. Editing is not display: the same default there would
+ * offer a form for a worker nobody can describe, and saving it would write the
+ * answer in, making a stored value nothing understands into a `prompt` worker
+ * by way of a form nobody meant as a conversion.
+ *
+ * So a kind this version of the application does not know is treated as no
+ * worker at all — the same answer as somebody else's, and for a related
+ * reason: in both cases there is nothing here this caller may safely change.
+ *
+ * Returning null rather than throwing keeps the caller's shape: the edit page
+ * and the edit action both already have to answer "no such worker".
+ */
+export async function getRoutineForEdit(
+  id: string,
+  userId: string,
+): Promise<Routine | null> {
+  const record = await prisma.routine.findFirst({ where: { id, userId } });
+
+  if (!record) {
+    return null;
+  }
+
+  if (!isRoutineKind(record.kind)) {
+    // Worth a line, because it means a row exists that this deployment cannot
+    // account for. The id only — nothing about the account or its contents.
+    console.warn(
+      `[worker] refusing to edit a worker of an unrecognised kind — id=${record.id}`,
+    );
+    return null;
+  }
+
+  return toRoutine(record);
+}
+
+/**
+ * Changes a worker that already exists.
+ *
+ * **`Partial<RoutineInput>` is what makes a kind unchangeable.** The type holds
+ * no kind, so there is no value this can be handed that would write one — the
+ * decision made at creation stays made, and a worker cannot be converted into
+ * something its other rows do not match.
+ *
+ * Takes a client so that a change which is not only a worker — a watched
+ * address moving, which resets the baseline with it — can land as one.
+ */
 export async function updateRoutine(
   id: string,
   input: Partial<RoutineInput>,
   userId: string,
+  client: DbClient = prisma,
 ): Promise<Routine | null> {
-  const { count } = await prisma.routine.updateMany({
+  const { count } = await client.routine.updateMany({
     where: { id, userId },
     data: input,
   });
 
-  return count === 0 ? null : getRoutine(id, userId);
+  if (count === 0) {
+    return null;
+  }
+
+  // Read back through the same client: inside a transaction, the module's own
+  // would be looking at the database as it was before any of this.
+  const record = await client.routine.findFirst({ where: { id, userId } });
+  return record ? toRoutine(record) : null;
 }
 
 export async function deleteRoutine(

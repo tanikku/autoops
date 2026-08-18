@@ -11,9 +11,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
-  getRoutine: vi.fn(),
+  getRoutineForEdit: vi.fn(),
   updateRoutine: vi.fn(),
   getUserTimezone: vi.fn(),
+  getWebsiteSource: vi.fn(),
+  updateWebsiteSourceUrl: vi.fn(),
+  deleteWebsiteSnapshot: vi.fn(),
+  transaction: vi.fn(),
   revalidatePath: vi.fn(),
   notFound: vi.fn(),
   redirect: vi.fn(),
@@ -26,10 +30,25 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("@/auth", () => ({ auth: mocks.auth }));
 vi.mock("@/lib/routines", () => ({
-  getRoutine: mocks.getRoutine,
+  getRoutineForEdit: mocks.getRoutineForEdit,
   updateRoutine: mocks.updateRoutine,
 }));
 vi.mock("@/lib/users", () => ({ getUserTimezone: mocks.getUserTimezone }));
+vi.mock("@/lib/website-sources", () => ({
+  getWebsiteSource: mocks.getWebsiteSource,
+  updateWebsiteSourceUrl: mocks.updateWebsiteSourceUrl,
+}));
+vi.mock("@/lib/website-snapshots", () => ({
+  deleteWebsiteSnapshot: mocks.deleteWebsiteSnapshot,
+}));
+// The transaction is the boundary under test, so the fake runs the callback and
+// hands it a marker: what the assertions want is that all three writes were
+// given the *same* client, and that it was not the module's own.
+vi.mock("@/lib/prisma", () => ({
+  prisma: { $transaction: mocks.transaction },
+}));
+
+const TX = { tag: "transaction-client" } as const;
 
 const { updateRoutineAction } = await import(
   "@/app/dashboard/workers/[id]/edit/actions"
@@ -46,6 +65,7 @@ function stored(overrides?: Record<string, unknown>) {
     name: "Daily digest",
     description: "",
     prompt: "Summarise today's news.",
+    kind: "prompt",
     status: "draft",
     frequency: "manual",
     runAtMinutes: null,
@@ -76,8 +96,14 @@ beforeEach(() => {
   mocks.auth.mockReset().mockResolvedValue({
     user: { id: "google-sub-1", email: "someone@example.com", name: null, image: null },
   });
-  mocks.getRoutine.mockReset().mockResolvedValue(stored());
+  mocks.getRoutineForEdit.mockReset().mockResolvedValue(stored());
   mocks.updateRoutine.mockReset().mockResolvedValue(stored());
+  mocks.getWebsiteSource.mockReset().mockResolvedValue(null);
+  mocks.updateWebsiteSourceUrl.mockReset().mockResolvedValue(true);
+  mocks.deleteWebsiteSnapshot.mockReset().mockResolvedValue(1);
+  mocks.transaction
+    .mockReset()
+    .mockImplementation((run: (tx: unknown) => Promise<unknown>) => run(TX));
   mocks.getUserTimezone.mockReset().mockResolvedValue("UTC");
   mocks.revalidatePath.mockReset();
   mocks.notFound.mockReset().mockImplementation(() => {
@@ -91,7 +117,7 @@ beforeEach(() => {
 
 describe("updateRoutineAction — the prompt contract", () => {
   it("A: a draft with no prompt stays saveable", async () => {
-    mocks.getRoutine.mockResolvedValue(stored({ prompt: "" }));
+    mocks.getRoutineForEdit.mockResolvedValue(stored({ prompt: "" }));
 
     const result = await save(
       form({ prompt: "", status: "draft", frequency: "manual" }),
@@ -102,7 +128,7 @@ describe("updateRoutineAction — the prompt contract", () => {
   });
 
   it("B: a draft with no prompt cannot be put on a schedule", async () => {
-    mocks.getRoutine.mockResolvedValue(stored({ prompt: "" }));
+    mocks.getRoutineForEdit.mockResolvedValue(stored({ prompt: "" }));
 
     const result = await save(
       form({ prompt: "", status: "active", frequency: "daily" }),
@@ -117,7 +143,7 @@ describe("updateRoutineAction — the prompt contract", () => {
   });
 
   it("C: the same worker goes active once it has a prompt", async () => {
-    mocks.getRoutine.mockResolvedValue(stored({ prompt: "" }));
+    mocks.getRoutineForEdit.mockResolvedValue(stored({ prompt: "" }));
 
     const result = await save(
       form({ prompt: "Summarise today.", status: "active", frequency: "daily" }),
@@ -129,7 +155,7 @@ describe("updateRoutineAction — the prompt contract", () => {
 
   /** The one that breaks a worker already running on a schedule. */
   it("D: a scheduled active worker cannot have its prompt emptied", async () => {
-    mocks.getRoutine.mockResolvedValue(
+    mocks.getRoutineForEdit.mockResolvedValue(
       stored({ status: "active", frequency: "daily", runAtMinutes: 540 }),
     );
 
@@ -146,7 +172,7 @@ describe("updateRoutineAction — the prompt contract", () => {
    * save rather than two — there is no order in which this is rejected.
    */
   it("E: clearing the prompt while stepping down to draft is allowed", async () => {
-    mocks.getRoutine.mockResolvedValue(
+    mocks.getRoutineForEdit.mockResolvedValue(
       stored({ status: "active", frequency: "daily", runAtMinutes: 540 }),
     );
 
@@ -159,7 +185,7 @@ describe("updateRoutineAction — the prompt contract", () => {
   });
 
   it("F: changing only the schedule leaves the prompt rule satisfied", async () => {
-    mocks.getRoutine.mockResolvedValue(
+    mocks.getRoutineForEdit.mockResolvedValue(
       stored({ status: "active", frequency: "daily", runAtMinutes: 540 }),
     );
 
@@ -182,7 +208,7 @@ describe("updateRoutineAction — the prompt contract", () => {
    * the rule has to be asked about those rather than about the absence.
    */
   it("G: a submission with no status is judged against the status it will keep", async () => {
-    mocks.getRoutine.mockResolvedValue(
+    mocks.getRoutineForEdit.mockResolvedValue(
       stored({ status: "active", frequency: "daily", runAtMinutes: 540 }),
     );
 
@@ -194,7 +220,7 @@ describe("updateRoutineAction — the prompt contract", () => {
   });
 
   it("H: a submission with no frequency is judged against the cadence it will keep", async () => {
-    mocks.getRoutine.mockResolvedValue(
+    mocks.getRoutineForEdit.mockResolvedValue(
       stored({ status: "active", frequency: "weekly", runAtWeekday: 3 }),
     );
 
@@ -206,7 +232,7 @@ describe("updateRoutineAction — the prompt contract", () => {
   });
 
   it("leaves an active manual worker free to have no prompt", async () => {
-    mocks.getRoutine.mockResolvedValue(
+    mocks.getRoutineForEdit.mockResolvedValue(
       stored({ status: "active", frequency: "manual" }),
     );
 
@@ -271,7 +297,306 @@ describe("updateRoutineAction — a write that matched no row", () => {
 
 describe("updateRoutineAction — ownership", () => {
   it("404s on a worker that is not the signed-in owner's", async () => {
-    mocks.getRoutine.mockResolvedValue(null);
+    mocks.getRoutineForEdit.mockResolvedValue(null);
+
+    await expect(save(form({ prompt: "x" }))).rejects.toBeInstanceOf(
+      NotFoundSignal,
+    );
+    expect(mocks.updateRoutine).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Editing a worker that watches a page.
+ *
+ * Two things are being held apart, and they are easy to confuse because both
+ * are "saving an edit". Changing what a worker *says* — its name, its
+ * instructions, when it runs — says nothing about the page it watches, and must
+ * leave the baseline alone: losing it means the next run reports a page it has
+ * already reported. Changing *which page* it watches invalidates the baseline
+ * completely, because a baseline only means anything against the page it came
+ * from.
+ *
+ * So the question every test here asks is which of those happened, and the
+ * answer is decided by comparing canonical URLs — never the strings as typed.
+ */
+describe("updateRoutineAction — website workers", () => {
+  const WATCHED = "https://example.com/news";
+  const MOVED = "https://example.com/updates";
+
+  function website(fields?: Record<string, string>) {
+    return form({
+      websiteUrl: WATCHED,
+      prompt: "Tell me what changed.",
+      ...fields,
+    });
+  }
+
+  beforeEach(() => {
+    mocks.getRoutineForEdit.mockResolvedValue(
+      stored({ kind: "website", prompt: "Tell me what changed." }),
+    );
+    mocks.updateRoutine.mockResolvedValue(
+      stored({ kind: "website", prompt: "Tell me what changed." }),
+    );
+    mocks.getWebsiteSource.mockResolvedValue({
+      id: "source-1",
+      routineId: "worker-1",
+      url: WATCHED,
+      createdAt: new Date("2026-08-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-08-01T00:00:00.000Z"),
+    });
+  });
+
+  describe("when the page is the same one", () => {
+    it("saves without touching the source or the baseline", async () => {
+      const result = await save(website({ name: "Renamed" }));
+
+      expect(result?.status).toBe("success");
+      expect(mocks.updateRoutine).toHaveBeenCalledTimes(1);
+      expect(mocks.transaction).not.toHaveBeenCalled();
+      expect(mocks.updateWebsiteSourceUrl).not.toHaveBeenCalled();
+      expect(mocks.deleteWebsiteSnapshot).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The fragment is never sent, so `parseWatchUrl` drops it — which means an
+     * address written with one is the same page as the address without it.
+     * Comparing what was typed would call that a move and spend the baseline.
+     */
+    it.each([
+      ["a fragment", `${WATCHED}#section`],
+      ["surrounding space", `  ${WATCHED}  `],
+      ["a redundant port", "https://example.com:443/news"],
+      ["a capitalised host", "https://Example.com/news"],
+    ])("treats %s as the same page", async (_label, websiteUrl) => {
+      const result = await save(website({ websiteUrl }));
+
+      expect(result?.status).toBe("success");
+      expect(mocks.deleteWebsiteSnapshot).not.toHaveBeenCalled();
+      expect(mocks.transaction).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["the instructions", { prompt: "Say what moved." }],
+      ["the name", { name: "Renamed" }],
+      ["the description", { description: "Now with a description." }],
+      ["the status", { status: "paused" }],
+      ["the cadence", { frequency: "daily", runAt: "09:00" }],
+      ["it to manual", { frequency: "manual" }],
+    ])("keeps the baseline when %s changes", async (_label, fields) => {
+      await save(website(fields));
+
+      expect(mocks.deleteWebsiteSnapshot).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("when the page changes", () => {
+    it("updates the worker, the address and the baseline in one transaction", async () => {
+      const result = await save(website({ websiteUrl: MOVED }));
+
+      expect(result?.status).toBe("success");
+      expect(mocks.transaction).toHaveBeenCalledTimes(1);
+      expect(mocks.updateRoutine).toHaveBeenCalledWith(
+        "worker-1",
+        expect.any(Object),
+        "google-sub-1",
+        TX,
+      );
+      expect(mocks.updateWebsiteSourceUrl).toHaveBeenCalledWith(
+        "worker-1",
+        "google-sub-1",
+        MOVED,
+        TX,
+      );
+      expect(mocks.deleteWebsiteSnapshot).toHaveBeenCalledWith("source-1", TX);
+    });
+
+    it("throws the baseline away only after the address has moved", async () => {
+      await save(website({ websiteUrl: MOVED }));
+
+      expect(
+        mocks.updateWebsiteSourceUrl.mock.invocationCallOrder[0],
+      ).toBeLessThan(mocks.deleteWebsiteSnapshot.mock.invocationCallOrder[0]);
+    });
+
+    /**
+     * A worker edited before it has ever run has no baseline yet, and that is
+     * ordinary rather than a problem — otherwise a brand-new website worker
+     * would be the only kind whose address could not be corrected.
+     */
+    it("succeeds when there is no baseline to throw away", async () => {
+      mocks.deleteWebsiteSnapshot.mockResolvedValue(0);
+
+      const result = await save(website({ websiteUrl: MOVED }));
+
+      expect(result?.status).toBe("success");
+    });
+
+    it("does not report a save when the address could not be moved", async () => {
+      mocks.updateWebsiteSourceUrl.mockResolvedValue(false);
+
+      const result = await save(website({ websiteUrl: MOVED }));
+
+      expect(result?.status).toBe("error");
+      expect(mocks.revalidatePath).not.toHaveBeenCalled();
+    });
+
+    it("does not report a save when the baseline could not be thrown away", async () => {
+      mocks.deleteWebsiteSnapshot.mockRejectedValue(new Error("boom"));
+
+      const result = await save(website({ websiteUrl: MOVED }));
+
+      expect(result?.status).toBe("error");
+      expect(result?.message).toBe("Could not save the worker.");
+      expect(mocks.revalidatePath).not.toHaveBeenCalled();
+    });
+
+    it("does not report a save when the worker was deleted mid-save", async () => {
+      mocks.updateRoutine.mockResolvedValue(null);
+
+      const result = await save(website({ websiteUrl: MOVED }));
+
+      expect(result?.status).toBe("error");
+      expect(result?.message).toBe("Worker not found.");
+      expect(mocks.revalidatePath).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("what it will not save", () => {
+    it.each([
+      ["blank", ""],
+      ["not a URL at all", "example"],
+      ["a scheme this does not fetch", "ftp://example.com/news"],
+      ["carrying credentials", "https://user:pass@example.com/news"],
+      ["on another port", "https://example.com:8443/news"],
+      ["nothing but a scheme", "https://"],
+    ])("refuses an address that is %s", async (_label, websiteUrl) => {
+      const result = await save(website({ websiteUrl }));
+
+      expect(result?.status).toBe("error");
+      expect(result?.errors?.websiteUrl).toBeDefined();
+      expect(mocks.updateRoutine).not.toHaveBeenCalled();
+      expect(mocks.deleteWebsiteSnapshot).not.toHaveBeenCalled();
+    });
+
+    it("refuses an address longer than the limit", async () => {
+      const long = `https://example.com/${"a".repeat(8_192)}`;
+
+      const result = await save(website({ websiteUrl: long }));
+
+      expect(result?.errors?.websiteUrl).toBeDefined();
+      expect(mocks.updateRoutine).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["blank", ""],
+      ["only whitespace", "   "],
+    ])("refuses instructions that are %s", async (_label, prompt) => {
+      const result = await save(website({ prompt }));
+
+      expect(result?.status).toBe("error");
+      expect(result?.errors?.prompt).toBeDefined();
+      expect(mocks.updateRoutine).not.toHaveBeenCalled();
+    });
+
+    /** Stricter than a prompt worker: nothing about the status relaxes it. */
+    it("requires instructions even on a manual draft", async () => {
+      const result = await save(
+        website({ prompt: "", status: "draft", frequency: "manual" }),
+      );
+
+      expect(result?.errors?.prompt).toBeDefined();
+    });
+
+    it("accepts instructions exactly at the limit", async () => {
+      const result = await save(website({ prompt: "a".repeat(10_000) }));
+
+      expect(result?.status).toBe("success");
+    });
+
+    it("refuses instructions past the limit", async () => {
+      const result = await save(website({ prompt: "a".repeat(10_001) }));
+
+      expect(result?.errors?.prompt).toBeDefined();
+      expect(mocks.updateRoutine).not.toHaveBeenCalled();
+    });
+
+    it("keeps the address in the values it hands back", async () => {
+      const result = await save(website({ name: "", websiteUrl: MOVED }));
+
+      expect(result?.values?.websiteUrl).toBe(MOVED);
+    });
+  });
+
+  /**
+   * A website worker with nothing to watch is a state that should not exist.
+   * Saving the form as though it were a prompt worker would make it permanent —
+   * the conversion this whole boundary refuses, arrived at by accident.
+   */
+  it("refuses to save a website worker that has no page", async () => {
+    mocks.getWebsiteSource.mockResolvedValue(null);
+
+    const result = await save(website());
+
+    expect(result?.status).toBe("error");
+    expect(mocks.updateRoutine).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What a worker is cannot be edited.
+ *
+ * The type system carries most of this — `updateRoutine` takes a
+ * `Partial<RoutineInput>`, which has no kind in it, so there is no value it
+ * could be handed that would write one. What the tests add is the boundary
+ * either side: a submission claiming a kind is read past, and a stored kind
+ * nothing recognises stops the save rather than being repaired into one.
+ */
+describe("updateRoutineAction — the kind cannot be edited", () => {
+  it.each(["website", "webhook", ""])(
+    "ignores a submitted kind of %s on a prompt worker",
+    async (kind) => {
+      const result = await save(form({ prompt: "Summarise.", kind }));
+
+      expect(result?.status).toBe("success");
+      expect(mocks.updateRoutine).toHaveBeenCalledWith(
+        "worker-1",
+        expect.not.objectContaining({ kind: expect.anything() }),
+        "google-sub-1",
+      );
+      expect(mocks.getWebsiteSource).not.toHaveBeenCalled();
+      expect(mocks.updateWebsiteSourceUrl).not.toHaveBeenCalled();
+      expect(mocks.deleteWebsiteSnapshot).not.toHaveBeenCalled();
+    },
+  );
+
+  it("ignores a submitted kind of prompt on a website worker", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(stored({ kind: "website" }));
+    mocks.getWebsiteSource.mockResolvedValue({
+      id: "source-1",
+      routineId: "worker-1",
+      url: "https://example.com/news",
+      createdAt: new Date("2026-08-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-08-01T00:00:00.000Z"),
+    });
+
+    // Reads as a website worker throughout: the address is still required, and
+    // leaving it out is what proves the submitted kind was not believed.
+    const result = await save(form({ kind: "prompt", prompt: "Summarise." }));
+
+    expect(result?.status).toBe("error");
+    expect(result?.errors?.websiteUrl).toBeDefined();
+  });
+
+  /**
+   * `getRoutineForEdit` answers null for a kind it cannot read, which is the
+   * same answer it gives for somebody else's worker — in both cases there is
+   * nothing here this caller may change.
+   */
+  it("404s rather than editing a worker of an unrecognised kind", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(null);
 
     await expect(save(form({ prompt: "x" }))).rejects.toBeInstanceOf(
       NotFoundSignal,

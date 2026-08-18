@@ -163,14 +163,17 @@ export function readWorkerForm(formData: FormData): WorkerFormInput {
     name: text(formData, "name"),
     description: text(formData, "description"),
     prompt: text(formData, "prompt"),
-    // **A URL only exists on a submission that says it is watching a page.**
-    // The create form hides the field when the other kind is chosen, but a
-    // hidden field is a UI state rather than a guarantee — the value can still
-    // arrive, from a stale form, a resubmission, or by hand. Dropping it here
-    // means every path downstream reads `""` for a prompt worker without
-    // having to remember to ask, which is what keeps a prompt worker from
-    // acquiring a page to watch.
-    websiteUrl: kind === "website" ? text(formData, "websiteUrl") : "",
+    // **Read as submitted, and acted on only by whoever knows the kind.**
+    // Dropping it here on the strength of the submitted kind would work for a
+    // new worker, where the form is the only thing that could say. It cannot
+    // work for an existing one: editing must not take the kind from the
+    // submission at all, so a reader that did would decide whether an address
+    // exists from a field the boundary has already resolved to distrust.
+    //
+    // Nothing downstream reads this without a kind in hand — `validateWorkerForm`
+    // is given one, and each action gates its writes on the same one — so a
+    // prompt worker still cannot acquire a page to watch.
+    websiteUrl: text(formData, "websiteUrl"),
     kind: isRoutineKind(kind) ? kind : null,
     status: isRoutineStatus(status) ? status : null,
     frequency: isRoutineFrequency(frequency) ? frequency : null,
@@ -198,6 +201,29 @@ export type WorkerFormContext = {
   status: RoutineStatus;
   frequency: RoutineFrequency;
 };
+
+/**
+ * The fields every worker has, in the order they are asked for.
+ *
+ * **Not simply the keys of `workerFieldLimits`**, which now also holds the
+ * address — and an address is a field one kind of worker has. Checking its
+ * length here would mean a prompt worker could be rejected for something in a
+ * box it was never shown.
+ */
+const sharedTextFields = ["name", "description", "prompt"] as const;
+
+/** Records a length complaint, leaving any message the field already earned. */
+function applyLengthLimit(
+  errors: WorkerFieldErrors,
+  field: WorkerFieldName,
+  value: string,
+): void {
+  const limit = workerFieldLimits[field];
+  if (value.length > limit) {
+    errors[field] =
+      `${fieldLabels[field]} must be ${limit.toLocaleString("en-US")} characters or fewer.`;
+  }
+}
 
 /**
  * The single source of truth for what a valid worker looks like.
@@ -251,17 +277,11 @@ export function validateWorkerForm(
     errors.prompt = "Prompt is required for scheduled active workers.";
   }
 
-  for (const field of Object.keys(workerFieldLimits) as WorkerFieldName[]) {
+  for (const field of sharedTextFields) {
     // A field already rejected keeps its first message: "Name is required"
     // says more than a length complaint about an empty string ever could.
-    if (errors[field]) {
-      continue;
-    }
-
-    const limit = workerFieldLimits[field];
-    if (input[field].length > limit) {
-      errors[field] =
-        `${fieldLabels[field]} must be ${limit.toLocaleString("en-US")} characters or fewer.`;
+    if (!errors[field]) {
+      applyLengthLimit(errors, field, input[field]);
     }
   }
 
@@ -269,14 +289,17 @@ export function validateWorkerForm(
 }
 
 /**
- * The rules for hiring a worker, which depend on what it is being hired to do.
+ * The rules for a worker of a particular kind.
  *
  * **A layer over `validateWorkerForm` rather than a replacement for it.** Every
  * rule that applies to a worker still applies here — the shared one runs first
- * and its messages win — so a kind cannot become a way around a check. What is
- * added is only what a website worker needs and a prompt worker has no field
- * for, which is why the edit action goes on calling the shared one and is
- * unaffected by any of this.
+ * and its messages win — so a kind cannot become a way around a check.
+ *
+ * **The kind is a parameter, not something read out of the submission.** Only
+ * one caller is entitled to take it from a form: hiring, where nothing else
+ * could say. Editing takes it from the stored worker, because a submission
+ * claiming a different one is either a stale form or an attempt to convert a
+ * worker into something it is not, and both are answered by ignoring it.
  *
  * **A website worker's instructions are always required**, whatever its status
  * or cadence, and that is a stricter rule than the shared one deliberately. For
@@ -288,22 +311,27 @@ export function validateWorkerForm(
  * done everything except the part anyone wanted.
  *
  * **The address is checked for presence and length only.** Whether it is a URL
- * AutoOps will fetch is `parseWatchUrl`'s question, and the create action asks
- * it — it needs the parsed URL anyway, to store the canonical form. Asking here
- * as well would parse the same string twice and put the answer in two places.
+ * AutoOps will fetch is `parseWatchUrl`'s question, and the actions ask it —
+ * they need the parsed URL anyway, to store the canonical form and, when
+ * editing, to tell a new address from the same one written differently. Asking
+ * here as well would parse the same string twice and put the answer in two
+ * places.
  */
-export function validateCreateWorkerForm(
+export function validateWorkerFormForKind(
   input: WorkerFormInput,
   context: WorkerFormContext,
+  kind: RoutineKind,
 ): WorkerFieldErrors {
   const errors = validateWorkerForm(input, context);
 
-  if (input.kind !== "website") {
+  if (kind !== "website") {
     return errors;
   }
 
-  if (input.websiteUrl === "" && !errors.websiteUrl) {
+  if (input.websiteUrl === "") {
     errors.websiteUrl = "Website address is required.";
+  } else {
+    applyLengthLimit(errors, "websiteUrl", input.websiteUrl);
   }
 
   if (input.prompt === "" && !errors.prompt) {

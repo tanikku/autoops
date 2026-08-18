@@ -13,7 +13,7 @@ import {
   hasWorkerFormErrors,
   readWorkerForm,
   summarizeWorkerFormErrors,
-  validateCreateWorkerForm,
+  validateWorkerFormForKind,
   type WorkerFieldErrors,
   type WorkerFormInput,
 } from "@/lib/worker-input";
@@ -84,7 +84,7 @@ export async function createRoutineAction(
   }
 
   const kind = input.kind;
-  const errors = validateCreateWorkerForm(input, { status, frequency });
+  const errors = validateWorkerFormForKind(input, { status, frequency }, kind);
   if (hasWorkerFormErrors(errors)) {
     return {
       status: "error",

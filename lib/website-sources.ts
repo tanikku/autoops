@@ -88,6 +88,41 @@ export async function createWebsiteSource(
 }
 
 /**
+ * Points an existing watcher at a different page.
+ *
+ * **An update, never an upsert.** A website worker with no source is not a
+ * worker missing a setting — it is a state that should not exist, and creating
+ * the row here would repair it silently at exactly the moment the caller is
+ * also throwing away the baseline. Reporting `false` instead lets the caller
+ * abandon the whole change, which is what it does.
+ *
+ * **Scoped to the owner through the routine**, as every read of a source is:
+ * the worker's `userId` is the only place that says who anything belongs to.
+ * The caller has usually established that already; saying it again costs one
+ * condition and removes the question of whether it did.
+ *
+ * Reports whether a row moved. `false` means the worker is not this owner's, or
+ * has no source — the caller cannot tell those apart, and neither may act on
+ * the address it was given.
+ *
+ * **The URL is not validated here**, the same as everywhere else in this file:
+ * what arrives is expected to be canonical already.
+ */
+export async function updateWebsiteSourceUrl(
+  routineId: string,
+  userId: string,
+  url: string,
+  client: DbClient = prisma,
+): Promise<boolean> {
+  const { count } = await client.websiteSource.updateMany({
+    where: { routineId, routine: { userId } },
+    data: { url },
+  });
+
+  return count === 1;
+}
+
+/**
  * Records which page a worker watches, creating the source or replacing its URL.
  *
  * **An upsert on the worker, because a worker watches one page.** Editing a

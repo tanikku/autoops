@@ -3,7 +3,7 @@ import {
   hasWorkerFormErrors,
   readWorkerForm,
   summarizeWorkerFormErrors,
-  validateCreateWorkerForm,
+  validateWorkerFormForKind,
   validateWorkerForm,
   workerFieldLimits,
   type WorkerFormContext,
@@ -245,12 +245,17 @@ describe("summarizeWorkerFormErrors", () => {
 });
 
 /**
- * What a kind changes, and what it must not.
+ * What a kind is read as, and what it is not read for.
  *
- * The address is the obvious part. The part worth pinning down is the drop: a
- * URL that arrives on a submission which is not creating a website worker has
- * to disappear before anything downstream can act on it, because the thing
- * downstream would do is give a prompt worker a page to watch.
+ * A kind that cannot be recognised reads as null rather than as `prompt`: a
+ * reader that guessed would decide, on behalf of the boundary, what a
+ * submission was asking for.
+ *
+ * **The address is read as submitted, whatever the kind says.** It is not the
+ * reader's to drop — editing takes the kind from the stored worker, so a reader
+ * that gated on the submitted one would gate on the very field that boundary
+ * distrusts. Who ignores an address, and when, is asserted where the kind is
+ * actually known: the two action suites.
  */
 describe("readWorkerForm — kind", () => {
   function form(fields: Record<string, string>) {
@@ -287,12 +292,34 @@ describe("readWorkerForm — kind", () => {
     ["a prompt worker", { kind: "prompt" }],
     ["a submission with no kind", {}],
     ["a submission with an unreadable kind", { kind: "webhook" }],
-  ])("drops the address on %s", (_label, fields) => {
+  ])("keeps the address as submitted on %s", (_label, fields) => {
     const parsed = readWorkerForm(
       form({ ...fields, websiteUrl: "https://example.com/news" }),
     );
 
-    expect(parsed.websiteUrl).toBe("");
+    expect(parsed.websiteUrl).toBe("https://example.com/news");
+  });
+
+  it("reads a missing address as blank", () => {
+    expect(readWorkerForm(form({ kind: "website" })).websiteUrl).toBe("");
+  });
+
+  /**
+   * The length limit belongs to the field, and the field belongs to one kind.
+   * A prompt worker rejected for an address it was never shown would be a
+   * complaint about a box that is not on its form.
+   */
+  it("does not hold a prompt worker to the address limit", () => {
+    const parsed = readWorkerForm(
+      form({
+        kind: "prompt",
+        websiteUrl: "a".repeat(workerFieldLimits.websiteUrl + 1),
+      }),
+    );
+
+    expect(
+      validateWorkerFormForKind(parsed, context(), "prompt").websiteUrl,
+    ).toBeUndefined();
   });
 });
 
@@ -305,7 +332,7 @@ describe("readWorkerForm — kind", () => {
  * validator is still the one deciding: nothing here loosens a rule, and the
  * edit form, which never sends a kind, cannot reach any of it.
  */
-describe("validateCreateWorkerForm — website workers", () => {
+describe("validateWorkerFormForKind — website workers", () => {
   function website(overrides?: Partial<WorkerFormInput>): WorkerFormInput {
     return input({
       kind: "website",
@@ -316,13 +343,14 @@ describe("validateCreateWorkerForm — website workers", () => {
   }
 
   it("accepts a complete website worker", () => {
-    expect(validateCreateWorkerForm(website(), context())).toEqual({});
+    expect(validateWorkerFormForKind(website(), context(), "website")).toEqual({});
   });
 
   it("requires an address", () => {
-    const errors = validateCreateWorkerForm(
+    const errors = validateWorkerFormForKind(
       website({ websiteUrl: "" }),
       context(),
+      "website",
     );
 
     expect(errors.websiteUrl).toBeDefined();
@@ -332,8 +360,11 @@ describe("validateCreateWorkerForm — website workers", () => {
     const long = `https://example.com/${"a".repeat(workerFieldLimits.websiteUrl)}`;
 
     expect(
-      validateCreateWorkerForm(website({ websiteUrl: long }), context())
-        .websiteUrl,
+      validateWorkerFormForKind(
+        website({ websiteUrl: long }),
+        context(),
+        "website",
+      ).websiteUrl,
     ).toBeDefined();
   });
 
@@ -344,8 +375,11 @@ describe("validateCreateWorkerForm — website workers", () => {
 
     expect(exact).toHaveLength(workerFieldLimits.websiteUrl);
     expect(
-      validateCreateWorkerForm(website({ websiteUrl: exact }), context())
-        .websiteUrl,
+      validateWorkerFormForKind(
+        website({ websiteUrl: exact }),
+        context(),
+        "website",
+      ).websiteUrl,
     ).toBeUndefined();
   });
 
@@ -363,9 +397,10 @@ describe("validateCreateWorkerForm — website workers", () => {
   ] as const)(
     "requires instructions on a %s worker running %s",
     (status, frequency) => {
-      const errors = validateCreateWorkerForm(
+      const errors = validateWorkerFormForKind(
         website({ prompt: "" }),
         context({ status, frequency }),
+        "website",
       );
 
       expect(errors.prompt).toBeDefined();
@@ -373,18 +408,20 @@ describe("validateCreateWorkerForm — website workers", () => {
   );
 
   it("rejects instructions longer than the prompt limit", () => {
-    const errors = validateCreateWorkerForm(
+    const errors = validateWorkerFormForKind(
       website({ prompt: "a".repeat(workerFieldLimits.prompt + 1) }),
       context(),
+      "website",
     );
 
     expect(errors.prompt).toBeDefined();
   });
 
   it("accepts instructions exactly at the prompt limit", () => {
-    const errors = validateCreateWorkerForm(
+    const errors = validateWorkerFormForKind(
       website({ prompt: "a".repeat(workerFieldLimits.prompt) }),
       context(),
+      "website",
     );
 
     expect(errors.prompt).toBeUndefined();
@@ -392,30 +429,33 @@ describe("validateCreateWorkerForm — website workers", () => {
 
   it("still requires a name", () => {
     expect(
-      validateCreateWorkerForm(website({ name: "" }), context()).name,
+      validateWorkerFormForKind(website({ name: "" }), context(), "website")
+        .name,
     ).toBeDefined();
   });
 });
 
 /** A prompt worker is validated exactly as it was before kinds existed. */
-describe("validateCreateWorkerForm — prompt workers", () => {
+describe("validateWorkerFormForKind — prompt workers", () => {
   it.each([
     ["draft", "daily"],
     ["paused", "monthly"],
     ["active", "manual"],
   ] as const)("keeps its blank prompt on a %s %s worker", (status, frequency) => {
-    const errors = validateCreateWorkerForm(
+    const errors = validateWorkerFormForKind(
       input({ kind: "prompt", prompt: "" }),
       context({ status, frequency }),
+      "prompt",
     );
 
     expect(errors).toEqual({});
   });
 
   it("still refuses a blank prompt when AutoOps would run it unattended", () => {
-    const errors = validateCreateWorkerForm(
+    const errors = validateWorkerFormForKind(
       input({ kind: "prompt", prompt: "" }),
       context({ status: "active", frequency: "daily" }),
+      "prompt",
     );
 
     expect(errors.prompt).toBe(
@@ -424,9 +464,10 @@ describe("validateCreateWorkerForm — prompt workers", () => {
   });
 
   it("never asks a prompt worker for an address", () => {
-    const errors = validateCreateWorkerForm(
+    const errors = validateWorkerFormForKind(
       input({ kind: "prompt", prompt: "Summarise this." }),
       context({ status: "active", frequency: "daily" }),
+      "prompt",
     );
 
     expect(errors.websiteUrl).toBeUndefined();

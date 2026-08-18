@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { DashboardNav } from "@/components/dashboard-nav";
 import { WorkerEditForm } from "@/components/worker-edit-form";
-import { getRoutine } from "@/lib/routines";
+import { getRoutineForEdit } from "@/lib/routines";
 import { requireUserId } from "@/lib/session";
+import { getWebsiteSource } from "@/lib/website-sources";
 import { minutesToTimeValue } from "@/lib/worker-input";
 
 export const metadata: Metadata = {
@@ -22,10 +23,23 @@ export default async function EditWorkerPage({
   const { id } = await params;
   const userId = await requireUserId();
   // A worker owned by someone else is indistinguishable from one that does not
-  // exist: both 404, so the id is never confirmed.
-  const worker = await getRoutine(id, userId);
+  // exist: both 404, so the id is never confirmed. So is one stored with a kind
+  // this version cannot read — offering a form for a worker nobody can describe
+  // would end in saving an answer that was never given.
+  const worker = await getRoutineForEdit(id, userId);
 
   if (!worker) {
+    notFound();
+  }
+
+  // **Only a website worker has a page, and only it is asked for one.**
+  const source =
+    worker.kind === "website" ? await getWebsiteSource(id, userId) : null;
+
+  // A website worker with nothing to watch is a state that should not exist.
+  // Rendering it as a prompt worker would hide that, and saving the form would
+  // then be a conversion nobody asked for — so it is treated as no worker.
+  if (worker.kind === "website" && !source) {
     notFound();
   }
 
@@ -44,9 +58,11 @@ export default async function EditWorkerPage({
         <WorkerEditForm
           worker={{
             id: worker.id,
+            kind: worker.kind,
             name: worker.name,
             description: worker.description,
             prompt: worker.prompt,
+            websiteUrl: source?.url,
             frequency: worker.frequency,
             status: worker.status,
             runAt: minutesToTimeValue(worker.runAtMinutes),
