@@ -67,7 +67,7 @@ function SaveButton() {
   );
 }
 
-export function RoutineForm() {
+export function RoutineForm({ timezone }: { timezone: string }) {
   const [state, formAction] = useActionState<CreateRoutineState, FormData>(
     createRoutineAction,
     null,
@@ -212,6 +212,7 @@ export function RoutineForm() {
           }
           errors={visibleErrors}
           kind={kind}
+          timezone={timezone}
         />
 
         <div className="flex gap-2">

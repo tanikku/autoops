@@ -4,6 +4,7 @@ import { DashboardNav } from "@/components/dashboard-nav";
 import { WorkerEditForm } from "@/components/worker-edit-form";
 import { getRoutineForEdit } from "@/lib/routines";
 import { requireUserId } from "@/lib/session";
+import { getUserTimezone } from "@/lib/users";
 import { getWebsiteSource } from "@/lib/website-sources";
 import { minutesToTimeValue } from "@/lib/worker-input";
 
@@ -31,6 +32,9 @@ export default async function EditWorkerPage({
   if (!worker) {
     notFound();
   }
+
+  // What the form says about the schedule it is editing. Read only.
+  const timezone = await getUserTimezone(userId);
 
   // **Only a website worker has a page, and only it is asked for one.**
   const source =
@@ -69,6 +73,7 @@ export default async function EditWorkerPage({
             runAtWeekday: worker.runAtWeekday,
             runAtDay: worker.runAtDay,
           }}
+          timezone={timezone}
         />
       </main>
     </div>

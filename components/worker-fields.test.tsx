@@ -18,8 +18,15 @@ const { BASELINE_RESET_NOTE } = await import("@/components/worker-edit-form");
  * and no new dependency.
  */
 
-function render(props: Parameters<typeof WorkerFields>[0]) {
-  return renderToStaticMarkup(<WorkerFields {...props} />);
+/** The zone every worker form now has to be told, defaulted so each test names only what it is about. */
+function render(
+  props: Omit<Parameters<typeof WorkerFields>[0], "timezone"> & {
+    timezone?: string;
+  },
+) {
+  return renderToStaticMarkup(
+    <WorkerFields timezone="UTC" {...props} />,
+  );
 }
 
 describe("a prompt worker's fields", () => {
@@ -134,5 +141,57 @@ describe("what the note about changing an address says", () => {
     "AI",
   ])("does not claim %o", (phrase) => {
     expect(BASELINE_RESET_NOTE).not.toContain(phrase);
+  });
+});
+
+/**
+ * What the schedule fields say about the clock they are read on.
+ *
+ * "In your timezone" was already here and did not prevent the thing it was
+ * meant to prevent: an account starts on UTC, nothing on this form said so, and
+ * a daily worker created by someone reading their own wall clock was scheduled
+ * nine hours away from where they meant. The zone has to appear as a value, not
+ * as a pronoun.
+ */
+describe("what the schedule says about the timezone", () => {
+  it("names the account's zone next to the time field", () => {
+    const html = render({ timezone: "Asia/Tokyo", values: { frequency: "daily" } });
+
+    expect(html).toContain("Times use your account timezone: Asia/Tokyo.");
+  });
+
+  it("names UTC when that is what the account is on", () => {
+    const html = render({ timezone: "UTC", values: { frequency: "daily" } });
+
+    expect(html).toContain("Times use your account timezone: UTC.");
+  });
+
+  /** The blank-Run-at rule is unchanged; only the sentence around it grew. */
+  it("still explains what leaving the time empty does", () => {
+    const html = render({ timezone: "UTC", values: { frequency: "weekly" } });
+
+    expect(html).toContain(
+      "Leave empty to run at whatever time the worker was saved.",
+    );
+  });
+
+  it.each(["prompt", "website"] as const)(
+    "says the same thing for a %s worker",
+    (kind) => {
+      const html = render({
+        kind,
+        timezone: "Europe/Paris",
+        values: { frequency: "daily", prompt: "x", websiteUrl: "https://e.com/" },
+      });
+
+      expect(html).toContain("Times use your account timezone: Europe/Paris.");
+    },
+  );
+
+  /** A manual worker has no slot, so there is no time field to explain. */
+  it("says nothing about times on a manual worker", () => {
+    const html = render({ timezone: "UTC", values: { frequency: "manual" } });
+
+    expect(html).not.toContain("Times use your account timezone");
   });
 });

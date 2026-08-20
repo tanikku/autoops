@@ -66,8 +66,10 @@ function SaveButton() {
 
 export function WorkerEditForm({
   worker,
+  timezone,
 }: {
   worker: WorkerFieldValues & { id: string; kind: RoutineKind };
+  timezone: string;
 }) {
   // The id travels with the action rather than the form, so it cannot be
   // swapped by the client.
@@ -125,6 +127,7 @@ export function WorkerEditForm({
         }
         errors={state?.errors}
         kind={worker.kind}
+        timezone={timezone}
         websiteUrlNote={BASELINE_RESET_NOTE}
       />
 

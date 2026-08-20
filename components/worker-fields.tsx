@@ -240,6 +240,7 @@ export function WorkerFields({
   values,
   errors = {},
   kind = "prompt",
+  timezone,
   websiteUrlNote,
 }: {
   values: WorkerFieldValues;
@@ -263,6 +264,20 @@ export function WorkerFields({
    * website worker, which is the only kind with an address at all.
    */
   websiteUrlNote?: string;
+  /**
+   * The zone this worker's schedule will be read in — the account's, as stored.
+   *
+   * **Required, and shown rather than implied.** "In your timezone" was already
+   * here and was not enough: the account starts on UTC and nothing on this form
+   * said so, so a time entered as 09:00 by someone reading their own wall clock
+   * was stored as 09:00 somewhere else entirely. A worker scheduled that way is
+   * wrong by the offset, silently, until somebody works out why it ran at the
+   * wrong hour — which is what happened.
+   *
+   * The identifier is passed in rather than read here: this is a client
+   * component, and the zone lives on the account row.
+   */
+  timezone: string;
 }) {
   // The only controlled field, and only because another one depends on it: a
   // time of day is meaningless for a manual worker, so the select has to be
@@ -408,8 +423,8 @@ export function WorkerFields({
             className="w-40"
           />
           <p className="text-xs text-muted-foreground">
-            In your timezone. Leave empty to run at whatever time the worker
-            was saved.
+            Times use your account timezone: {timezone}. Leave empty to run at
+            whatever time the worker was saved.
           </p>
         </div>
       ) : null}

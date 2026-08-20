@@ -66,9 +66,21 @@ export function TimezoneForm({ timezone }: { timezone: string }) {
           </SelectContent>
         </Select>
 
+        {/* **The last sentence says only what saving this does.** Saving writes
+            one column — the account's zone — and nothing reads or rewrites a
+            worker's pending slot on the way, so the run already scheduled stays
+            exactly where it was.
+
+            What happens to the runs *after* that one is deliberately not
+            described here. It is not one rule: a worker with a Run at time has
+            that time re-read in the new zone when its schedule next advances,
+            while a worker with Run at left empty keeps the moment it already
+            had. Any sentence short enough for this page would be wrong about
+            one of the two. */}
         <p className="text-sm text-muted-foreground">
           Timestamps are shown in this zone, and a worker set to run at 09:00
-          runs at 09:00 here.
+          runs at 09:00 here. Changing the timezone does not change any
+          worker&rsquo;s already-scheduled next run.
         </p>
       </div>
 

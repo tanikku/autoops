@@ -152,17 +152,45 @@ export function datePartsIn(
   return { year: Number(year), month: Number(month), day: Number(day) };
 }
 
-/** `2026-08-03 15:17` — for lists and cards, where seconds add noise. */
+/**
+ * Both formatters below name the zone they read the instant in, and resolve it
+ * once so that the digits and the label cannot disagree.
+ *
+ * **`safeTimezone` is why that matters.** It falls back to UTC for a zone
+ * `Intl` will not accept, so a formatter that used the fallback for the
+ * arithmetic but printed the string it was given would produce
+ * `2026-08-21 08:50 Mars/Olympus` — a time in one zone labelled as another,
+ * which is worse than no label, because it looks like information.
+ *
+ * **The identifier is printed as stored rather than as an abbreviation.**
+ * `Intl`'s short names are neither uniform nor stable: on the runtime this was
+ * checked against, `Asia/Tokyo` renders as `GMT+9` rather than `JST` while
+ * `America/New_York` renders as `EDT`, so one option yields an offset for one
+ * reader and a three-letter code for another — and both answers depend on the
+ * locale and on the platform's ICU data. `Asia/Tokyo` says the same thing
+ * everywhere, and it is the value the account is actually set to.
+ */
+
+/** `2026-08-03 15:17 Asia/Tokyo` — for lists and cards, where seconds add noise. */
 export function formatDateTime(value: Date, timezone: string): string {
-  const { year, month, day, hour, minute } = partsIn(value, timezone);
-  return `${year}-${month}-${day} ${hour}:${minute}`;
+  const zone = safeTimezone(timezone);
+  const { year, month, day, hour, minute } = partsIn(value, zone);
+  return `${year}-${month}-${day} ${hour}:${minute} ${zone}`;
 }
 
-/** `2026-08-03 15:17:26` — for detail views, where the exact moment matters. */
+/**
+ * `2026-08-03 15:17:26 Asia/Tokyo` — for detail views, where the exact moment
+ * matters.
+ *
+ * Built from the parts rather than by appending to `formatDateTime`: the zone
+ * now sits at the end of that string, so seconds added afterwards would land
+ * behind it.
+ */
 export function formatDateTimeWithSeconds(
   value: Date,
   timezone: string,
 ): string {
-  const { second } = partsIn(value, timezone);
-  return `${formatDateTime(value, timezone)}:${second}`;
+  const zone = safeTimezone(timezone);
+  const { year, month, day, hour, minute, second } = partsIn(value, zone);
+  return `${year}-${month}-${day} ${hour}:${minute}:${second} ${zone}`;
 }

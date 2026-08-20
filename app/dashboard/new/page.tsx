@@ -1,13 +1,24 @@
 import type { Metadata } from "next";
 import { DashboardNav } from "@/components/dashboard-nav";
 import { RoutineForm } from "@/components/routine-form";
+import { requireUserId } from "@/lib/session";
+import { getUserTimezone } from "@/lib/users";
 
 export const metadata: Metadata = {
   title: "Hire Worker — AutoOps",
   description: "Add a new AI worker to your team.",
 };
 
-export default function NewRoutinePage() {
+// The zone comes from the account row, so this page must not be prerendered.
+export const dynamic = "force-dynamic";
+
+export default async function NewRoutinePage() {
+  // Read, never written: this only decides what the form says about the
+  // schedule it is about to create. The action reads the same value again when
+  // it works out the first slot.
+  const userId = await requireUserId();
+  const timezone = await getUserTimezone(userId);
+
   return (
     <div className="flex flex-1 flex-col bg-background">
       <DashboardNav />
@@ -20,7 +31,7 @@ export default function NewRoutinePage() {
           Define the worker once. AutoOps runs it on your schedule.
         </p>
 
-        <RoutineForm />
+        <RoutineForm timezone={timezone} />
       </main>
     </div>
   );
