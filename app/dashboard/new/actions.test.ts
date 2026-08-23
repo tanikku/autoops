@@ -12,6 +12,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
+  createWorkerDraftGenerator: vi.fn(),
+  generate: vi.fn(),
   ensureUser: vi.fn(),
   getUserTimezone: vi.fn(),
   createRoutine: vi.fn(),
@@ -32,6 +34,12 @@ vi.mock("@/lib/routines", () => ({ createRoutine: mocks.createRoutine }));
 vi.mock("@/lib/website-sources", () => ({
   createWebsiteSource: mocks.createWebsiteSource,
 }));
+// The generator itself is the boundary being stood in for. The module that
+// decides whether one exists is what fails closed, so it is what these
+// substitute — nothing here reaches a model, and no key is involved.
+vi.mock("@/lib/ai/worker-draft-factory", () => ({
+  createWorkerDraftGenerator: mocks.createWorkerDraftGenerator,
+}));
 // The transaction itself is the boundary under test, so the fake runs the
 // callback and hands it a marker: what the assertions want to see is that both
 // writes were given the *same* client, and that it was not the module's.
@@ -41,7 +49,12 @@ vi.mock("@/lib/prisma", () => ({
 
 const TX = { tag: "transaction-client" } as const;
 
-const { createRoutineAction } = await import("@/app/dashboard/new/actions");
+const { createRoutineAction, generateWorkerDraftAction } = await import(
+  "@/app/dashboard/new/actions"
+);
+const { ProviderError } = await import("@/lib/ai/provider");
+const { InvalidWorkerDraftResponseError, MAX_WORKER_DRAFT_REQUEST_CHARS } =
+  await import("@/lib/ai/worker-draft");
 
 class RedirectSignal extends Error {}
 
@@ -76,6 +89,10 @@ beforeEach(() => {
   mocks.transaction
     .mockReset()
     .mockImplementation((run: (tx: unknown) => Promise<unknown>) => run(TX));
+  mocks.generate.mockReset();
+  mocks.createWorkerDraftGenerator
+    .mockReset()
+    .mockReturnValue({ generate: mocks.generate });
   mocks.revalidatePath.mockReset();
   mocks.redirect.mockReset().mockImplementation((to: string) => {
     throw new RedirectSignal(to);
@@ -418,5 +435,252 @@ describe("createRoutineAction — the kind itself", () => {
     );
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.createWebsiteSource).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Describing a worker, without creating one.
+ *
+ * **The property worth holding on to is what this does *not* do.** It reads a
+ * sentence and answers with values for a form; nothing it can be given makes it
+ * write a row, and the assertions below say so explicitly rather than trusting
+ * that nobody will wire one in later.
+ *
+ * The three answers — a draft, "AutoOps cannot do that", "which page?" — are
+ * carried through as they are. Only the ways of failing get translated, because
+ * the provider's vocabulary describes a request somebody else made to a third
+ * party and the person here pressed a button.
+ */
+describe("generateWorkerDraftAction", () => {
+  const PROMPT_DRAFT = {
+    kind: "prompt" as const,
+    name: "Morning focus",
+    description: "Three things to do today.",
+    prompt: "List three things worth doing today.",
+    frequency: "daily" as const,
+    runAtMinutes: 540,
+    runAtWeekday: null,
+    runAtDay: null,
+  };
+
+  const WEBSITE_DRAFT = {
+    ...PROMPT_DRAFT,
+    kind: "website" as const,
+    websiteUrl: "https://example.com/news",
+  };
+
+  function ask(request: string) {
+    const data = new FormData();
+    data.set("request", request);
+    return generateWorkerDraftAction(null, data);
+  }
+
+  it("sends a visitor with no session to sign in, without asking a model", async () => {
+    mocks.auth.mockResolvedValue(null);
+
+    await expect(ask("watch a page")).rejects.toBeInstanceOf(RedirectSignal);
+    expect(mocks.createWorkerDraftGenerator).not.toHaveBeenCalled();
+    expect(mocks.generate).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Provisioning is for writes that need the account row to exist. This writes
+   * nothing, so asking for one would create a row because somebody pressed a
+   * button and changed their mind.
+   */
+  it("does not provision the account row", async () => {
+    mocks.generate.mockResolvedValue({
+      status: "supported",
+      draft: PROMPT_DRAFT,
+    });
+
+    await ask("three ideas each morning");
+
+    expect(mocks.ensureUser).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["empty", ""],
+    ["only whitespace", "   \n\t "],
+  ])("refuses a request that is %s before asking a model", async (_l, request) => {
+    const result = await ask(request);
+
+    expect(result?.status).toBe("error");
+    expect(mocks.generate).not.toHaveBeenCalled();
+  });
+
+  it("refuses a request past the limit before asking a model", async () => {
+    const result = await ask("a".repeat(MAX_WORKER_DRAFT_REQUEST_CHARS + 1));
+
+    expect(result?.status).toBe("error");
+    expect(mocks.generate).not.toHaveBeenCalled();
+  });
+
+  it("accepts a request exactly at the limit", async () => {
+    mocks.generate.mockResolvedValue({
+      status: "supported",
+      draft: PROMPT_DRAFT,
+    });
+
+    const result = await ask("a".repeat(MAX_WORKER_DRAFT_REQUEST_CHARS));
+
+    expect(result?.status).toBe("supported");
+  });
+
+  it("carries a prompt draft back", async () => {
+    mocks.generate.mockResolvedValue({
+      status: "supported",
+      draft: PROMPT_DRAFT,
+    });
+
+    await expect(ask("three ideas each morning")).resolves.toEqual({
+      status: "supported",
+      draft: PROMPT_DRAFT,
+    });
+  });
+
+  it("carries a website draft back", async () => {
+    mocks.generate.mockResolvedValue({
+      status: "supported",
+      draft: WEBSITE_DRAFT,
+    });
+
+    await expect(
+      ask("watch https://example.com/news daily"),
+    ).resolves.toMatchObject({
+      status: "supported",
+      draft: { kind: "website", websiteUrl: "https://example.com/news" },
+    });
+  });
+
+  /** The addresses come from the request, and the model only points at them. */
+  it("finds the addresses itself and hands them over", async () => {
+    mocks.generate.mockResolvedValue({
+      status: "supported",
+      draft: WEBSITE_DRAFT,
+    });
+
+    await ask("watch https://example.com/news and https://example.com/x daily");
+
+    expect(mocks.generate).toHaveBeenCalledWith({
+      request: "watch https://example.com/news and https://example.com/x daily",
+      urlCandidates: ["https://example.com/news", "https://example.com/x"],
+    });
+  });
+
+  it("carries an unsupported answer back as it is", async () => {
+    mocks.generate.mockResolvedValue({
+      status: "unsupported",
+      reason: "AutoOps cannot read email.",
+    });
+
+    await expect(ask("read my email")).resolves.toEqual({
+      status: "unsupported",
+      reason: "AutoOps cannot read email.",
+    });
+  });
+
+  it("carries a question about the address back as it is", async () => {
+    mocks.generate.mockResolvedValue({
+      status: "needs_input",
+      field: "websiteUrl",
+      message: "Add the address of the page you want AutoOps to watch.",
+    });
+
+    await expect(ask("watch that page daily")).resolves.toMatchObject({
+      status: "needs_input",
+      field: "websiteUrl",
+    });
+  });
+
+  it("says drafting is unavailable when nothing is configured", async () => {
+    mocks.createWorkerDraftGenerator.mockReturnValue(null);
+
+    const result = await ask("three ideas each morning");
+
+    expect(result?.status).toBe("error");
+    expect((result as { message: string }).message).toContain("no AI");
+    expect(mocks.generate).not.toHaveBeenCalled();
+  });
+
+  it("says so when the answer could not be read", async () => {
+    mocks.generate.mockRejectedValue(
+      new InvalidWorkerDraftResponseError("the model used no tool"),
+    );
+
+    const result = await ask("three ideas each morning");
+
+    expect(result?.status).toBe("error");
+    expect((result as { message: string }).message).toContain("could not read");
+  });
+
+  it("distinguishes taking too long from not working", async () => {
+    mocks.generate.mockRejectedValue(new ProviderError("timeout", "timed out"));
+
+    const timedOut = await ask("three ideas each morning");
+
+    mocks.generate.mockRejectedValue(
+      new ProviderError("unavailable", "503 from upstream"),
+    );
+
+    const failed = await ask("three ideas each morning");
+
+    expect((timedOut as { message: string }).message).toContain("too long");
+    expect((failed as { message: string }).message).not.toContain("too long");
+    expect(failed?.status).toBe("error");
+  });
+
+  /** The provider's own vocabulary stops at `lib/ai`. */
+  it.each([
+    ["rate-limited", "429 rate limited by upstream"],
+    ["unauthorized", "401 invalid x-api-key"],
+    ["invalid-request", "400 bad request"],
+  ])("never shows the %o wording to the person", async (kind, message) => {
+    mocks.generate.mockRejectedValue(
+      new ProviderError(kind as never, message),
+    );
+
+    const result = await ask("three ideas each morning");
+    const shown = (result as { message: string }).message;
+
+    expect(shown).not.toContain(kind);
+    expect(shown).not.toContain(message);
+  });
+
+  it("treats an error that is not the provider's as a provider failure", async () => {
+    mocks.generate.mockRejectedValue(new Error("something else"));
+
+    expect((await ask("three ideas each morning"))?.status).toBe("error");
+  });
+
+  /**
+   * The whole point of the boundary: a draft is a proposal for a form, and the
+   * only way to the database is still pressing Save.
+   */
+  it.each([
+    ["a draft", { status: "supported", draft: PROMPT_DRAFT }],
+    ["an unsupported answer", { status: "unsupported", reason: "no" }],
+    [
+      "a question",
+      { status: "needs_input", field: "websiteUrl", message: "which page?" },
+    ],
+  ])("writes nothing when it answers with %s", async (_label, answer) => {
+    mocks.generate.mockResolvedValue(answer);
+
+    await ask("watch https://example.com/news daily");
+
+    expect(mocks.createRoutine).not.toHaveBeenCalled();
+    expect(mocks.createWebsiteSource).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("writes nothing when the model fails", async () => {
+    mocks.generate.mockRejectedValue(new ProviderError("timeout", "timed out"));
+
+    await ask("watch https://example.com/news daily");
+
+    expect(mocks.createRoutine).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
   });
 });

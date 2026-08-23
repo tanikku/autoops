@@ -1,6 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { providerErrorKind } from "@/lib/ai/provider";
+import {
+  extractUrlCandidates,
+  isInvalidWorkerDraftResponse,
+  MAX_WORKER_DRAFT_REQUEST_CHARS,
+  type WorkerDraft,
+} from "@/lib/ai/worker-draft";
+import { createWorkerDraftGenerator } from "@/lib/ai/worker-draft-factory";
 import { prisma } from "@/lib/prisma";
 import { createRoutine } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
@@ -186,4 +194,110 @@ export async function createRoutineAction(
   // The caller raises the toast and then navigates, so the outcome never has
   // to survive in the URL.
   return { status: "success", message: `Worker "${input.name}" created.` };
+}
+
+/**
+ * What came of asking AutoOps to describe a worker.
+ *
+ * **Three of these are answers and one is a failure**, and the difference is
+ * not decoration. A request AutoOps cannot do yet was understood perfectly
+ * well; a website worker whose request named no page is one question from
+ * being complete. Neither is an error, and neither should arrive as one — which
+ * is also why this never goes through `useActionResult`: that raises a toast
+ * for every result and navigates on success, and none of the three answers here
+ * wants either.
+ */
+export type WorkerDraftState =
+  | { status: "supported"; draft: WorkerDraft }
+  | { status: "unsupported"; reason: string }
+  | { status: "needs_input"; field: "websiteUrl"; message: string }
+  | { status: "error"; message: string }
+  | null;
+
+/**
+ * What a failure is shown as.
+ *
+ * **The provider's own vocabulary stops at `lib/ai`.** A kind like
+ * `rate-limited` or `invalid-request` describes a request somebody else made to
+ * a third party; the person here pressed a button on a form. Only the
+ * difference they can act on survives the crossing — wait and retry, or give up
+ * on drafting and fill the form in.
+ */
+const DRAFT_MESSAGES = {
+  notConfigured: "Drafting is unavailable because AutoOps has no AI configured.",
+  empty: "Describe what you would like AutoOps to handle.",
+  tooLong: `Keep the description under ${MAX_WORKER_DRAFT_REQUEST_CHARS.toLocaleString("en-US")} characters.`,
+  timeout: "Drafting took too long. Try again.",
+  unavailable: "The AI service could not be reached. Try again.",
+  unreadable:
+    "AutoOps could not read the answer. Try describing the work again.",
+} as const;
+
+/**
+ * Describes a worker from a sentence, without creating one.
+ *
+ * **Nothing here writes anything.** No routine, no source, no account row: the
+ * result is a set of values for a form somebody is looking at, and the only
+ * path to the database is still `createRoutineAction` below, reached by
+ * pressing Save. That is why this asks `requireUserId` rather than
+ * `requireProvisionedUserId` — provisioning exists for writes that need the
+ * account row to exist first, and this is not one.
+ *
+ * **The addresses are found here rather than by the model.** `lib/ai` is handed
+ * the ones already written in the request, and its answer can only point at
+ * them by number, so a plausible URL nobody typed has no way into a draft.
+ */
+export async function generateWorkerDraftAction(
+  _prevState: WorkerDraftState,
+  formData: FormData,
+): Promise<WorkerDraftState> {
+  await requireUserId();
+
+  const request = String(formData.get("request") ?? "").trim();
+
+  if (request === "") {
+    return { status: "error", message: DRAFT_MESSAGES.empty };
+  }
+
+  if (request.length > MAX_WORKER_DRAFT_REQUEST_CHARS) {
+    return { status: "error", message: DRAFT_MESSAGES.tooLong };
+  }
+
+  // **No stand-in.** A fabricated run produces a sentence somebody reads and
+  // dismisses; a fabricated draft produces settings somebody saves.
+  const generator = createWorkerDraftGenerator();
+
+  if (!generator) {
+    return { status: "error", message: DRAFT_MESSAGES.notConfigured };
+  }
+
+  try {
+    const result = await generator.generate({
+      request,
+      urlCandidates: extractUrlCandidates(request),
+    });
+
+    return result.status === "supported"
+      ? { status: "supported", draft: result.draft }
+      : result;
+  } catch (error) {
+    // An answer that arrived and could not be used, rather than one that never
+    // arrived. Nothing is retried: the person is standing at the form and can
+    // ask again in the words that suit them.
+    if (isInvalidWorkerDraftResponse(error)) {
+      console.error("[draft] the model's answer could not be read");
+      return { status: "error", message: DRAFT_MESSAGES.unreadable };
+    }
+
+    // The kind is logged and not shown. Nothing about it changes what the
+    // person does next except whether waiting is worth it.
+    const kind = providerErrorKind(error);
+    console.error(`[draft] generation failed — kind=${kind}`);
+
+    return {
+      status: "error",
+      message:
+        kind === "timeout" ? DRAFT_MESSAGES.timeout : DRAFT_MESSAGES.unavailable,
+    };
+  }
 }

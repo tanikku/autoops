@@ -5,24 +5,34 @@ import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import {
   createRoutineAction,
+  generateWorkerDraftAction,
   type CreateRoutineState,
+  type WorkerDraftState,
 } from "@/app/dashboard/new/actions";
 import { useActionResult } from "@/components/notification/use-action-result";
 import { Button } from "@/components/ui/button";
 import {
   Card,
+  CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  injectDraft,
+  injectionToken,
+  injectTemplate,
+  type InjectedValues,
+} from "@/components/worker-draft-form";
 import {
   useScrollToFirstError,
   WorkerFields,
-  type WorkerFieldValues,
 } from "@/components/worker-fields";
+import type { WorkerDraft } from "@/lib/ai/worker-draft";
 import { minutesToTimeValue } from "@/lib/worker-input";
 import { workerTemplates, type WorkerTemplate } from "@/lib/worker-templates";
-import type { RoutineKind } from "@/types";
+import { isRoutineStatus, type RoutineKind, type RoutineStatus } from "@/types";
 
 /**
  * The two kinds, as the person choosing one reads them.
@@ -86,37 +96,170 @@ export function RoutineForm({ timezone }: { timezone: string }) {
   // which fields are on screen, not empty the ones already filled in.
   const [kind, setKind] = useState<RoutineKind>("prompt");
 
-  // Picking a template and recovering a rejected submission both want to fill
-  // the fields, and the last one to happen should win. Holding the template's
-  // values separately makes that order explicit: choosing sets them, and
-  // submitting clears them so the action's result takes over.
-  const [templateValues, setTemplateValues] =
-    useState<WorkerFieldValues | null>(null);
+  // **One box, whatever filled it.** A template and an applied draft both want
+  // the same fields, so they share the state that holds them: applying either
+  // replaces the other, and "the last one wins" needs no rule of its own.
+  // Submitting clears it so the action's result takes over.
+  const [injected, setInjected] = useState<InjectedValues | null>(null);
+
+  // What separates one application from the next. Applying the same template
+  // twice has to fill the fields twice, and a token built from its id alone
+  // would leave the second press changing nothing.
+  const [injections, setInjections] = useState(0);
 
   // Bumped on every submit so the form remounts with the result. `defaultValue`
   // is read once at initialisation; feeding rejected input back through it on
   // a re-render changes it after the fact, which Base UI rejects.
   const [attempt, setAttempt] = useState(0);
 
-  // Messages belong to the values that produced them: picking a template
-  // replaces those values, so the messages go with them — and so does the jump
-  // to the field they pointed at.
-  const visibleErrors = templateValues ? undefined : state?.errors;
+  // **Drafting is a second action on the same page**, with its own pending
+  // state and its own result. It is deliberately not passed to
+  // `useActionResult`: that raises a toast for every result and navigates on
+  // success, and a draft neither travels nor is finished.
+  const [draftState, generateDraft, drafting] = useActionState<
+    WorkerDraftState,
+    FormData
+  >(generateWorkerDraftAction, null);
+
+  // Messages belong to the values that produced them: filling the fields from
+  // somewhere else replaces those values, so the messages go with them — and so
+  // does the jump to the field they pointed at.
+  const visibleErrors = injected ? undefined : state?.errors;
 
   useActionResult(state, { redirectTo: "/dashboard" });
   useScrollToFirstError(visibleErrors);
 
+  /**
+   * The status the form is showing right now.
+   *
+   * **Read from the form rather than held up here.** The fields are
+   * uncontrolled and the status select owns its own state; lifting it out to
+   * survive one button would turn a form that submits what it shows into a
+   * form that shows what this component remembers. The ids already exist to tie
+   * labels to inputs — `useScrollToFirstError` reaches for them the same way.
+   *
+   * Undefined when the form is not there to ask, which leaves the field on its
+   * own default.
+   */
+  function currentStatus(): RoutineStatus | undefined {
+    const form = document.getElementById(FORM_ID);
+
+    if (!(form instanceof HTMLFormElement)) {
+      return undefined;
+    }
+
+    const value = String(new FormData(form).get("status") ?? "");
+    return isRoutineStatus(value) ? value : undefined;
+  }
+
+  function apply(next: InjectedValues) {
+    setInjected(next);
+    setInjections((count) => count + 1);
+  }
+
   function selectTemplate(item: WorkerTemplate) {
     setTemplate(item);
-    setTemplateValues({
-      name: item.name,
-      prompt: item.defaultPrompt,
-      frequency: item.defaultFrequency,
-    });
+    apply(injectTemplate(item, injectionToken("template", injections)));
+  }
+
+  /**
+   * Puts a draft into the fields, when the person says so.
+   *
+   * **Never on arrival.** Drafting takes seconds, and in those seconds somebody
+   * may have typed. Applying what came back the moment it lands would overwrite
+   * work that was in progress, so the write happens on a press instead: the
+   * generation and the change to the form are two separate acts.
+   *
+   * The kind follows the draft because the fields depend on it — and the
+   * selector stays where it is, so a wrong classification is one click from
+   * being corrected.
+   */
+  function applyDraft(draft: WorkerDraft) {
+    setTemplate(null);
+    setKind(draft.kind);
+    apply(injectDraft(draft, currentStatus(), injectionToken("draft", injections)));
   }
 
   return (
     <>
+      {/* **The first thing on the page, and the only optional one.** Describing
+          the job in a sentence is the shortest route to a worker; the kind
+          selector, the templates and the form below are all still here for
+          somebody who would rather fill them in. It sits above the kind
+          selector because the draft decides the kind — asking first and then
+          answering would be the wrong way round. */}
+      <section className="mt-8 max-w-2xl">
+        <h2 className="text-lg font-medium tracking-tight">
+          What would you like AutoOps to handle?
+        </h2>
+
+        <form action={generateDraft} className="mt-4 flex flex-col gap-3">
+          <Textarea
+            id="request"
+            name="request"
+            rows={3}
+            placeholder="Check this page every day and summarise anything important that changed."
+            aria-describedby="request-result"
+          />
+
+          <div>
+            <Button type="submit" variant="outline" disabled={drafting}>
+              {drafting ? "Drafting…" : "Create draft"}
+            </Button>
+          </div>
+        </form>
+
+        {/* **What came back, where it was asked for.** A toast would carry the
+            answer away while the person was still reading it, and two of the
+            three answers are things to read rather than things that went
+            wrong. */}
+        <div id="request-result" aria-live="polite">
+          {draftState?.status === "supported" ? (
+            <Card size="sm" className="mt-4">
+              <CardHeader>
+                <CardTitle>{draftState.draft.name}</CardTitle>
+                <CardDescription>
+                  {draftState.draft.kind === "website"
+                    ? `Watches ${draftState.draft.websiteUrl}`
+                    : "Sends its instructions to the AI"}
+                  {draftState.draft.frequency === "manual"
+                    ? " · runs when you ask"
+                    : ` · ${draftState.draft.frequency}`}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => applyDraft(draftState.draft)}
+                >
+                  Apply to form
+                </Button>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {/* Neither of these is a failure: one is work AutoOps cannot do yet,
+              the other is a question. Both read as information rather than as
+              something broken. */}
+          {draftState?.status === "unsupported" ? (
+            <p className="mt-4 text-sm text-muted-foreground">
+              {draftState.reason}
+            </p>
+          ) : null}
+
+          {draftState?.status === "needs_input" ? (
+            <p className="mt-4 text-sm text-muted-foreground">
+              {draftState.message}
+            </p>
+          ) : null}
+
+          {draftState?.status === "error" ? (
+            <p className="mt-4 text-sm text-destructive">{draftState.message}</p>
+          ) : null}
+        </div>
+      </section>
+
       <section className="mt-8 max-w-2xl">
         <h2 className="text-lg font-medium tracking-tight">
           What should this worker do?
@@ -190,9 +333,9 @@ export function RoutineForm({ timezone }: { timezone: string }) {
         id={FORM_ID}
         // Remounting applies the selected template's values to the fields while
         // leaving every one of them editable.
-        key={`${template?.id ?? "blank"}-${attempt}`}
+        key={`${injected?.token ?? "blank"}-${attempt}`}
         action={(formData) => {
-          setTemplateValues(null);
+          setInjected(null);
           setAttempt((count) => count + 1);
           formAction(formData);
         }}
@@ -200,7 +343,7 @@ export function RoutineForm({ timezone }: { timezone: string }) {
       >
         <WorkerFields
           values={
-            templateValues ??
+            injected?.values ??
             (state?.values
               ? {
                   ...state.values,
