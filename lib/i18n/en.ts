@@ -111,6 +111,189 @@ export const en = {
   "common.weekday.friday": "Friday",
   "common.weekday.saturday": "Saturday",
 
+  /**
+   * Words that belong to no single screen.
+   *
+   * `common.statusLabel` is the word "Status" as a heading, which is a
+   * different question from `common.status.*` — those name the values it can
+   * hold.
+   */
+  "common.save": "Save",
+  "common.saving": "Saving\u2026",
+  "common.cancel": "Cancel",
+  "common.edit": "Edit",
+  "common.statusLabel": "Status",
+
+  /**
+   * What a worker is, as a type.
+   *
+   * **Two vocabularies for the same two values, and both are correct.** A
+   * worker already hired reports what it *is* — `Prompt`, `Website`. Somebody
+   * choosing one is deciding what they want *done*, which is why the hire form
+   * asks it as "Run a prompt" and "Watch a page". Collapsing them into one
+   * label would make one of the two screens read as jargon.
+   */
+  "worker.kind.prompt": "Prompt",
+  "worker.kind.website": "Website",
+  "worker.kind.promptOption": "Run a prompt",
+  "worker.kind.promptOptionDescription":
+    "Sends your instructions to the AI on a schedule.",
+  "worker.kind.websiteOption": "Watch a page",
+  "worker.kind.websiteOptionDescription":
+    "Checks a page and only involves the AI when it changes.",
+
+  /**
+   * A cadence as a menu option, which is not how a schedule reads in a
+   * sentence — `schedule.*` carries that. `manual` has no entry of its own:
+   * `worker.manual` already says it in both places.
+   */
+  "worker.frequency.daily": "Daily",
+  "worker.frequency.weekly": "Weekly",
+  "worker.frequency.monthly": "Monthly",
+
+  /** What choosing a status means, shown under the select. */
+  "worker.status.draftDescription":
+    "Draft workers are not scheduled. Set Status to Active to run automatically.",
+  "worker.status.activeDescription":
+    "Runs automatically according to its schedule.",
+  "worker.status.pausedDescription":
+    "Scheduled runs are paused. Manual runs still work.",
+
+  /**
+   * The prompt column, under the two names it goes by.
+   *
+   * A prompt worker's prompt is the whole job. A website worker's runs only
+   * once a change has been found, which is why the form asks for it as a
+   * condition and both read-only screens call it what it is.
+   */
+  "worker.prompt": "Prompt",
+  "worker.changeInstructions": "Change instructions",
+
+  "worker.field.name": "Name",
+  "worker.field.namePlaceholder": "Daily Website Update",
+  "worker.field.description": "Description",
+  "worker.field.descriptionPlaceholder": "What does this worker do?",
+  "worker.field.websiteUrl": "Website address",
+  "worker.field.promptPlaceholder": "Instructions sent to the AI on every run.",
+  "worker.field.changePrompt": "When the page changes",
+  "worker.field.changePromptPlaceholder":
+    "What should the AI do when this page changes?",
+  "worker.field.frequency": "Frequency",
+  /**
+   * Two selects, one English word, two Japanese ones. A weekly worker picks a
+   * day of the week and a monthly one picks a date, and no language has to
+   * pretend those are the same noun.
+   */
+  "worker.field.weekday": "Day",
+  "worker.field.sameWeekday": "Same day it was saved",
+  "worker.field.monthDay": "Day",
+  "worker.field.sameMonthDay": "Same day it was saved",
+  /** A date as an option: "3rd" in English, and a plain number elsewhere. */
+  "worker.field.monthDayOption": "{ordinal}",
+  "worker.field.monthDayNote":
+    "Days past the end of a month run on the last day instead.",
+  "worker.field.runAt": "Run at",
+  "worker.field.timezoneNote":
+    "Times use your account timezone: {timezone}. Leave empty to run at whatever time the worker was saved.",
+
+  "worker.create.description":
+    "Define the worker once. AutoOps runs it on your schedule.",
+  "worker.create.draftHeading": "What would you like AutoOps to handle?",
+  "worker.create.draftPlaceholder":
+    "Check this page every day and summarise anything important that changed.",
+  "worker.create.createDraft": "Create draft",
+  "worker.create.drafting": "Drafting\u2026",
+  /**
+   * What a draft came back as, in one line.
+   *
+   * **The address and the cadence are the draft's, not the dictionary's.**
+   * `{url}` is what somebody wrote in their request, and `{cadence}` for
+   * anything but a manual worker is the stored frequency shown as it is
+   * stored — the same string this card showed before it was translated.
+   */
+  "worker.create.draftWatches": "Watches {url}",
+  "worker.create.draftSendsPrompt": "Sends its instructions to the AI",
+  "worker.create.draftManual": "runs when you ask",
+  "worker.create.draftSummary": "{what} \u00b7 {cadence}",
+  "worker.create.applyToForm": "Apply to form",
+  "worker.create.kindHeading": "What should this worker do?",
+  "worker.create.templatesHeading": "Choose a Template",
+  "worker.create.templatesHelp":
+    "Start from a template, or fill in the form below yourself.",
+
+  /**
+   * Why drafting produced nothing.
+   *
+   * **All six are AutoOps speaking, which is what lets them be translated.**
+   * What a generator returns for `unsupported` or `needs_input` is a sentence
+   * the model wrote about a particular request; it goes to the screen exactly
+   * as it arrived and has no key here.
+   */
+  "worker.draft.notConfigured":
+    "Drafting is unavailable because AutoOps has no AI configured.",
+  "worker.draft.empty": "Describe what you would like AutoOps to handle.",
+  "worker.draft.tooLong": "Keep the description under {limit} characters.",
+  "worker.draft.timeout": "Drafting took too long. Try again.",
+  "worker.draft.unavailable": "The AI service could not be reached. Try again.",
+  "worker.draft.unreadable":
+    "AutoOps could not read the answer. Try describing the work again.",
+
+  "worker.detail.noDescription": "No description.",
+  "worker.detail.workerType": "Worker type",
+  /** A kind stored by a version this one cannot read. It says so; it does not guess. */
+  "worker.detail.unrecognised": "Unrecognised",
+  "worker.detail.lastRun": "Last Run",
+  "worker.detail.createdAt": "Created At",
+  "worker.detail.updatedAt": "Updated At",
+  "worker.detail.watchedPage": "Watched page",
+  "worker.detail.dangerZone": "Danger zone",
+  "worker.detail.deleteWarning":
+    "Deleting this worker also removes its activity history. This cannot be undone.",
+
+  "worker.delete.button": "Delete",
+  "worker.delete.deleting": "Deleting\u2026",
+  /** The name is the owner's, and is placed rather than glued to either end. */
+  "worker.delete.confirmTitle": "Delete \u201c{name}\u201d?",
+  "worker.delete.confirmBody":
+    "This also removes its activity history. This cannot be undone.",
+
+  "worker.edit.title": "Edit Worker",
+  "worker.edit.description": "Changes apply to the next run.",
+  /**
+   * What moving a watcher costs, said before it is moved.
+   *
+   * **Every clause is held to what execution actually does**, in whichever
+   * language it is read:
+   *
+   * - *the next successful check*, not the next one. A check that cannot fetch
+   *   the page writes no baseline and leaves the worker where it was.
+   * - *instead of treating the new page as a detected change*, rather than
+   *   "reports no changes". Establishing a first baseline is its own outcome,
+   *   and naming it is what rules out the whole of a new page arriving as
+   *   though it had just changed.
+   * - *past runs are kept*, because what is thrown away is the stored
+   *   comparison point and nothing else. Saving the form fetches nothing and
+   *   involves no model.
+   *
+   * A translation that weakens any of the three describes a mechanism nobody
+   * can see, which is the only reason this sentence exists.
+   */
+  "worker.edit.baselineReset":
+    "Changing the address resets the comparison baseline. On the next " +
+    "successful check, AutoOps establishes a new baseline instead of treating " +
+    "the new page as a detected change. Past runs are kept.",
+
+  "run.detail.title": "Execution",
+  "run.detail.back": "Back to Dashboard",
+  /** The product's own noun, and the one word here that is the same in both. */
+  "run.detail.worker": "Worker",
+  "run.detail.executionTime": "Execution Time",
+  "run.detail.startedAt": "Started At",
+  "run.detail.finishedAt": "Finished At",
+  "run.detail.renderedPrompt": "Rendered Prompt",
+  "run.detail.output": "Output",
+  "run.detail.error": "Error",
+
   "settings.language.title": "Language",
   "settings.language.description":
     "The language AutoOps uses for its own screens. Your workers and what they produce are unaffected.",

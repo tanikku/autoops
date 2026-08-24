@@ -141,8 +141,8 @@ function render() {
 beforeEach(() => {
   mocks.requireUserId.mockReset().mockResolvedValue("user-1");
   mocks.getUserTimezone.mockReset().mockResolvedValue("UTC");
-  // This page's own wording is Day 2B's; what it takes a language for is the
-  // health summary and the Run button it borrows from the dashboard.
+  // English by default, so the assertions below stay about which rows a
+  // worker has rather than about what they are called.
   mocks.getUserLanguage.mockReset().mockResolvedValue("en");
   mocks.listRunsForWorker.mockReset().mockResolvedValue([]);
   mocks.getWebsiteSource.mockReset().mockResolvedValue(null);
@@ -256,5 +256,86 @@ describe("worker detail — a worker that is not this account's", () => {
     mocks.getRoutineWithStoredKind.mockResolvedValue(null);
 
     await expect(render()).rejects.toBeInstanceOf(NotFoundSignal);
+  });
+});
+
+/**
+ * The same page, in Japanese.
+ *
+ * **What a worker *is* survives the translation and what it *says* does not.**
+ * The rows are named in Japanese; the name, the instructions and the address
+ * are the owner's material and come through exactly as stored — and which rows
+ * exist at all is decided by the worker's kind, which no language touches.
+ */
+describe("worker detail in Japanese", () => {
+  beforeEach(() => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+  });
+
+  it("names a prompt worker's type in Japanese", async () => {
+    expect(labelled(await render())["Worker の種類"]).toBe("プロンプト");
+  });
+
+  it("names a website worker's type in Japanese", async () => {
+    mocks.getRoutineWithStoredKind.mockResolvedValue({
+      routine: worker({ kind: "website" }),
+      kind: "website",
+    });
+    mocks.getWebsiteSource.mockResolvedValue(SOURCE);
+
+    expect(labelled(await render())["Worker の種類"]).toBe("Web ページ監視");
+  });
+
+  it("says so, rather than guessing, for a kind it cannot read", async () => {
+    mocks.getRoutineWithStoredKind.mockResolvedValue({
+      routine: worker(),
+      kind: null,
+    });
+
+    expect(labelled(await render())["Worker の種類"]).toBe("不明");
+  });
+
+  it("labels the rest of the rows in Japanese", async () => {
+    const rows = labelled(await render());
+
+    expect(rows).toHaveProperty("実行頻度");
+    expect(rows).toHaveProperty("次回実行");
+    expect(rows).toHaveProperty("前回の実行");
+    expect(rows).toHaveProperty("作成日時");
+    expect(rows).toHaveProperty("更新日時");
+    expect(rows).not.toHaveProperty("Frequency");
+  });
+
+  it("writes the timestamps exactly as the English page does", async () => {
+    mocks.getUserLanguage.mockResolvedValue("en");
+    const english = labelled(await render())["Created At"];
+
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    const japanese = labelled(await render())["作成日時"];
+
+    expect(japanese).toBe(english);
+  });
+
+  it("leaves a website worker's page and instructions untouched", async () => {
+    mocks.getRoutineWithStoredKind.mockResolvedValue({
+      routine: worker({ kind: "website", prompt: "Tell me what changed." }),
+      kind: "website",
+    });
+    mocks.getWebsiteSource.mockResolvedValue(SOURCE);
+
+    const shown = text(await render());
+
+    expect(shown).toContain("監視中のページ");
+    expect(shown).toContain("変更時の指示");
+    expect(shown).toContain("https://example.com/news");
+    expect(shown).toContain("Tell me what changed.");
+  });
+
+  it("shows no page for a prompt worker, in either language", async () => {
+    const shown = text(await render());
+
+    expect(shown).not.toContain("監視中のページ");
+    expect(shown).not.toContain("変更時の指示");
+    expect(shown).not.toContain("Watched page");
   });
 });

@@ -26,10 +26,12 @@ import {
   type InjectedValues,
 } from "@/components/worker-draft-form";
 import {
+  frequencyKeys,
   useScrollToFirstError,
   WorkerFields,
 } from "@/components/worker-fields";
 import type { WorkerDraft } from "@/lib/ai/worker-draft";
+import { t, type TranslationKey } from "@/lib/i18n";
 import { minutesToTimeValue } from "@/lib/worker-input";
 import { workerTemplates, type WorkerTemplate } from "@/lib/worker-templates";
 import { isRoutineStatus, type RoutineKind, type RoutineStatus } from "@/types";
@@ -43,18 +45,18 @@ import { isRoutineStatus, type RoutineKind, type RoutineStatus } from "@/types";
  */
 const kindOptions: {
   value: RoutineKind;
-  label: string;
-  description: string;
+  label: TranslationKey;
+  description: TranslationKey;
 }[] = [
   {
     value: "prompt",
-    label: "Run a prompt",
-    description: "Sends your instructions to the AI on a schedule.",
+    label: "worker.kind.promptOption",
+    description: "worker.kind.promptOptionDescription",
   },
   {
     value: "website",
-    label: "Watch a page",
-    description: "Checks a page and only involves the AI when it changes.",
+    label: "worker.kind.websiteOption",
+    description: "worker.kind.websiteOptionDescription",
   },
 ];
 
@@ -67,17 +69,31 @@ const kindOptions: {
  */
 const FORM_ID = "hire-worker";
 
-function SaveButton() {
+function SaveButton({ language }: { language: string }) {
   const { pending } = useFormStatus();
 
   return (
     <Button type="submit" disabled={pending}>
-      {pending ? "Saving…" : "Save"}
+      {t(language, pending ? "common.saving" : "common.save")}
     </Button>
   );
 }
 
-export function RoutineForm({ timezone }: { timezone: string }) {
+export function RoutineForm({
+  timezone,
+  language,
+}: {
+  timezone: string;
+  /**
+   * The language this form is written in — the account's, as stored.
+   *
+   * **It reaches the labels and stops there.** What a draft came back as, what
+   * a template puts in the fields, and what anybody types are the person's own
+   * material: none of it is looked up here, and switching language leaves every
+   * one of them exactly as it was.
+   */
+  language: string;
+}) {
   const [state, formAction] = useActionState<CreateRoutineState, FormData>(
     createRoutineAction,
     null,
@@ -190,7 +206,7 @@ export function RoutineForm({ timezone }: { timezone: string }) {
           answering would be the wrong way round. */}
       <section className="mt-8 max-w-2xl">
         <h2 className="text-lg font-medium tracking-tight">
-          What would you like AutoOps to handle?
+          {t(language, "worker.create.draftHeading")}
         </h2>
 
         <form action={generateDraft} className="mt-4 flex flex-col gap-3">
@@ -198,13 +214,18 @@ export function RoutineForm({ timezone }: { timezone: string }) {
             id="request"
             name="request"
             rows={3}
-            placeholder="Check this page every day and summarise anything important that changed."
+            placeholder={t(language, "worker.create.draftPlaceholder")}
             aria-describedby="request-result"
           />
 
           <div>
             <Button type="submit" variant="outline" disabled={drafting}>
-              {drafting ? "Drafting…" : "Create draft"}
+              {t(
+                language,
+                drafting
+                  ? "worker.create.drafting"
+                  : "worker.create.createDraft",
+              )}
             </Button>
           </div>
         </form>
@@ -218,13 +239,29 @@ export function RoutineForm({ timezone }: { timezone: string }) {
             <Card size="sm" className="mt-4">
               <CardHeader>
                 <CardTitle>{draftState.draft.name}</CardTitle>
+                {/* **The name above is the model's and is never looked
+                    up.** So is the address below: what is translated here is
+                    the sentence around them.
+
+                    **The cadence is a stored value and is looked up**, which
+                    is the difference. `weekly` is what the draft carries, what
+                    the form receives and what the column holds; the card says
+                    what that value is called, in the same words the frequency
+                    select uses. Showing the value itself put `weekly` on a
+                    Japanese screen. */}
                 <CardDescription>
-                  {draftState.draft.kind === "website"
-                    ? `Watches ${draftState.draft.websiteUrl}`
-                    : "Sends its instructions to the AI"}
-                  {draftState.draft.frequency === "manual"
-                    ? " · runs when you ask"
-                    : ` · ${draftState.draft.frequency}`}
+                  {t(language, "worker.create.draftSummary", {
+                    what:
+                      draftState.draft.kind === "website"
+                        ? t(language, "worker.create.draftWatches", {
+                            url: draftState.draft.websiteUrl,
+                          })
+                        : t(language, "worker.create.draftSendsPrompt"),
+                    cadence:
+                      draftState.draft.frequency === "manual"
+                        ? t(language, "worker.create.draftManual")
+                        : t(language, frequencyKeys[draftState.draft.frequency]),
+                  })}
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -233,7 +270,7 @@ export function RoutineForm({ timezone }: { timezone: string }) {
                   size="sm"
                   onClick={() => applyDraft(draftState.draft)}
                 >
-                  Apply to form
+                  {t(language, "worker.create.applyToForm")}
                 </Button>
               </CardContent>
             </Card>
@@ -262,7 +299,7 @@ export function RoutineForm({ timezone }: { timezone: string }) {
 
       <section className="mt-8 max-w-2xl">
         <h2 className="text-lg font-medium tracking-tight">
-          What should this worker do?
+          {t(language, "worker.create.kindHeading")}
         </h2>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -282,8 +319,10 @@ export function RoutineForm({ timezone }: { timezone: string }) {
                 className="h-full peer-focus-visible:ring-3 peer-focus-visible:ring-ring/50 peer-checked:ring-2 peer-checked:ring-primary"
               >
                 <CardHeader>
-                  <CardTitle>{option.label}</CardTitle>
-                  <CardDescription>{option.description}</CardDescription>
+                  <CardTitle>{t(language, option.label)}</CardTitle>
+                  <CardDescription>
+                    {t(language, option.description)}
+                  </CardDescription>
                 </CardHeader>
               </Card>
             </label>
@@ -297,9 +336,11 @@ export function RoutineForm({ timezone }: { timezone: string }) {
           about what a template is, instead of a field every future template has
           to answer. */}
       <section className={kind === "website" ? "hidden" : "mt-8 max-w-2xl"}>
-        <h2 className="text-lg font-medium tracking-tight">Choose a Template</h2>
+        <h2 className="text-lg font-medium tracking-tight">
+          {t(language, "worker.create.templatesHeading")}
+        </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Start from a template, or fill in the form below yourself.
+          {t(language, "worker.create.templatesHelp")}
         </p>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -356,16 +397,17 @@ export function RoutineForm({ timezone }: { timezone: string }) {
           errors={visibleErrors}
           kind={kind}
           timezone={timezone}
+          language={language}
         />
 
         <div className="flex gap-2">
-          <SaveButton />
+          <SaveButton language={language} />
           <Button
             variant="outline"
             nativeButton={false}
             render={<Link href="/dashboard" />}
           >
-            Cancel
+            {t(language, "common.cancel")}
           </Button>
         </div>
       </form>

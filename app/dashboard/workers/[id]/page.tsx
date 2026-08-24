@@ -11,6 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { WorkerHealthSummary } from "@/components/worker-health";
 import { formatDateTimeWithSeconds } from "@/lib/datetime";
 import { summarizeRuns } from "@/lib/health";
+import { t, type TranslationKey } from "@/lib/i18n";
 import { isRunOverdue } from "@/lib/overview";
 import { getRoutineWithStoredKind } from "@/lib/routines";
 import { listRunsForWorker } from "@/lib/runs";
@@ -27,10 +28,11 @@ export const metadata: Metadata = {
 // Workers live in the database, so this page must not be prerendered.
 export const dynamic = "force-dynamic";
 
-const statusLabels: Record<RoutineStatus, string> = {
-  active: "Active",
-  paused: "Paused",
-  draft: "Draft",
+/** The badge's words. The stored values are unchanged by any of this. */
+const statusKeys: Record<RoutineStatus, TranslationKey> = {
+  active: "common.status.active",
+  paused: "common.status.paused",
+  draft: "common.status.draft",
 };
 
 const statusVariants: Record<
@@ -42,16 +44,22 @@ const statusVariants: Record<
   draft: "outline",
 };
 
-const frequencyLabels: Record<RoutineFrequency, string> = {
-  manual: "Manual",
-  daily: "Daily",
-  weekly: "Weekly",
-  monthly: "Monthly",
+const frequencyKeys: Record<RoutineFrequency, TranslationKey> = {
+  manual: "worker.manual",
+  daily: "worker.frequency.daily",
+  weekly: "worker.frequency.weekly",
+  monthly: "worker.frequency.monthly",
 };
 
-const kindLabels: Record<RoutineKind, string> = {
-  prompt: "Prompt",
-  website: "Website",
+/**
+ * What this worker *is*, which is not the same question the hire form asks.
+ *
+ * There, somebody is deciding what they want done — "Run a prompt", "Watch a
+ * page". Here it has been decided, and the row reports the answer.
+ */
+const kindKeys: Record<RoutineKind, TranslationKey> = {
+  prompt: "worker.kind.prompt",
+  website: "worker.kind.website",
 };
 
 
@@ -106,10 +114,11 @@ export default async function WorkerDetailPage({
 
   // One query for the worker's runs, folded into the same summary the
   // dashboard card shows.
-  // **The language is read for the two shared pieces below, not for this page.**
-  // The health summary and the Run button appear on the dashboard too and are
-  // translated; everything this page says for itself is still English, and
-  // stays that way until its own turn.
+  //
+  // **The language reaches the labels and stops there.** The worker's name, its
+  // description, the address it watches and the instructions it carries are its
+  // owner's material and are shown exactly as stored, in whichever language
+  // they were written.
   const [runs, timezone, language] = await Promise.all([
     listRunsForWorker(worker.id, userId),
     getUserTimezone(userId),
@@ -128,7 +137,7 @@ export default async function WorkerDetailPage({
             href="/dashboard"
             className="text-sm text-muted-foreground underline-offset-4 hover:underline"
           >
-            ← My AI Team
+            ← {t(language, "dashboard.title")}
           </Link>
 
           <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -136,12 +145,12 @@ export default async function WorkerDetailPage({
               {worker.name}
             </h1>
             <Badge variant={statusVariants[worker.status]}>
-              {statusLabels[worker.status]}
+              {t(language, statusKeys[worker.status])}
             </Badge>
           </div>
 
           <p className="mt-2 text-sm text-muted-foreground">
-            {worker.description || "No description."}
+            {worker.description || t(language, "worker.detail.noDescription")}
           </p>
 
           <Card className="mt-8">
@@ -166,15 +175,20 @@ export default async function WorkerDetailPage({
                     recognise says so rather than picking one — the row exists,
                     and nothing here can honestly describe it. */}
                 <Detail
-                  label="Worker type"
-                  value={kind === null ? "Unrecognised" : kindLabels[kind]}
+                  label={t(language, "worker.detail.workerType")}
+                  value={t(
+                    language,
+                    kind === null
+                      ? "worker.detail.unrecognised"
+                      : kindKeys[kind],
+                  )}
                 />
                 <Detail
-                  label="Frequency"
-                  value={frequencyLabels[worker.frequency]}
+                  label={t(language, "worker.field.frequency")}
+                  value={t(language, frequencyKeys[worker.frequency])}
                 />
                 <Detail
-                  label="Next Run"
+                  label={t(language, "worker.nextRun")}
                   value={
                     worker.nextRunAt ? (
                       <span className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
@@ -185,29 +199,29 @@ export default async function WorkerDetailPage({
                               className="size-3.5 shrink-0"
                               aria-hidden
                             />
-                            Scheduled run is overdue
+                            {t(language, "overview.overdue")}
                           </span>
                         ) : null}
                       </span>
                     ) : (
-                      "Manual"
+                      t(language, "worker.manual")
                     )
                   }
                 />
                 <Detail
-                  label="Last Run"
+                  label={t(language, "worker.detail.lastRun")}
                   value={
                     health.lastRunAt
                       ? formatDateTimeWithSeconds(health.lastRunAt, timezone)
-                      : "Never run"
+                      : t(language, "health.neverRun")
                   }
                 />
                 <Detail
-                  label="Created At"
+                  label={t(language, "worker.detail.createdAt")}
                   value={formatDateTimeWithSeconds(worker.createdAt, timezone)}
                 />
                 <Detail
-                  label="Updated At"
+                  label={t(language, "worker.detail.updatedAt")}
                   value={formatDateTimeWithSeconds(worker.updatedAt, timezone)}
                 />
               </dl>
@@ -227,12 +241,14 @@ export default async function WorkerDetailPage({
             <Card className="mt-4">
               <CardContent>
                 <h2 className="text-sm font-medium tracking-tight">
-                  Watched page
+                  {t(language, "worker.detail.watchedPage")}
                 </h2>
+                {/* The address is the worker's, not the product's: it is the
+                    stored canonical string in either language. */}
                 <p className="mt-2 text-sm break-all">{source.url}</p>
 
                 <h2 className="mt-6 text-sm font-medium tracking-tight">
-                  Change instructions
+                  {t(language, "worker.changeInstructions")}
                 </h2>
                 <p className="mt-2 text-sm whitespace-pre-wrap break-words">
                   {worker.prompt || "—"}
@@ -248,18 +264,17 @@ export default async function WorkerDetailPage({
               nativeButton={false}
               render={<Link href={`/dashboard/workers/${worker.id}/edit`} />}
             >
-              Edit
+              {t(language, "common.edit")}
             </Button>
             <RunRoutineButton routineId={worker.id} language={language} />
           </div>
 
           <section className="mt-12 border-t border-border pt-8">
             <h2 className="text-sm font-medium tracking-tight text-destructive">
-              Danger zone
+              {t(language, "worker.detail.dangerZone")}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Deleting this worker also removes its activity history. This
-              cannot be undone.
+              {t(language, "worker.detail.deleteWarning")}
             </p>
             <div className="mt-4">
               {/* Leaving for the dashboard is part of the delete here: this
@@ -268,6 +283,7 @@ export default async function WorkerDetailPage({
                 workerId={worker.id}
                 workerName={worker.name}
                 redirectTo="/dashboard"
+                language={language}
               />
             </div>
           </section>

@@ -15,7 +15,7 @@ const cadenceKeys: Record<RoutineFrequency, TranslationKey> = {
  * The index is the stored value — 0 is Sunday — so this is a lookup rather
  * than a second definition of what those numbers mean.
  */
-const weekdayKeys: TranslationKey[] = [
+export const weekdayKeys: TranslationKey[] = [
   "common.weekday.sunday",
   "common.weekday.monday",
   "common.weekday.tuesday",

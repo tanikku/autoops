@@ -39,7 +39,12 @@ describe("the dictionaries", () => {
   it("says something different in Japanese, apart from the words that do not translate", () => {
     const identical = keys.filter((key) => en[key] === ja[key]);
 
-    expect(identical).toEqual(["settings.language.english"]);
+    expect(identical).toEqual([
+      // The product's own noun, on the execution page.
+      "run.detail.worker",
+      // A language's own name for itself.
+      "settings.language.english",
+    ]);
   });
 
   it("knows which languages exist", () => {
@@ -198,6 +203,159 @@ describe("labels for stored values", () => {
       const key = `common.weekday.${day}` as TranslationKey;
       expect(t("en", key).length).toBeGreaterThan(0);
       expect(t("ja", key)).toContain("曜日");
+    }
+  });
+});
+
+/**
+ * The screens Day 2B translated, checked at the dictionary rather than at the
+ * markup: that every sentence they need exists in both languages, and that the
+ * ones carrying a value carry it in a place each language chose.
+ */
+describe("the worker and run screens", () => {
+  it("has every key those screens ask for, in both languages", () => {
+    const used: TranslationKey[] = [
+      "worker.kind.prompt",
+      "worker.kind.website",
+      "worker.kind.promptOption",
+      "worker.kind.websiteOption",
+      "worker.prompt",
+      "worker.changeInstructions",
+      "worker.field.name",
+      "worker.field.websiteUrl",
+      "worker.field.changePrompt",
+      "worker.field.frequency",
+      "worker.field.weekday",
+      "worker.field.monthDay",
+      "worker.field.runAt",
+      "worker.create.draftHeading",
+      "worker.create.createDraft",
+      "worker.create.applyToForm",
+      "worker.create.templatesHeading",
+      "worker.detail.workerType",
+      "worker.detail.unrecognised",
+      "worker.detail.watchedPage",
+      "worker.edit.title",
+      "worker.edit.baselineReset",
+      "run.detail.title",
+      "run.detail.output",
+      "run.detail.error",
+      "run.detail.renderedPrompt",
+    ];
+
+    for (const key of used) {
+      for (const language of ["en", "ja"]) {
+        expect(t(language, key).trim().length).toBeGreaterThan(0);
+        // A key rendered as itself is the fallback, not a translation.
+        expect(t(language, key)).not.toBe(key);
+      }
+    }
+  });
+
+  /**
+   * The two vocabularies for the same two stored values. Choosing what a
+   * worker should do and reading what one is are different questions, and the
+   * hire form is allowed to answer in different words.
+   */
+  it("names a kind differently where it is chosen and where it is reported", () => {
+    expect(t("en", "worker.kind.promptOption")).not.toBe(
+      t("en", "worker.kind.prompt"),
+    );
+    expect(t("ja", "worker.kind.websiteOption")).not.toBe(
+      t("ja", "worker.kind.website"),
+    );
+  });
+
+  it("never puts a stored value on screen as its own label", () => {
+    for (const language of ["en", "ja"]) {
+      expect(t(language, "worker.kind.prompt")).not.toBe("prompt");
+      expect(t(language, "worker.kind.website")).not.toBe("website");
+      expect(t(language, "worker.frequency.daily")).not.toBe("daily");
+    }
+  });
+
+  it("places the worker's name inside the question rather than beside it", () => {
+    const name = "宝塚市 パブリック・コメント";
+
+    expect(t("en", "worker.delete.confirmTitle", { name })).toContain(name);
+    expect(t("ja", "worker.delete.confirmTitle", { name })).toContain(name);
+    // Two different sentences, and the same name in both.
+    expect(t("en", "worker.delete.confirmTitle", { name })).not.toBe(
+      t("ja", "worker.delete.confirmTitle", { name }),
+    );
+  });
+
+  it("puts the account's zone into the note about times", () => {
+    for (const language of ["en", "ja"]) {
+      expect(
+        t(language, "worker.field.timezoneNote", { timezone: "Asia/Tokyo" }),
+      ).toContain("Asia/Tokyo");
+    }
+  });
+
+  it("offers a date as an ordinal and as a number, and each language picks one", () => {
+    const values = { ordinal: "3rd", day: 3 };
+
+    expect(t("en", "worker.field.monthDayOption", values)).toBe("3rd");
+    expect(t("ja", "worker.field.monthDayOption", values)).toBe("3日");
+  });
+
+  it("keeps the drafted worker's own words out of the sentence around them", () => {
+    const url = "https://example.com/news";
+
+    for (const language of ["en", "ja"]) {
+      expect(t(language, "worker.create.draftWatches", { url })).toContain(url);
+    }
+  });
+
+  it("names the character limit rather than hard-coding it", () => {
+    for (const language of ["en", "ja"]) {
+      expect(t(language, "worker.draft.tooLong", { limit: "2,000" })).toContain(
+        "2,000",
+      );
+    }
+  });
+});
+
+/**
+ * The sentence about changing a watched address, in both languages.
+ *
+ * Every clause describes a mechanism nobody can see, so the words are the only
+ * account of it anyone gets. The English version has been held to these since
+ * B4.3; a translation is where they are most likely to weaken quietly.
+ */
+describe("what changing an address is said to cost", () => {
+  it("promises a baseline only once a check has succeeded", () => {
+    expect(t("en", "worker.edit.baselineReset")).toContain(
+      "next successful check",
+    );
+    expect(t("ja", "worker.edit.baselineReset")).toContain(
+      "次にチェックが成功した",
+    );
+  });
+
+  it("names establishing a baseline as the alternative to reporting a change", () => {
+    expect(t("en", "worker.edit.baselineReset")).toContain(
+      "establishes a new baseline instead of treating the new page as a detected change",
+    );
+    expect(t("ja", "worker.edit.baselineReset")).toContain(
+      "「変更が検出された」として扱わず",
+    );
+  });
+
+  it("says the runs already recorded stay", () => {
+    expect(t("en", "worker.edit.baselineReset")).toContain("Past runs are kept");
+    expect(t("ja", "worker.edit.baselineReset")).toContain(
+      "過去の実行履歴はそのまま残ります",
+    );
+  });
+
+  it.each([
+    ["en", ["The next check", "deleted", "removed", "immediately", "AI"]],
+    ["ja", ["次回のチェック", "削除", "すぐに", "直ちに", "AI", "変更なし"]],
+  ] as const)("claims none of the forbidden things in %s", (language, phrases) => {
+    for (const phrase of phrases) {
+      expect(t(language, "worker.edit.baselineReset")).not.toContain(phrase);
     }
   });
 });

@@ -3,8 +3,9 @@ import { notFound } from "next/navigation";
 import { DashboardNav } from "@/components/dashboard-nav";
 import { WorkerEditForm } from "@/components/worker-edit-form";
 import { getRoutineForEdit } from "@/lib/routines";
+import { t } from "@/lib/i18n";
 import { requireUserId } from "@/lib/session";
-import { getUserTimezone } from "@/lib/users";
+import { getUserLanguage, getUserTimezone } from "@/lib/users";
 import { getWebsiteSource } from "@/lib/website-sources";
 import { minutesToTimeValue } from "@/lib/worker-input";
 
@@ -33,8 +34,12 @@ export default async function EditWorkerPage({
     notFound();
   }
 
-  // What the form says about the schedule it is editing. Read only.
-  const timezone = await getUserTimezone(userId);
+  // What the form says about the schedule it is editing, and the words it
+  // says it in. Read only, both of them.
+  const [timezone, language] = await Promise.all([
+    getUserTimezone(userId),
+    getUserLanguage(userId),
+  ]);
 
   // **Only a website worker has a page, and only it is asked for one.**
   const source =
@@ -53,10 +58,10 @@ export default async function EditWorkerPage({
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-10 sm:px-10">
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-          Edit Worker
+          {t(language, "worker.edit.title")}
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Changes apply to the next run.
+          {t(language, "worker.edit.description")}
         </p>
 
         <WorkerEditForm
@@ -74,6 +79,7 @@ export default async function EditWorkerPage({
             runAtDay: worker.runAtDay,
           }}
           timezone={timezone}
+          language={language}
         />
       </main>
     </div>

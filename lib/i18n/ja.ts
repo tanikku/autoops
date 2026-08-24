@@ -88,6 +88,127 @@ export const ja: Record<TranslationKey, string> = {
   "common.weekday.friday": "金曜日",
   "common.weekday.saturday": "土曜日",
 
+  "common.save": "保存",
+  "common.saving": "保存中\u2026",
+  "common.cancel": "キャンセル",
+  "common.edit": "編集",
+  "common.statusLabel": "ステータス",
+
+  "worker.kind.prompt": "プロンプト",
+  "worker.kind.website": "Web ページ監視",
+  "worker.kind.promptOption": "AI に依頼する",
+  "worker.kind.promptOptionDescription":
+    "スケジュールに沿って、あなたの指示を AI に送ります。",
+  "worker.kind.websiteOption": "Web ページを監視する",
+  "worker.kind.websiteOptionDescription":
+    "ページを確認し、変更があったときだけ AI を使います。",
+
+  "worker.frequency.daily": "毎日",
+  "worker.frequency.weekly": "毎週",
+  "worker.frequency.monthly": "毎月",
+
+  "worker.status.draftDescription":
+    "下書きの Worker は自動実行されません。自動で動かすには、ステータスを「稼働中」にしてください。",
+  "worker.status.activeDescription": "スケジュールに沿って自動的に実行されます。",
+  "worker.status.pausedDescription":
+    "予定された実行を停止しています。手動実行はできます。",
+
+  "worker.prompt": "プロンプト",
+  "worker.changeInstructions": "変更時の指示",
+
+  "worker.field.name": "名前",
+  "worker.field.namePlaceholder": "毎日のサイト更新チェック",
+  "worker.field.description": "説明",
+  "worker.field.descriptionPlaceholder": "この Worker の役割は?",
+  "worker.field.websiteUrl": "Web ページのアドレス",
+  "worker.field.promptPlaceholder": "毎回の実行で AI に送る指示。",
+  "worker.field.changePrompt": "ページが変わったとき",
+  "worker.field.changePromptPlaceholder":
+    "このページが変わったら、AI に何をさせますか?",
+  "worker.field.frequency": "実行頻度",
+  "worker.field.weekday": "曜日",
+  "worker.field.sameWeekday": "保存した曜日と同じ",
+  "worker.field.monthDay": "日付",
+  "worker.field.sameMonthDay": "保存した日と同じ",
+  /** 「3rd」は英語の規則なので、日本語は素の数字を受け取る。 */
+  "worker.field.monthDayOption": "{day}日",
+  "worker.field.monthDayNote": "月末を超える日は、その月の最終日に実行されます。",
+  "worker.field.runAt": "実行時刻",
+  "worker.field.timezoneNote":
+    "時刻はアカウントのタイムゾーン({timezone})で扱われます。空欄にすると、保存したときの時刻に実行されます。",
+
+  "worker.create.description":
+    "Worker は一度定義すれば、あとは AutoOps がスケジュールどおりに実行します。",
+  "worker.create.draftHeading": "AutoOps に何を任せますか?",
+  "worker.create.draftPlaceholder":
+    "このページを毎日チェックして、重要な変更があれば要約して。",
+  "worker.create.createDraft": "下書きを作成",
+  "worker.create.drafting": "作成中\u2026",
+  "worker.create.draftWatches": "{url} を監視します",
+  "worker.create.draftSendsPrompt": "指示を AI に送信します",
+  "worker.create.draftManual": "依頼したときに実行",
+  /** 中黒は日本語の並記記号。値そのものは英語版と同じものが入る。 */
+  "worker.create.draftSummary": "{what}\u30fb{cadence}",
+  "worker.create.applyToForm": "フォームに反映",
+  "worker.create.kindHeading": "この Worker は何をしますか?",
+  "worker.create.templatesHeading": "テンプレートを選ぶ",
+  "worker.create.templatesHelp":
+    "テンプレートから始めるか、下のフォームに自分で入力してください。",
+
+  "worker.draft.notConfigured":
+    "AutoOps に AI が設定されていないため、下書きを作成できません。",
+  "worker.draft.empty": "AutoOps に任せたい内容を入力してください。",
+  "worker.draft.tooLong": "内容は {limit} 文字以内にしてください。",
+  "worker.draft.timeout":
+    "下書きの作成に時間がかかりすぎました。もう一度お試しください。",
+  "worker.draft.unavailable":
+    "AI サービスに接続できませんでした。もう一度お試しください。",
+  "worker.draft.unreadable":
+    "AutoOps が回答を読み取れませんでした。内容を書き直してお試しください。",
+
+  "worker.detail.noDescription": "説明はありません。",
+  "worker.detail.workerType": "Worker の種類",
+  "worker.detail.unrecognised": "不明",
+  "worker.detail.lastRun": "前回の実行",
+  "worker.detail.createdAt": "作成日時",
+  "worker.detail.updatedAt": "更新日時",
+  "worker.detail.watchedPage": "監視中のページ",
+  "worker.detail.dangerZone": "危険な操作",
+  "worker.detail.deleteWarning":
+    "この Worker を削除すると、実行履歴も削除されます。元に戻せません。",
+
+  "worker.delete.button": "削除",
+  "worker.delete.deleting": "削除中\u2026",
+  "worker.delete.confirmTitle": "「{name}」を削除しますか?",
+  "worker.delete.confirmBody": "実行履歴も削除されます。元に戻せません。",
+
+  "worker.edit.title": "Worker を編集",
+  "worker.edit.description": "変更は次回の実行から反映されます。",
+  /**
+   * 英語版と同じ3点を保つこと。弱めると、目に見えない仕組みについて
+   * 事実と違うことを言うことになる。
+   *
+   * - 「次にチェックが成功した時点で」— 「次回のチェック」ではない。
+   *   取得に失敗したチェックは基準を作らない。
+   * - 「変更が検出された」として扱わない — 「変更なし」ではない。
+   * - 過去の実行履歴は残る — 捨てられるのは比較の基準だけ。
+   */
+  "worker.edit.baselineReset":
+    "アドレスを変更すると、比較の基準はリセットされます。次にチェックが成功した" +
+    "時点で、AutoOps は新しいページを「変更が検出された」として扱わず、新しい" +
+    "基準を作り直します。過去の実行履歴はそのまま残ります。",
+
+  "run.detail.title": "実行の詳細",
+  "run.detail.back": "ダッシュボードに戻る",
+  /** 製品固有の語なので、日本語でもそのまま。 */
+  "run.detail.worker": "Worker",
+  "run.detail.executionTime": "実行時間",
+  "run.detail.startedAt": "開始日時",
+  "run.detail.finishedAt": "終了日時",
+  "run.detail.renderedPrompt": "展開後のプロンプト",
+  "run.detail.output": "出力",
+  "run.detail.error": "エラー",
+
   "settings.language.title": "言語",
   "settings.language.description":
     "AutoOps の画面に使う言語です。Worker と、その出力には影響しません。",

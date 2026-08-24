@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   requireUserId: vi.fn(),
   getRun: vi.fn(),
   getUserTimezone: vi.fn(),
+  getUserLanguage: vi.fn(),
   notFound: vi.fn(),
 }));
 
@@ -30,7 +31,10 @@ vi.mock("next/navigation", () => ({ notFound: mocks.notFound }));
 vi.mock("@/auth", () => ({ auth: vi.fn(), signIn: vi.fn(), signOut: vi.fn() }));
 vi.mock("@/lib/session", () => ({ requireUserId: mocks.requireUserId }));
 vi.mock("@/lib/runs", () => ({ getRun: mocks.getRun }));
-vi.mock("@/lib/users", () => ({ getUserTimezone: mocks.getUserTimezone }));
+vi.mock("@/lib/users", () => ({
+  getUserTimezone: mocks.getUserTimezone,
+  getUserLanguage: mocks.getUserLanguage,
+}));
 
 const RunDetailPage = (await import("@/app/dashboard/runs/[id]/page")).default;
 
@@ -96,6 +100,9 @@ function render() {
 beforeEach(() => {
   mocks.requireUserId.mockReset().mockResolvedValue("user-1");
   mocks.getUserTimezone.mockReset().mockResolvedValue("UTC");
+  // English by default, so the assertions above stay about which sections a
+  // run has rather than about what they are called.
+  mocks.getUserLanguage.mockReset().mockResolvedValue("en");
   mocks.getRun.mockReset().mockResolvedValue(run());
   mocks.notFound.mockReset().mockImplementation(() => {
     throw new NotFoundSignal();
@@ -206,5 +213,82 @@ describe("run detail — a run that is not this account's", () => {
     mocks.getRun.mockResolvedValue(null);
 
     await expect(render()).rejects.toBeInstanceOf(NotFoundSignal);
+  });
+});
+
+/**
+ * The same page, in Japanese.
+ *
+ * **The headings move and the evidence does not.** What a run sent, what it
+ * produced and the reason a failed one gives are stored text — some of it the
+ * provider's words — and a translated page shows them exactly as recorded.
+ * Which sections appear is still decided by the worker's kind.
+ */
+describe("run detail in Japanese", () => {
+  beforeEach(() => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+  });
+
+  it("names a prompt run's sections in Japanese", async () => {
+    const sections = labelled(await render());
+
+    expect(sections["プロンプト"]).toBe("Summarise {{today}}.");
+    expect(sections["展開後のプロンプト"]).toBe("Summarise 2026-08-13.");
+    expect(sections).not.toHaveProperty("Prompt");
+  });
+
+  it("shows what the run produced, untranslated", async () => {
+    const sections = labelled(await render());
+
+    expect(sections["出力"]).toBe("What the model said.");
+    expect(sections).not.toHaveProperty("エラー");
+  });
+
+  it("shows the provider's own words for a failure", async () => {
+    mocks.getRun.mockResolvedValue(
+      run({ status: "failed", output: "", errorMessage: "Provider said no." }),
+    );
+
+    const sections = labelled(await render());
+
+    expect(sections["エラー"]).toBe("Provider said no.");
+    expect(sections).not.toHaveProperty("出力");
+  });
+
+  it("still never claims to show what a website run sent", async () => {
+    mocks.getRun.mockResolvedValue(
+      run({ routineKind: "website", routinePrompt: "Tell me what changed." }),
+    );
+
+    const sections = labelled(await render());
+
+    expect(sections["変更時の指示"]).toBe("Tell me what changed.");
+    expect(sections).not.toHaveProperty("展開後のプロンプト");
+    expect(sections).not.toHaveProperty("プロンプト");
+  });
+
+  it("shows neither for a kind it does not recognise", async () => {
+    mocks.getRun.mockResolvedValue(run({ routineKind: null }));
+
+    const sections = labelled(await render());
+
+    expect(sections).not.toHaveProperty("プロンプト");
+    expect(sections).not.toHaveProperty("展開後のプロンプト");
+    expect(sections).not.toHaveProperty("変更時の指示");
+    expect(sections["出力"]).toBe("What the model said.");
+  });
+
+  it("keeps the worker's name and the timestamps as they were", async () => {
+    mocks.getUserLanguage.mockResolvedValue("en");
+    const english = labelled(await render());
+
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    const japanese = labelled(await render());
+
+    // "Worker" is the product's own noun and is the same in both.
+    expect(japanese.Worker).toBe(english.Worker);
+    expect(japanese["開始日時"]).toBe(english["Started At"]);
+    expect(japanese["終了日時"]).toBe(english["Finished At"]);
+    expect(japanese["実行時間"]).toBe(english["Execution Time"]);
   });
 });

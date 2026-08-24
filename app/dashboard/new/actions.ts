@@ -9,11 +9,12 @@ import {
   type WorkerDraft,
 } from "@/lib/ai/worker-draft";
 import { createWorkerDraftGenerator } from "@/lib/ai/worker-draft-factory";
+import { t, type TranslationKey } from "@/lib/i18n";
 import { prisma } from "@/lib/prisma";
 import { createRoutine } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
 import { requireProvisionedUserId, requireUserId } from "@/lib/session";
-import { getUserTimezone } from "@/lib/users";
+import { getUserLanguage, getUserTimezone } from "@/lib/users";
 import { isWatcherError } from "@/lib/watcher/errors";
 import { parseWatchUrl } from "@/lib/watcher/url";
 import { createWebsiteSource } from "@/lib/website-sources";
@@ -223,15 +224,30 @@ export type WorkerDraftState =
  * difference they can act on survives the crossing — wait and retry, or give up
  * on drafting and fill the form in.
  */
-const DRAFT_MESSAGES = {
-  notConfigured: "Drafting is unavailable because AutoOps has no AI configured.",
-  empty: "Describe what you would like AutoOps to handle.",
-  tooLong: `Keep the description under ${MAX_WORKER_DRAFT_REQUEST_CHARS.toLocaleString("en-US")} characters.`,
-  timeout: "Drafting took too long. Try again.",
-  unavailable: "The AI service could not be reached. Try again.",
-  unreadable:
-    "AutoOps could not read the answer. Try describing the work again.",
-} as const;
+const DRAFT_MESSAGE_KEYS = {
+  notConfigured: "worker.draft.notConfigured",
+  empty: "worker.draft.empty",
+  tooLong: "worker.draft.tooLong",
+  timeout: "worker.draft.timeout",
+  unavailable: "worker.draft.unavailable",
+  unreadable: "worker.draft.unreadable",
+} as const satisfies Record<string, TranslationKey>;
+
+/**
+ * One of the six, in the language the account reads.
+ *
+ * **The limit is formatted the way it always was.** Grouping a number is a
+ * formatting question rather than a wording one, and Day 2B changes wording
+ * only — so `2,000` reads the same on both versions of this screen.
+ */
+function draftMessage(
+  language: string,
+  key: keyof typeof DRAFT_MESSAGE_KEYS,
+): string {
+  return t(language, DRAFT_MESSAGE_KEYS[key], {
+    limit: MAX_WORKER_DRAFT_REQUEST_CHARS.toLocaleString("en-US"),
+  });
+}
 
 /**
  * Describes a worker from a sentence, without creating one.
@@ -251,16 +267,21 @@ export async function generateWorkerDraftAction(
   _prevState: WorkerDraftState,
   formData: FormData,
 ): Promise<WorkerDraftState> {
-  await requireUserId();
+  const userId = await requireUserId();
+
+  // **A read, and only for the wording of a failure.** Nothing about which
+  // language the account is set to reaches the generator, the request, or the
+  // draft that comes back.
+  const language = await getUserLanguage(userId);
 
   const request = String(formData.get("request") ?? "").trim();
 
   if (request === "") {
-    return { status: "error", message: DRAFT_MESSAGES.empty };
+    return { status: "error", message: draftMessage(language, "empty") };
   }
 
   if (request.length > MAX_WORKER_DRAFT_REQUEST_CHARS) {
-    return { status: "error", message: DRAFT_MESSAGES.tooLong };
+    return { status: "error", message: draftMessage(language, "tooLong") };
   }
 
   // **No stand-in.** A fabricated run produces a sentence somebody reads and
@@ -268,7 +289,10 @@ export async function generateWorkerDraftAction(
   const generator = createWorkerDraftGenerator();
 
   if (!generator) {
-    return { status: "error", message: DRAFT_MESSAGES.notConfigured };
+    return {
+      status: "error",
+      message: draftMessage(language, "notConfigured"),
+    };
   }
 
   try {
@@ -286,7 +310,7 @@ export async function generateWorkerDraftAction(
     // ask again in the words that suit them.
     if (isInvalidWorkerDraftResponse(error)) {
       console.error("[draft] the model's answer could not be read");
-      return { status: "error", message: DRAFT_MESSAGES.unreadable };
+      return { status: "error", message: draftMessage(language, "unreadable") };
     }
 
     // The kind is logged and not shown. Nothing about it changes what the
@@ -296,8 +320,10 @@ export async function generateWorkerDraftAction(
 
     return {
       status: "error",
-      message:
-        kind === "timeout" ? DRAFT_MESSAGES.timeout : DRAFT_MESSAGES.unavailable,
+      message: draftMessage(
+        language,
+        kind === "timeout" ? "timeout" : "unavailable",
+      ),
     };
   }
 }

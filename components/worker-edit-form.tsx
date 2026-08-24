@@ -14,12 +14,13 @@ import {
   WorkerFields,
   type WorkerFieldValues,
 } from "@/components/worker-fields";
+import { t, type TranslationKey } from "@/lib/i18n";
 import { minutesToTimeValue } from "@/lib/worker-input";
 import type { RoutineKind } from "@/types";
 
-const kindLabels: Record<RoutineKind, string> = {
-  prompt: "Prompt",
-  website: "Website",
+const kindLabels: Record<RoutineKind, TranslationKey> = {
+  prompt: "worker.kind.prompt",
+  website: "worker.kind.website",
 };
 
 /**
@@ -31,35 +32,20 @@ const kindLabels: Record<RoutineKind, string> = {
  * right behaviour and it is invisible, which is the only reason this sentence
  * exists.
  *
- * **Every clause is held to what execution actually does**, because a sentence
- * about a mechanism nobody can see is believed:
- *
- * - *the next successful check*, not the next one. A check that cannot fetch
- *   the page writes no baseline and leaves the worker where it was, so
- *   promising one on the next check would promise something a failure breaks.
- * - *instead of treating the new page as a detected change*, rather than
- *   "reports no changes". Establishing a first baseline is its own outcome —
- *   there was nothing to differ from — and it is the outcome worth naming,
- *   because the alternative it rules out is the whole of a new page arriving
- *   as though it had just changed.
- * - *past runs are kept*, because what is thrown away is the stored comparison
- *   point and nothing else. Nothing is fetched when the form is saved, and no
- *   model is involved in establishing a baseline.
+ * **The sentence lives in the dictionary now, and every clause it is held to
+ * travels with it** — `worker.edit.baselineReset` carries the reasoning, and a
+ * translation that weakens any clause is the failure this is watched for. See
+ * `lib/i18n/en.ts`.
  *
  * No confirmation dialog goes with it. A baseline is an internal comparison
  * point rather than anything the person wrote, and a check rebuilds it.
  */
-export const BASELINE_RESET_NOTE =
-  "Changing the address resets the comparison baseline. On the next " +
-  "successful check, AutoOps establishes a new baseline instead of treating " +
-  "the new page as a detected change. Past runs are kept.";
-
-function SaveButton() {
+function SaveButton({ language }: { language: string }) {
   const { pending } = useFormStatus();
 
   return (
     <Button type="submit" disabled={pending}>
-      {pending ? "Saving…" : "Save"}
+      {t(language, pending ? "common.saving" : "common.save")}
     </Button>
   );
 }
@@ -67,9 +53,16 @@ function SaveButton() {
 export function WorkerEditForm({
   worker,
   timezone,
+  language,
 }: {
   worker: WorkerFieldValues & { id: string; kind: RoutineKind };
   timezone: string;
+  /**
+   * The language the form is written in. **The worker inside it is not
+   * translated** — its name, its instructions and the address it watches are
+   * saved exactly as they are shown.
+   */
+  language: string;
 }) {
   // The id travels with the action rather than the form, so it cannot be
   // swapped by the client.
@@ -104,9 +97,11 @@ export function WorkerEditForm({
           conversion that neither the action nor the update type allows, so this
           says which kind it is and stops. */}
       <div className="grid gap-1">
-        <span className="text-sm font-medium">Worker type</span>
+        <span className="text-sm font-medium">
+          {t(language, "worker.detail.workerType")}
+        </span>
         <p className="text-sm text-muted-foreground">
-          {kindLabels[worker.kind]}
+          {t(language, kindLabels[worker.kind])}
         </p>
       </div>
 
@@ -128,17 +123,18 @@ export function WorkerEditForm({
         errors={state?.errors}
         kind={worker.kind}
         timezone={timezone}
-        websiteUrlNote={BASELINE_RESET_NOTE}
+        language={language}
+        websiteUrlNote={t(language, "worker.edit.baselineReset")}
       />
 
       <div className="flex gap-2">
-        <SaveButton />
+        <SaveButton language={language} />
         <Button
           variant="outline"
           nativeButton={false}
           render={<Link href={detailHref} />}
         >
-          Cancel
+          {t(language, "common.cancel")}
         </Button>
       </div>
     </form>

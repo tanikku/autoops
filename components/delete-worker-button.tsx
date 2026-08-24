@@ -5,16 +5,24 @@ import { useRef, useTransition } from "react";
 import { deleteWorkerAction } from "@/app/dashboard/actions";
 import { useNotify } from "@/components/notification/notification-provider";
 import { Button } from "@/components/ui/button";
+import { t } from "@/lib/i18n";
 
 export function DeleteWorkerButton({
   workerId,
   workerName,
   redirectTo,
+  language,
 }: {
   workerId: string;
   workerName: string;
   /** Where to go before deleting, for callers whose page shows this worker. */
   redirectTo?: string;
+  /**
+   * The language the dialog is written in. The worker's name inside the
+   * question is the owner's and is placed into the sentence rather than glued
+   * to one end of it — the two languages do not put it in the same spot.
+   */
+  language: string;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const notify = useNotify();
@@ -51,7 +59,7 @@ export function DeleteWorkerButton({
         disabled={pending}
         onClick={() => dialog.current?.showModal()}
       >
-        {pending ? "Deleting…" : "Delete"}
+        {t(language, pending ? "worker.delete.deleting" : "worker.delete.button")}
       </Button>
 
       <dialog
@@ -63,10 +71,10 @@ export function DeleteWorkerButton({
           id={`delete-worker-title-${workerId}`}
           className="text-base font-medium"
         >
-          Delete “{workerName}”?
+          {t(language, "worker.delete.confirmTitle", { name: workerName })}
         </h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          This also removes its activity history. This cannot be undone.
+          {t(language, "worker.delete.confirmBody")}
         </p>
 
         <div className="mt-6 flex justify-end gap-2">
@@ -75,12 +83,12 @@ export function DeleteWorkerButton({
             variant="outline"
             onClick={() => dialog.current?.close()}
           >
-            Cancel
+            {t(language, "common.cancel")}
           </Button>
           {/* The id is passed by the handler, not the form, so it cannot be
               swapped client-side. */}
           <Button type="button" variant="destructive" onClick={handleDelete}>
-            Delete
+            {t(language, "worker.delete.button")}
           </Button>
         </div>
       </dialog>

@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   generate: vi.fn(),
   ensureUser: vi.fn(),
   getUserTimezone: vi.fn(),
+  getUserLanguage: vi.fn(),
   createRoutine: vi.fn(),
   createWebsiteSource: vi.fn(),
   transaction: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock("@/auth", () => ({ auth: mocks.auth }));
 vi.mock("@/lib/users", () => ({
   ensureUser: mocks.ensureUser,
   getUserTimezone: mocks.getUserTimezone,
+  getUserLanguage: mocks.getUserLanguage,
 }));
 vi.mock("@/lib/routines", () => ({ createRoutine: mocks.createRoutine }));
 vi.mock("@/lib/website-sources", () => ({
@@ -84,6 +86,7 @@ beforeEach(() => {
   });
   mocks.ensureUser.mockReset().mockResolvedValue(undefined);
   mocks.getUserTimezone.mockReset().mockResolvedValue("Asia/Tokyo");
+  mocks.getUserLanguage.mockReset().mockResolvedValue("en");
   mocks.createRoutine.mockReset().mockResolvedValue({ id: "worker-1" });
   mocks.createWebsiteSource.mockReset().mockResolvedValue({ id: "source-1" });
   mocks.transaction
@@ -682,5 +685,108 @@ describe("generateWorkerDraftAction", () => {
 
     expect(mocks.createRoutine).not.toHaveBeenCalled();
     expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Why drafting produced nothing, in the language the account reads.
+ *
+ * **Six sentences AutoOps writes about its own behaviour**, which is what
+ * separates them from what a generator returns for `unsupported` or
+ * `needs_input` — those describe one particular request, in the model's words,
+ * and go to the screen exactly as they arrived.
+ *
+ * The result's shape does not change with the language: `status` is still
+ * `error`, and the page still decides what to do with it.
+ */
+describe("generateWorkerDraftAction — the words a failure comes back in", () => {
+  function ask(request: string) {
+    const data = new FormData();
+    data.set("request", request);
+    return generateWorkerDraftAction(null, data);
+  }
+
+  it("answers an empty request in the account's language", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+
+    const result = await ask("");
+
+    expect(result?.status).toBe("error");
+    expect(result).toHaveProperty(
+      "message",
+      "AutoOps に任せたい内容を入力してください。",
+    );
+    expect(mocks.generate).not.toHaveBeenCalled();
+  });
+
+  it("answers it in English for an account that reads English", async () => {
+    const result = await ask("");
+
+    expect(result).toHaveProperty(
+      "message",
+      "Describe what you would like AutoOps to handle.",
+    );
+  });
+
+  it("names the limit the same way in both", async () => {
+    const tooLong = "a".repeat(MAX_WORKER_DRAFT_REQUEST_CHARS + 1);
+
+    const english = await ask(tooLong);
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    const japanese = await ask(tooLong);
+
+    for (const result of [english, japanese]) {
+      expect(result).toHaveProperty("status", "error");
+      expect((result as { message: string }).message).toContain("2,000");
+    }
+    expect((english as { message: string }).message).not.toBe(
+      (japanese as { message: string }).message,
+    );
+  });
+
+  it("says drafting is unavailable in Japanese when no generator exists", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    mocks.createWorkerDraftGenerator.mockReturnValue(null);
+
+    const result = await ask("watch a page");
+
+    expect(result).toHaveProperty(
+      "message",
+      "AutoOps に AI が設定されていないため、下書きを作成できません。",
+    );
+  });
+
+  /**
+   * A question from the generator is about one request and is written in the
+   * model's words. Nothing looks it up, in either language.
+   */
+  it("passes a generator's own answer through untouched", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    mocks.generate.mockResolvedValue({
+      status: "needs_input",
+      field: "websiteUrl",
+      message: "Which page should this worker watch?",
+    });
+
+    const result = await ask("watch a page for me");
+
+    expect(result).toEqual({
+      status: "needs_input",
+      field: "websiteUrl",
+      message: "Which page should this worker watch?",
+    });
+  });
+
+  it("tells the generator nothing about the language", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    mocks.generate.mockResolvedValue({
+      status: "unsupported",
+      reason: "AutoOps cannot send email yet.",
+    });
+
+    await ask("email my team every morning");
+
+    const [request] = mocks.generate.mock.calls[0] as [Record<string, unknown>];
+    expect(Object.keys(request).sort()).toEqual(["request", "urlCandidates"]);
   });
 });

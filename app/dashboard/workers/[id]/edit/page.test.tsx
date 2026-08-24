@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   requireUserId: vi.fn(),
   getRoutineForEdit: vi.fn(),
   getUserTimezone: vi.fn(),
+  getUserLanguage: vi.fn(),
   getWebsiteSource: vi.fn(),
   notFound: vi.fn(),
 }));
@@ -23,7 +24,10 @@ vi.mock("@/lib/session", () => ({ requireUserId: mocks.requireUserId }));
 vi.mock("@/lib/routines", () => ({
   getRoutineForEdit: mocks.getRoutineForEdit,
 }));
-vi.mock("@/lib/users", () => ({ getUserTimezone: mocks.getUserTimezone }));
+vi.mock("@/lib/users", () => ({
+  getUserTimezone: mocks.getUserTimezone,
+  getUserLanguage: mocks.getUserLanguage,
+}));
 vi.mock("@/lib/website-sources", () => ({
   getWebsiteSource: mocks.getWebsiteSource,
 }));
@@ -34,8 +38,8 @@ const EditWorkerPage = (await import(
 
 const NOW = new Date("2026-08-20T08:50:29.000Z");
 
-/** The zone as it was handed to whichever component was given one. */
-function passedTimezone(node: ReactNode): unknown {
+/** One prop, as it was handed to whichever component was given it. */
+function passedProp(node: ReactNode, name: string): unknown {
   let found: unknown;
 
   const walk = (current: unknown): void => {
@@ -57,8 +61,8 @@ function passedTimezone(node: ReactNode): unknown {
       return;
     }
 
-    if ("timezone" in props) {
-      found = props.timezone;
+    if (name in props) {
+      found = props[name];
       return;
     }
 
@@ -68,6 +72,8 @@ function passedTimezone(node: ReactNode): unknown {
   walk(node);
   return found;
 }
+
+const passedTimezone = (node: ReactNode) => passedProp(node, "timezone");
 
 function worker(overrides?: Record<string, unknown>) {
   return {
@@ -96,6 +102,7 @@ function render() {
 beforeEach(() => {
   mocks.requireUserId.mockReset().mockResolvedValue("user-1");
   mocks.getUserTimezone.mockReset().mockResolvedValue("Asia/Tokyo");
+  mocks.getUserLanguage.mockReset().mockResolvedValue("en");
   mocks.getRoutineForEdit.mockReset().mockResolvedValue(worker());
   mocks.getWebsiteSource.mockReset().mockResolvedValue(null);
   mocks.notFound.mockReset().mockImplementation(() => {
@@ -125,5 +132,41 @@ describe("edit worker page", () => {
     });
 
     expect(passedTimezone(await render())).toBe("Asia/Tokyo");
+  });
+});
+
+/**
+ * The edit form is told its language the same way, and the worker inside it is
+ * not affected by the answer.
+ */
+describe("the language the edit form is written in", () => {
+  it("comes from the account", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+
+    expect(passedProp(await render(), "language")).toBe("ja");
+  });
+
+  it("is read for the signed-in account", async () => {
+    await render();
+
+    expect(mocks.getUserLanguage).toHaveBeenCalledWith("user-1");
+  });
+
+  it("leaves the worker it is editing exactly as stored", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    mocks.getRoutineForEdit.mockResolvedValue(
+      worker({ name: "Watcher", prompt: "Tell me what changed." }),
+    );
+
+    const passed = passedProp(await render(), "worker") as {
+      name: string;
+      prompt: string;
+      kind: string;
+    };
+
+    expect(passed.name).toBe("Watcher");
+    expect(passed.prompt).toBe("Tell me what changed.");
+    // A kind is decided when a worker is hired, and no language changes it.
+    expect(passed.kind).toBe("prompt");
   });
 });

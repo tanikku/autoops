@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { t, type TranslationKey } from "@/lib/i18n";
+import { weekdayKeys } from "@/lib/schedule-label";
 import {
   workerFieldLimits,
   type WorkerFieldErrors,
@@ -20,23 +22,38 @@ import {
   type RoutineStatus,
 } from "@/types";
 
-const statusLabels: Record<RoutineStatus, string> = {
-  active: "Active",
-  paused: "Paused",
-  draft: "Draft",
+/**
+ * The stored values, as the person choosing one reads them.
+ *
+ * **The values are the contract and these are not.** `active` stays `active`
+ * in the column, in the scheduler's `where`, and in the submitted form; a
+ * language decides only what the option says about it.
+ *
+ * The status words are the dashboard's — a badge and a menu entry that say
+ * different things about the same value would be two answers to one question.
+ * `manual` borrows `worker.manual` for the same reason.
+ */
+const statusKeys: Record<RoutineStatus, TranslationKey> = {
+  active: "common.status.active",
+  paused: "common.status.paused",
+  draft: "common.status.draft",
 };
 
-const frequencyLabels: Record<RoutineFrequency, string> = {
-  manual: "Manual",
-  daily: "Daily",
-  weekly: "Weekly",
-  monthly: "Monthly",
+/**
+ * Exported because the hire form's draft card names a cadence too, and two
+ * lists would be two answers to the same question.
+ */
+export const frequencyKeys: Record<RoutineFrequency, TranslationKey> = {
+  manual: "worker.manual",
+  daily: "worker.frequency.daily",
+  weekly: "worker.frequency.weekly",
+  monthly: "worker.frequency.monthly",
 };
 
-const statusDescriptions: Record<RoutineStatus, string> = {
-  draft: "Draft workers are not scheduled. Set Status to Active to run automatically.",
-  active: "Runs automatically according to its schedule.",
-  paused: "Scheduled runs are paused. Manual runs still work.",
+const statusDescriptionKeys: Record<RoutineStatus, TranslationKey> = {
+  draft: "worker.status.draftDescription",
+  active: "worker.status.activeDescription",
+  paused: "worker.status.pausedDescription",
 };
 
 const selectClassName =
@@ -242,6 +259,7 @@ export function WorkerFields({
   kind = "prompt",
   timezone,
   websiteUrlNote,
+  language,
 }: {
   values: WorkerFieldValues;
   errors?: WorkerFieldErrors;
@@ -278,6 +296,15 @@ export function WorkerFields({
    * component, and the zone lives on the account row.
    */
   timezone: string;
+  /**
+   * The language the labels are written in — the account's, as stored.
+   *
+   * **Handed down rather than read here**, the same as the zone: this is a
+   * client component, and the language lives on the account row. What is typed
+   * into these fields is never touched by it. A Japanese form and an English
+   * one submit the same values.
+   */
+  language: string;
 }) {
   // The only controlled field, and only because another one depends on it: a
   // time of day is meaningless for a manual worker, so the select has to be
@@ -299,27 +326,29 @@ export function WorkerFields({
     <>
       <CountedField
         field="name"
-        label="Name"
+        label={t(language, "worker.field.name")}
         required
         defaultValue={values.name}
-        placeholder="Daily Website Update"
+        placeholder={t(language, "worker.field.namePlaceholder")}
         error={errors.name}
       />
 
       <CountedField
         field="description"
-        label="Description"
+        label={t(language, "worker.field.description")}
         defaultValue={values.description}
-        placeholder="What does this worker do?"
+        placeholder={t(language, "worker.field.descriptionPlaceholder")}
         error={errors.description}
       />
 
       {/* Between the description and the prompt because that is the order the
           worker is read in: what it is called, what it is for, where it looks,
           and then what to do about what it finds. */}
+      {/* The example address is not translated: a URL is not language, and
+          showing a different one per language would suggest it mattered. */}
       <CountedField
         field="websiteUrl"
-        label="Website address"
+        label={t(language, "worker.field.websiteUrl")}
         hidden={!website}
         defaultValue={values.websiteUrl}
         placeholder="https://example.com/news"
@@ -338,19 +367,25 @@ export function WorkerFields({
           what to do about it. */}
       <CountedField
         field="prompt"
-        label={website ? "When the page changes" : "Prompt"}
+        label={t(
+          language,
+          website ? "worker.field.changePrompt" : "worker.prompt",
+        )}
         multiline
         defaultValue={values.prompt}
-        placeholder={
+        placeholder={t(
+          language,
           website
-            ? "What should the AI do when this page changes?"
-            : "Instructions sent to the AI on every run."
-        }
+            ? "worker.field.changePromptPlaceholder"
+            : "worker.field.promptPlaceholder",
+        )}
         error={errors.prompt}
       />
 
       <div className="grid gap-2">
-        <Label htmlFor="frequency">Frequency</Label>
+        <Label htmlFor="frequency">
+          {t(language, "worker.field.frequency")}
+        </Label>
         <select
           id="frequency"
           name="frequency"
@@ -362,7 +397,7 @@ export function WorkerFields({
         >
           {routineFrequencies.map((option) => (
             <option key={option} value={option}>
-              {frequencyLabels[option]}
+              {t(language, frequencyKeys[option])}
             </option>
           ))}
         </select>
@@ -373,17 +408,21 @@ export function WorkerFields({
           sends no time, which is what the action stores. */}
       {frequency === "weekly" ? (
         <div className="grid gap-2">
-          <Label htmlFor="runAtWeekday">Day</Label>
+          <Label htmlFor="runAtWeekday">
+            {t(language, "worker.field.weekday")}
+          </Label>
           <select
             id="runAtWeekday"
             name="runAtWeekday"
             defaultValue={values.runAtWeekday ?? ""}
             className={selectClassName}
           >
-            <option value="">Same day it was saved</option>
+            <option value="">
+              {t(language, "worker.field.sameWeekday")}
+            </option>
             {weekdays.map((day) => (
               <option key={day.value} value={day.value}>
-                {day.label}
+                {t(language, weekdayKeys[day.value])}
               </option>
             ))}
           </select>
@@ -392,29 +431,38 @@ export function WorkerFields({
 
       {frequency === "monthly" ? (
         <div className="grid gap-2">
-          <Label htmlFor="runAtDay">Day</Label>
+          <Label htmlFor="runAtDay">
+            {t(language, "worker.field.monthDay")}
+          </Label>
           <select
             id="runAtDay"
             name="runAtDay"
             defaultValue={values.runAtDay ?? ""}
             className={selectClassName}
           >
-            <option value="">Same day it was saved</option>
+            <option value="">
+              {t(language, "worker.field.sameMonthDay")}
+            </option>
+            {/* Both forms of the date go out and each language takes the one
+                it needs: "the 3rd" is an English rule. */}
             {monthDays.map((day) => (
               <option key={day} value={day}>
-                {ordinal(day)}
+                {t(language, "worker.field.monthDayOption", {
+                  ordinal: ordinal(day),
+                  day,
+                })}
               </option>
             ))}
           </select>
           <p className="text-xs text-muted-foreground">
-            Days past the end of a month run on the last day instead.
+            {t(language, "worker.field.monthDayNote")}
           </p>
         </div>
       ) : null}
 
       {frequency !== "manual" ? (
         <div className="grid gap-2">
-          <Label htmlFor="runAt">Run at</Label>
+          <Label htmlFor="runAt">{t(language, "worker.field.runAt")}</Label>
           <Input
             id="runAt"
             name="runAt"
@@ -423,14 +471,13 @@ export function WorkerFields({
             className="w-40"
           />
           <p className="text-xs text-muted-foreground">
-            Times use your account timezone: {timezone}. Leave empty to run at
-            whatever time the worker was saved.
+            {t(language, "worker.field.timezoneNote", { timezone })}
           </p>
         </div>
       ) : null}
 
       <div className="grid gap-2">
-        <Label htmlFor="status">Status</Label>
+        <Label htmlFor="status">{t(language, "common.statusLabel")}</Label>
         <select
           id="status"
           name="status"
@@ -440,12 +487,12 @@ export function WorkerFields({
         >
           {routineStatuses.map((option) => (
             <option key={option} value={option}>
-              {statusLabels[option]}
+              {t(language, statusKeys[option])}
             </option>
           ))}
         </select>
         <p className="text-xs text-muted-foreground">
-          {statusDescriptions[status]}
+          {t(language, statusDescriptionKeys[status])}
         </p>
       </div>
     </>

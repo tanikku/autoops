@@ -5,10 +5,11 @@ import { DashboardNav } from "@/components/dashboard-nav";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDateTimeWithSeconds } from "@/lib/datetime";
+import { t, type TranslationKey } from "@/lib/i18n";
 import { promptVariables, renderPrompt } from "@/lib/prompt";
 import { getRun } from "@/lib/runs";
 import { requireUserId } from "@/lib/session";
-import { getUserTimezone } from "@/lib/users";
+import { getUserLanguage, getUserTimezone } from "@/lib/users";
 import type { RunStatus } from "@/types";
 
 export const metadata: Metadata = {
@@ -19,10 +20,11 @@ export const metadata: Metadata = {
 // Runs live in the database, so this page must not be prerendered.
 export const dynamic = "force-dynamic";
 
-const statusLabels: Record<RunStatus, string> = {
-  running: "Running",
-  completed: "Completed",
-  failed: "Failed",
+/** What one execution ended as. The stored values are unchanged by any of this. */
+const statusKeys: Record<RunStatus, TranslationKey> = {
+  running: "common.runStatus.running",
+  completed: "common.runStatus.completed",
+  failed: "common.runStatus.failed",
 };
 
 const statusVariants: Record<
@@ -74,9 +76,13 @@ export default async function RunDetailPage({
   const userId = await requireUserId();
   // A run owned by someone else is indistinguishable from one that does not
   // exist: both 404, so the id is never confirmed.
-  const [run, timezone] = await Promise.all([
+  // **The language names the sections and nothing inside them.** What a run
+  // produced, and the reason a failed one gives, are stored text — the
+  // provider's words or a driver's — and are shown exactly as recorded.
+  const [run, timezone, language] = await Promise.all([
     getRun(id, userId),
     getUserTimezone(userId),
+    getUserLanguage(userId),
   ]);
 
   if (!run) {
@@ -117,33 +123,36 @@ export default async function RunDetailPage({
           render={<Link href="/dashboard" />}
           className="-ml-2.5"
         >
-          ← Back to Dashboard
+          ← {t(language, "run.detail.back")}
         </Button>
 
         <h1 className="mt-4 text-2xl font-semibold tracking-tight sm:text-3xl">
-          Execution
+          {t(language, "run.detail.title")}
         </h1>
 
         <dl className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          <Field label="Worker" value={run.routineName} />
           <Field
-            label="Status"
+            label={t(language, "run.detail.worker")}
+            value={run.routineName}
+          />
+          <Field
+            label={t(language, "common.statusLabel")}
             value={
               <Badge variant={statusVariants[run.status]}>
-                {statusLabels[run.status]}
+                {t(language, statusKeys[run.status])}
               </Badge>
             }
           />
           <Field
-            label="Execution Time"
+            label={t(language, "run.detail.executionTime")}
             value={formatDuration(run.startedAt, run.finishedAt)}
           />
           <Field
-            label="Started At"
+            label={t(language, "run.detail.startedAt")}
             value={formatTimestamp(run.startedAt, timezone)}
           />
           <Field
-            label="Finished At"
+            label={t(language, "run.detail.finishedAt")}
             value={formatTimestamp(run.finishedAt, timezone)}
           />
         </dl>
@@ -154,14 +163,20 @@ export default async function RunDetailPage({
             accurate for one of them. */}
         {run.routineKind === null ? null : (
           <Block
-            label={
-              run.routineKind === "website" ? "Change instructions" : "Prompt"
-            }
+            label={t(
+              language,
+              run.routineKind === "website"
+                ? "worker.changeInstructions"
+                : "worker.prompt",
+            )}
             value={run.routinePrompt}
           />
         )}
         {renderedPrompt === null ? null : (
-          <Block label="Rendered Prompt" value={renderedPrompt} />
+          <Block
+            label={t(language, "run.detail.renderedPrompt")}
+            value={renderedPrompt}
+          />
         )}
         {/*
           A failed run has no output, and calling its reason one was the older
@@ -172,9 +187,12 @@ export default async function RunDetailPage({
           what went wrong. The activity list deliberately shows neither.
         */}
         {run.status === "failed" ? (
-          <Block label="Error" value={run.errorMessage ?? ""} />
+          <Block
+            label={t(language, "run.detail.error")}
+            value={run.errorMessage ?? ""}
+          />
         ) : (
-          <Block label="Output" value={run.output} />
+          <Block label={t(language, "run.detail.output")} value={run.output} />
         )}
       </main>
     </div>

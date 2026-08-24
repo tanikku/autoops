@@ -6,7 +6,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 vi.mock("@/auth", () => ({ auth: vi.fn(), signIn: vi.fn(), signOut: vi.fn() }));
 
 const { WorkerFields } = await import("@/components/worker-fields");
-const { BASELINE_RESET_NOTE } = await import("@/components/worker-edit-form");
+const { t } = await import("@/lib/i18n");
+
+/**
+ * The note as each language writes it.
+ *
+ * It moved into the dictionary in Day 2B, so what used to be one exported
+ * constant is now two strings held to the same three promises.
+ */
+const BASELINE_RESET_NOTE = t("en", "worker.edit.baselineReset");
+const BASELINE_RESET_NOTE_JA = t("ja", "worker.edit.baselineReset");
 
 /**
  * Which fields a worker is asked for, and what they are called.
@@ -18,14 +27,21 @@ const { BASELINE_RESET_NOTE } = await import("@/components/worker-edit-form");
  * and no new dependency.
  */
 
-/** The zone every worker form now has to be told, defaulted so each test names only what it is about. */
+/**
+ * The zone and the language every worker form now has to be told, both
+ * defaulted so each test names only what it is about.
+ *
+ * English by default, which is what keeps the assertions below about which
+ * fields are asked for rather than about which words are used for them.
+ */
 function render(
-  props: Omit<Parameters<typeof WorkerFields>[0], "timezone"> & {
+  props: Omit<Parameters<typeof WorkerFields>[0], "timezone" | "language"> & {
     timezone?: string;
+    language?: string;
   },
 ) {
   return renderToStaticMarkup(
-    <WorkerFields timezone="UTC" {...props} />,
+    <WorkerFields timezone="UTC" language="en" {...props} />,
   );
 }
 
@@ -193,5 +209,144 @@ describe("what the schedule says about the timezone", () => {
     const html = render({ timezone: "UTC", values: { frequency: "manual" } });
 
     expect(html).not.toContain("Times use your account timezone");
+  });
+});
+
+/**
+ * The same fields, asked for in Japanese.
+ *
+ * **What changes is the label, and nothing on either side of it.** The names
+ * the form submits, the values already in it and the shape of the markup are
+ * the parts a language must not reach — a form that renamed its own inputs
+ * would save something different depending on who was looking at it.
+ */
+describe("a form in Japanese", () => {
+  const html = render({
+    language: "ja",
+    values: { name: "宝塚市 パブリック・コメント", frequency: "weekly" },
+  });
+
+  it("labels each field", () => {
+    expect(html).toContain("名前");
+    expect(html).toContain("説明");
+    expect(html).toContain("プロンプト");
+    expect(html).toContain("実行頻度");
+    expect(html).toContain("ステータス");
+  });
+
+  it("names the cadences and the statuses", () => {
+    expect(html).toContain("毎日");
+    expect(html).toContain("毎週");
+    expect(html).toContain("毎月");
+    expect(html).toContain("手動");
+    expect(html).toContain("稼働中");
+    expect(html).toContain("一時停止");
+    expect(html).toContain("下書き");
+  });
+
+  it("asks for a weekday in the word for weekdays", () => {
+    expect(html).toContain("曜日");
+    expect(html).toContain("保存した曜日と同じ");
+    expect(html).toContain("月曜日");
+  });
+
+  it("asks for a date in the word for dates, without an English ordinal", () => {
+    const monthly = render({ language: "ja", values: { frequency: "monthly" } });
+
+    expect(monthly).toContain("日付");
+    expect(monthly).toContain("保存した日と同じ");
+    expect(monthly).toContain(">3日<");
+    expect(monthly).not.toContain("3rd");
+  });
+
+  it("submits the same fields under the same names", () => {
+    expect(html).toContain('name="name"');
+    expect(html).toContain('name="description"');
+    expect(html).toContain('name="prompt"');
+    expect(html).toContain('name="frequency"');
+    expect(html).toContain('name="status"');
+    expect(html).toContain('value="active"');
+    expect(html).toContain('value="weekly"');
+  });
+
+  it("leaves what was already typed exactly as it was", () => {
+    expect(html).toContain("宝塚市 パブリック・コメント");
+  });
+
+  it("asks a website worker what to do about a change", () => {
+    const website = render({ language: "ja", kind: "website", values: {} });
+
+    expect(website).toContain("ページが変わったとき");
+    expect(website).toContain("Web ページのアドレス");
+    // A URL is not language: the example address is the same either way.
+    expect(website).toContain("https://example.com/news");
+  });
+
+  it("names the account's zone in the note about times", () => {
+    const scheduled = render({
+      language: "ja",
+      timezone: "Asia/Tokyo",
+      values: { frequency: "daily" },
+    });
+
+    expect(scheduled).toContain("Asia/Tokyo");
+    expect(scheduled).not.toContain("Times use your account timezone");
+  });
+});
+
+/**
+ * The same three promises, in Japanese.
+ *
+ * A translation is where this sentence is most likely to quietly weaken: every
+ * clause describes a mechanism nobody can see, so a reader has only the words.
+ */
+describe("what the Japanese note about changing an address says", () => {
+  it("promises a baseline only once a check has succeeded", () => {
+    expect(BASELINE_RESET_NOTE_JA).toContain("次にチェックが成功した");
+  });
+
+  it("names establishing a baseline as the alternative to reporting a change", () => {
+    expect(BASELINE_RESET_NOTE_JA).toContain(
+      "「変更が検出された」として扱わず",
+    );
+    expect(BASELINE_RESET_NOTE_JA).toContain("新しい");
+    expect(BASELINE_RESET_NOTE_JA).toContain("基準を作り直します");
+  });
+
+  it("says the runs already recorded stay", () => {
+    expect(BASELINE_RESET_NOTE_JA).toContain("過去の実行履歴はそのまま残ります");
+  });
+
+  /**
+   * The claims it must not make, in the words a Japanese reader would take
+   * them from: a check that always works, history being removed, a fetch or a
+   * model call caused by saving, or nothing happening at all.
+   */
+  it.each([
+    "次回のチェック",
+    "削除",
+    "すぐに",
+    "直ちに",
+    "AI",
+    "変更なし",
+  ])("does not claim %o", (phrase) => {
+    expect(BASELINE_RESET_NOTE_JA).not.toContain(phrase);
+  });
+
+  it("is shown on a Japanese website form, and only there", () => {
+    const website = render({
+      language: "ja",
+      kind: "website",
+      values: {},
+      websiteUrlNote: BASELINE_RESET_NOTE_JA,
+    });
+    const prompt = render({
+      language: "ja",
+      values: {},
+      websiteUrlNote: BASELINE_RESET_NOTE_JA,
+    });
+
+    expect(website).toContain("比較の基準はリセットされます");
+    expect(prompt).not.toContain("比較の基準");
   });
 });
