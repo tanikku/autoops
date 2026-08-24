@@ -21,6 +21,17 @@ model User {
   /// Defaults to UTC so existing rows keep displaying exactly what they did
   /// before there was a setting to change.
   timezone  String       @default("UTC")
+  /// Language AutoOps uses for its own screens, "en" or "ja".
+  ///
+  /// A plain string rather than a database enum: adding a language should be a
+  /// dictionary file and a line in `supportedLanguages`, not a migration. The
+  /// application narrows it on the way in and falls back on the way out, the
+  /// same as `status` and `frequency` do.
+  ///
+  /// **It says nothing about what a worker produces.** Instructions, watched
+  /// pages and model output are the owner's own material and are never
+  /// translated to match this.
+  language  String       @default("en")
   createdAt DateTime     @default(now())
   routines  Routine[]
   runs      RunHistory[]

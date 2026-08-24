@@ -1,6 +1,11 @@
 import "server-only";
 
 import { DEFAULT_TIMEZONE } from "@/lib/datetime";
+import {
+  DEFAULT_LANGUAGE,
+  isSupportedLanguage,
+  type Language,
+} from "@/lib/i18n";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -22,6 +27,51 @@ export async function getUserTimezone(userId: string): Promise<string> {
   });
 
   return user?.timezone ?? DEFAULT_TIMEZONE;
+}
+
+/**
+ * The language AutoOps renders its own screens in for this user.
+ *
+ * Read from the database for the same reason the zone is: the JWT is issued at
+ * sign-in and would keep serving the old value, so a changed setting would
+ * appear to do nothing until the next one.
+ *
+ * **Falls back twice, and neither fallback writes.** A user whose row does not
+ * exist yet gets English — a read must not be what creates the row — and so
+ * does a stored value this version cannot read, which is what keeps a language
+ * removed in a later release from turning a dashboard into a blank page.
+ */
+export async function getUserLanguage(userId: string): Promise<Language> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { language: true },
+  });
+
+  return user && isSupportedLanguage(user.language)
+    ? user.language
+    : DEFAULT_LANGUAGE;
+}
+
+/**
+ * Changes the language AutoOps speaks to this user in.
+ *
+ * Touches that column and nothing else, for the same reason `setUserTimezone`
+ * does. **The row is not created here** — a caller reaching this has been
+ * through the provisioning boundary, which is what guarantees there is
+ * something to update.
+ *
+ * **It changes no worker.** Instructions, watched pages, schedules and stored
+ * output are the owner's own material; this decides only which words the
+ * product uses about them.
+ */
+export async function setUserLanguage(
+  userId: string,
+  language: Language,
+): Promise<void> {
+  await prisma.user.update({
+    where: { id: userId },
+    data: { language },
+  });
 }
 
 /**

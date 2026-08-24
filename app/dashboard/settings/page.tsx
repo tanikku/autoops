@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { DashboardNav } from "@/components/dashboard-nav";
+import { LanguageForm } from "@/components/language-form";
 import { TimezoneForm } from "@/components/timezone-form";
+import { t } from "@/lib/i18n";
 import { requireUserId } from "@/lib/session";
-import { getUserTimezone } from "@/lib/users";
+import { getUserLanguage, getUserTimezone } from "@/lib/users";
 
 export const metadata: Metadata = {
   title: "Settings — AutoOps",
@@ -14,7 +16,10 @@ export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
   const userId = await requireUserId();
-  const timezone = await getUserTimezone(userId);
+  const [timezone, language] = await Promise.all([
+    getUserTimezone(userId),
+    getUserLanguage(userId),
+  ]);
 
   return (
     <div className="flex flex-1 flex-col bg-background">
@@ -29,6 +34,19 @@ export default async function SettingsPage() {
         </p>
 
         <TimezoneForm timezone={timezone} />
+
+        {/* **The one section translated so far.** Everything else on this page,
+            and every other screen, is still English: this Sprint puts the
+            switch in place rather than throwing it. A heading here says which
+            section the control belongs to — the rest of the wording lives with
+            the form. */}
+        <section className="mt-12 border-t border-border pt-8">
+          <h2 className="text-lg font-medium tracking-tight">
+            {t(language, "settings.language.title")}
+          </h2>
+
+          <LanguageForm language={language} />
+        </section>
       </main>
     </div>
   );

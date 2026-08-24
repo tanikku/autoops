@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   ensureUser: vi.fn(),
   setUserTimezone: vi.fn(),
+  getUserLanguage: vi.fn(),
+  setUserLanguage: vi.fn(),
   revalidatePath: vi.fn(),
   redirect: vi.fn(),
 }));
@@ -24,11 +26,15 @@ vi.mock("@/auth", () => ({ auth: mocks.auth }));
 vi.mock("@/lib/users", () => ({
   ensureUser: mocks.ensureUser,
   setUserTimezone: mocks.setUserTimezone,
+  getUserLanguage: mocks.getUserLanguage,
+  setUserLanguage: mocks.setUserLanguage,
 }));
 
-const { updateTimezoneAction } = await import(
+const { updateTimezoneAction, updateLanguageAction } = await import(
   "@/app/dashboard/settings/actions"
 );
+const { en } = await import("@/lib/i18n/en");
+const { ja } = await import("@/lib/i18n/ja");
 
 class RedirectSignal extends Error {}
 
@@ -212,5 +218,120 @@ describe("updateTimezoneAction", () => {
     await updateTimezoneAction(null, form("Asia/Tokyo"));
 
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard", "layout");
+  });
+});
+
+/**
+ * Choosing which language AutoOps speaks in.
+ *
+ * The same order the timezone save keeps — authenticate, validate, provision,
+ * write — and the same reason for it: a submission that gets rejected must not
+ * create the row that saving it would have needed.
+ *
+ * **What is different is which language the answer is in.** A save speaks the
+ * language that was just chosen, because that is what the reloaded page will
+ * be in. A rejection speaks the one still in force, because nothing changed.
+ */
+describe("updateLanguageAction", () => {
+  function languageForm(language: string) {
+    const data = new FormData();
+    data.set("language", language);
+    return data;
+  }
+
+  beforeEach(() => {
+    mocks.getUserLanguage.mockReset().mockResolvedValue("en");
+    mocks.setUserLanguage.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("saves a language the application knows", async () => {
+    const result = await updateLanguageAction(null, languageForm("ja"));
+
+    expect(mocks.setUserLanguage).toHaveBeenCalledWith("google-sub-1", "ja");
+    expect(result).toEqual({
+      status: "success",
+      message: ja["settings.language.saved"],
+    });
+  });
+
+  it("answers in the language that was just chosen", async () => {
+    mocks.getUserLanguage.mockResolvedValue("en");
+
+    const toJapanese = await updateLanguageAction(null, languageForm("ja"));
+    const toEnglish = await updateLanguageAction(null, languageForm("en"));
+
+    expect(toJapanese?.message).toBe(ja["settings.language.saved"]);
+    expect(toEnglish?.message).toBe(en["settings.language.saved"]);
+  });
+
+  it("revalidates every screen, because every screen will read it", async () => {
+    await updateLanguageAction(null, languageForm("ja"));
+
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard", "layout");
+  });
+
+  it.each(["", "fr", "EN", "ja-JP", "english"])(
+    "refuses %o without writing anything",
+    async (language) => {
+      const result = await updateLanguageAction(null, languageForm(language));
+
+      expect(result?.status).toBe("error");
+      expect(mocks.setUserLanguage).not.toHaveBeenCalled();
+      expect(mocks.ensureUser).not.toHaveBeenCalled();
+      expect(mocks.revalidatePath).not.toHaveBeenCalled();
+    },
+  );
+
+  /** Nothing changed, so the refusal is written in the language still in force. */
+  it("refuses in the language currently stored", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+
+    const result = await updateLanguageAction(null, languageForm("fr"));
+
+    expect(result?.message).toBe(ja["settings.language.invalid"]);
+  });
+
+  it("sends a visitor with no session to sign in", async () => {
+    mocks.auth.mockResolvedValue(null);
+
+    await expect(
+      updateLanguageAction(null, languageForm("ja")),
+    ).rejects.toBeInstanceOf(RedirectSignal);
+    expect(mocks.setUserLanguage).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The row is provisioned by the boundary this action calls, and that boundary
+   * writes: a database that refuses the write is a provisioning failure, not a
+   * signed-out visitor.
+   */
+  it("reports an account row that could not be provisioned", async () => {
+    mocks.ensureUser.mockRejectedValue(
+      new Error('relation "User" does not exist'),
+    );
+
+    const result = await updateLanguageAction(null, languageForm("ja"));
+
+    expect(result?.status).toBe("error");
+    expect(result?.message).toBe(ja["settings.language.failed"]);
+    expect(result?.message).not.toContain("relation");
+    expect(mocks.setUserLanguage).not.toHaveBeenCalled();
+  });
+
+  it("reports a write that failed without claiming it saved", async () => {
+    mocks.setUserLanguage.mockRejectedValue(new Error("boom"));
+
+    const result = await updateLanguageAction(null, languageForm("ja"));
+
+    expect(result?.status).toBe("error");
+    expect(result?.message).toBe(ja["settings.language.failed"]);
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  /** The two settings on this page are two writes, and stay that way. */
+  it("does not touch the timezone", async () => {
+    await updateLanguageAction(null, languageForm("ja"));
+
+    expect(mocks.setUserTimezone).not.toHaveBeenCalled();
   });
 });
