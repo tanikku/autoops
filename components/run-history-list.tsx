@@ -2,12 +2,14 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatDateTimeWithSeconds } from "@/lib/datetime";
+import { t, type TranslationKey } from "@/lib/i18n";
 import type { RunHistoryEntry, RunStatus } from "@/types";
 
-const statusLabels: Record<RunStatus, string> = {
-  running: "Running",
-  completed: "Completed",
-  failed: "Failed",
+/** What a stored run status is called here. The values themselves do not move. */
+const statusKeys: Record<RunStatus, TranslationKey> = {
+  running: "common.runStatus.running",
+  completed: "common.runStatus.completed",
+  failed: "common.runStatus.failed",
 };
 
 const statusVariants: Record<
@@ -22,14 +24,20 @@ const statusVariants: Record<
 export function RunHistoryList({
   runs,
   timezone,
+  language,
 }: {
   runs: RunHistoryEntry[];
   timezone: string;
+  /**
+   * The words around each run. **What a run produced is not among them** — an
+   * output is the worker's own material and is shown exactly as it was stored.
+   */
+  language: string;
 }) {
   if (runs.length === 0) {
     return (
       <p className="mt-4 text-sm text-muted-foreground">
-        No activity yet. Use Run on a worker to execute it.
+        {t(language, "dashboard.activityEmpty")}
       </p>
     );
   }
@@ -51,7 +59,7 @@ export function RunHistoryList({
               </p>
             </div>
             <Badge variant={statusVariants[run.status]}>
-              {statusLabels[run.status]}
+              {t(language, statusKeys[run.status])}
             </Badge>
           </Link>
         ))}

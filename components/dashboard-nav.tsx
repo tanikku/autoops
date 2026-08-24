@@ -1,10 +1,27 @@
 import Link from "next/link";
 import { auth, signOut } from "@/auth";
 import { Button } from "@/components/ui/button";
+import { DEFAULT_LANGUAGE, t } from "@/lib/i18n";
+import { getUserLanguage } from "@/lib/users";
 
+/**
+ * The bar every signed-in page carries.
+ *
+ * **It reads the language itself rather than being handed one.** Six pages
+ * render this, and threading a prop through all of them would mean each one
+ * fetching a setting it does not otherwise use — including the four that are
+ * still English. It already asks who is signed in, so the account row is one
+ * more question to something it was going to talk to anyway.
+ *
+ * A session with no id cannot own a language, so the default answers instead —
+ * without a query, and without a write.
+ */
 export async function DashboardNav() {
   const session = await auth();
-  const userName = session?.user?.name ?? session?.user?.email ?? "Signed in";
+  const userId = session?.user?.id;
+  const language = userId ? await getUserLanguage(userId) : DEFAULT_LANGUAGE;
+  const userName =
+    session?.user?.name ?? session?.user?.email ?? t(language, "nav.signedIn");
 
   return (
     <header className="border-b border-border">
@@ -20,7 +37,7 @@ export async function DashboardNav() {
             nativeButton={false}
             render={<Link href="/dashboard" aria-current="page" />}
           >
-            Dashboard
+            {t(language, "nav.dashboard")}
           </Button>
           <Button
             variant="ghost"
@@ -28,7 +45,7 @@ export async function DashboardNav() {
             nativeButton={false}
             render={<Link href="/dashboard/settings" />}
           >
-            Settings
+            {t(language, "nav.settings")}
           </Button>
         </nav>
 
@@ -43,7 +60,7 @@ export async function DashboardNav() {
             }}
           >
             <Button type="submit" variant="ghost" size="sm">
-              Sign out
+              {t(language, "nav.signOut")}
             </Button>
           </form>
         </div>

@@ -33,10 +33,10 @@ describe("the dictionaries", () => {
 
   /**
    * A Japanese dictionary that copied English would pass a key-parity check
-   * and translate nothing. The two language names are the exception, and are
-   * the same on purpose — see `ja.ts`.
+   * and translate nothing. The exceptions are listed rather than counted: each
+   * one is a word that is the same in both languages on purpose.
    */
-  it("says something different in Japanese, apart from the language names", () => {
+  it("says something different in Japanese, apart from the words that do not translate", () => {
     const identical = keys.filter((key) => en[key] === ja[key]);
 
     expect(identical).toEqual(["settings.language.english"]);
@@ -85,6 +85,119 @@ describe("asking for a word", () => {
       for (const key of keys) {
         expect(typeof t(language, key)).toBe("string");
       }
+    }
+  });
+});
+
+/**
+ * Sentences that carry a number.
+ *
+ * The count goes inside the string because the two languages put it in
+ * different places — "3 runs" against「実行 3 回」— and a component that glued
+ * a number to a word would be writing English word order into both.
+ */
+describe("filling in a sentence", () => {
+  it("puts the count where each language wants it", () => {
+    expect(t("en", "health.runs.other", { count: 3 })).toBe("3 runs");
+    expect(t("ja", "health.runs.other", { count: 3 })).toBe("実行 3 回");
+  });
+
+  it("uses the singular only in the language that has one", () => {
+    expect(t("en", "health.runs.one", { count: 1 })).toBe("1 run");
+    expect(t("en", "health.failures.one", { count: 1 })).toBe("1 failure");
+    // Japanese does not inflect for number: both forms are the same sentence.
+    expect(t("ja", "health.runs.one", { count: 1 })).toBe(
+      t("ja", "health.runs.other", { count: 1 }),
+    );
+  });
+
+  it("takes several values in one sentence", () => {
+    expect(
+      t("en", "schedule.atTime", { cadence: "Every day", time: "09:00" }),
+    ).toBe("Every day at 09:00");
+    expect(t("ja", "schedule.atTime", { cadence: "毎日", time: "09:00" })).toBe(
+      "毎日 09:00",
+    );
+  });
+
+  /**
+   * Each language takes the form it needs from the same call. "the 3rd" is an
+   * English rule, and a Japanese sentence carrying it would read as a typo.
+   */
+  it("offers an ordinal and a plain number, and each language picks one", () => {
+    const values = { ordinal: "3rd", day: 3 };
+
+    expect(t("en", "schedule.onDay", values)).toBe("On the 3rd");
+    expect(t("ja", "schedule.onDay", values)).toBe("毎月3日");
+  });
+
+  it("leaves a placeholder nobody filled visible rather than blank", () => {
+    expect(t("en", "health.runs.other", {})).toBe("{count} runs");
+  });
+
+  it("changes nothing when a sentence has no placeholders", () => {
+    expect(t("en", "nav.dashboard", { count: 5 })).toBe("Dashboard");
+  });
+});
+
+/**
+ * Words that belong to the product rather than to a language.
+ */
+describe("what is never translated", () => {
+  it("keeps Worker as Worker in Japanese", () => {
+    expect(ja["dashboard.hireWorker"]).toContain("Worker");
+    expect(ja["dashboard.workers"]).toContain("Worker");
+    expect(ja["overview.total"]).toContain("Worker");
+  });
+
+  it("keeps AutoOps as AutoOps in Japanese", () => {
+    for (const key of keys) {
+      if (en[key].includes("AutoOps")) {
+        expect(ja[key]).toContain("AutoOps");
+      }
+    }
+  });
+});
+
+/**
+ * The stored values these labels describe.
+ *
+ * Every status a column can hold has a word in both languages, and none of the
+ * words is the stored value — translating a badge must never be a way of
+ * changing what is in the database.
+ */
+describe("labels for stored values", () => {
+  it.each(["active", "paused", "draft"])("names the %o status", (status) => {
+    const key = `common.status.${status}` as TranslationKey;
+
+    expect(t("en", key)).not.toBe("");
+    expect(t("ja", key)).not.toBe("");
+    expect(t("ja", key)).not.toBe(status);
+  });
+
+  it.each(["running", "completed", "failed"])("names the %o run", (status) => {
+    const key = `common.runStatus.${status}` as TranslationKey;
+
+    expect(t("en", key)).not.toBe("");
+    expect(t("ja", key)).not.toBe("");
+    expect(t("ja", key)).not.toBe(status);
+  });
+
+  it("names every weekday in both languages", () => {
+    const days = [
+      "sunday",
+      "monday",
+      "tuesday",
+      "wednesday",
+      "thursday",
+      "friday",
+      "saturday",
+    ];
+
+    for (const day of days) {
+      const key = `common.weekday.${day}` as TranslationKey;
+      expect(t("en", key).length).toBeGreaterThan(0);
+      expect(t("ja", key)).toContain("曜日");
     }
   });
 });

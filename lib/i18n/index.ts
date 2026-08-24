@@ -57,10 +57,35 @@ export type { TranslationKey };
  * cookie, or the browser — which is also why the same function works on both
  * sides of that boundary without a provider.
  */
-export function t(language: string, key: TranslationKey): string {
+export function t(
+  language: string,
+  key: TranslationKey,
+  values?: Record<string, string | number>,
+): string {
   const dictionary = isSupportedLanguage(language)
     ? dictionaries[language]
     : dictionaries[DEFAULT_LANGUAGE];
 
-  return dictionary[key] ?? en[key] ?? key;
+  const text = dictionary[key] ?? en[key] ?? key;
+
+  return values ? fill(text, values) : text;
+}
+
+/**
+ * Puts the values into their places.
+ *
+ * **Why a sentence holds its own number instead of being glued to one.**
+ * "3 runs" and「実行 3 回」put the count in different places and wrap it in
+ * different words; a component that concatenated the parts would be writing
+ * English word order into every language. The dictionary decides where the
+ * number goes because that is a property of the sentence.
+ *
+ * A placeholder with nothing supplied for it is left as written. It is a
+ * mistake either way, and a visible `{count}` says which key to look at —
+ * where an empty gap would only look like a missing word.
+ */
+function fill(text: string, values: Record<string, string | number>): string {
+  return text.replace(/\{(\w+)\}/g, (placeholder, name: string) =>
+    name in values ? String(values[name]) : placeholder,
+  );
 }

@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   getRoutineWithStoredKind: vi.fn(),
   listRunsForWorker: vi.fn(),
   getUserTimezone: vi.fn(),
+  getUserLanguage: vi.fn(),
   getWebsiteSource: vi.fn(),
   notFound: vi.fn(),
 }));
@@ -27,7 +28,10 @@ vi.mock("@/lib/routines", () => ({
   getRoutineWithStoredKind: mocks.getRoutineWithStoredKind,
 }));
 vi.mock("@/lib/runs", () => ({ listRunsForWorker: mocks.listRunsForWorker }));
-vi.mock("@/lib/users", () => ({ getUserTimezone: mocks.getUserTimezone }));
+vi.mock("@/lib/users", () => ({
+  getUserTimezone: mocks.getUserTimezone,
+  getUserLanguage: mocks.getUserLanguage,
+}));
 vi.mock("@/lib/website-sources", () => ({
   getWebsiteSource: mocks.getWebsiteSource,
 }));
@@ -137,6 +141,9 @@ function render() {
 beforeEach(() => {
   mocks.requireUserId.mockReset().mockResolvedValue("user-1");
   mocks.getUserTimezone.mockReset().mockResolvedValue("UTC");
+  // This page's own wording is Day 2B's; what it takes a language for is the
+  // health summary and the Run button it borrows from the dashboard.
+  mocks.getUserLanguage.mockReset().mockResolvedValue("en");
   mocks.listRunsForWorker.mockReset().mockResolvedValue([]);
   mocks.getWebsiteSource.mockReset().mockResolvedValue(null);
   mocks.getRoutineWithStoredKind

@@ -15,7 +15,7 @@ import { isRunOverdue } from "@/lib/overview";
 import { getRoutineWithStoredKind } from "@/lib/routines";
 import { listRunsForWorker } from "@/lib/runs";
 import { requireUserId } from "@/lib/session";
-import { getUserTimezone } from "@/lib/users";
+import { getUserLanguage, getUserTimezone } from "@/lib/users";
 import { getWebsiteSource } from "@/lib/website-sources";
 import type { RoutineFrequency, RoutineKind, RoutineStatus } from "@/types";
 
@@ -106,9 +106,14 @@ export default async function WorkerDetailPage({
 
   // One query for the worker's runs, folded into the same summary the
   // dashboard card shows.
-  const [runs, timezone] = await Promise.all([
+  // **The language is read for the two shared pieces below, not for this page.**
+  // The health summary and the Run button appear on the dashboard too and are
+  // translated; everything this page says for itself is still English, and
+  // stays that way until its own turn.
+  const [runs, timezone, language] = await Promise.all([
     listRunsForWorker(worker.id, userId),
     getUserTimezone(userId),
+    getUserLanguage(userId),
   ]);
   const health = summarizeRuns(runs);
   const overdue = isRunOverdue(worker);
@@ -141,7 +146,11 @@ export default async function WorkerDetailPage({
 
           <Card className="mt-8">
             <CardContent>
-              <WorkerHealthSummary health={health} timezone={timezone} />
+              <WorkerHealthSummary
+                health={health}
+                timezone={timezone}
+                language={language}
+              />
             </CardContent>
           </Card>
 
@@ -241,7 +250,7 @@ export default async function WorkerDetailPage({
             >
               Edit
             </Button>
-            <RunRoutineButton routineId={worker.id} />
+            <RunRoutineButton routineId={worker.id} language={language} />
           </div>
 
           <section className="mt-12 border-t border-border pt-8">

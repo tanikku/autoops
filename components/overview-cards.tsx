@@ -1,6 +1,7 @@
 import { TriangleAlert } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatDateTime } from "@/lib/datetime";
+import { t } from "@/lib/i18n";
 import type { WorkerOverview } from "@/lib/overview";
 
 function SummaryCard({
@@ -33,34 +34,50 @@ function SummaryCard({
 export function OverviewCards({
   overview,
   timezone,
+  language,
 }: {
   overview: WorkerOverview;
   timezone: string;
+  /**
+   * **The words, not the numbers.** Counts and timestamps read the same in
+   * every language, and the timestamps keep the format `formatDateTime`
+   * already gives them.
+   */
+  language: string;
 }) {
   return (
     <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-      <SummaryCard label="Total Workers" value={String(overview.total)} />
-      <SummaryCard label="Active Workers" value={String(overview.active)} />
-      <SummaryCard label="Paused Workers" value={String(overview.paused)} />
       <SummaryCard
-        label="Next Scheduled Run"
+        label={t(language, "overview.total")}
+        value={String(overview.total)}
+      />
+      <SummaryCard
+        label={t(language, "overview.active")}
+        value={String(overview.active)}
+      />
+      <SummaryCard
+        label={t(language, "overview.paused")}
+        value={String(overview.paused)}
+      />
+      <SummaryCard
+        label={t(language, "overview.nextScheduledRun")}
         value={
           overview.nextScheduledRun
             ? formatDateTime(overview.nextScheduledRun, timezone)
-            : "None scheduled"
+            : t(language, "overview.noneScheduled")
         }
         warning={
           overview.nextScheduledRunOverdue
-            ? "Scheduled run is overdue"
+            ? t(language, "overview.overdue")
             : undefined
         }
       />
       <SummaryCard
-        label="Last Execution"
+        label={t(language, "overview.lastExecution")}
         value={
           overview.lastExecution
             ? formatDateTime(overview.lastExecution, timezone)
-            : "Never"
+            : t(language, "overview.neverExecuted")
         }
       />
     </div>
