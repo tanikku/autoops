@@ -1,3 +1,4 @@
+import { DEFAULT_LANGUAGE, t, type TranslationKey } from "@/lib/i18n";
 import {
   isRoutineFrequency,
   isRoutineKind,
@@ -37,11 +38,18 @@ export type WorkerFieldName = keyof typeof workerFieldLimits;
 /** Field-level messages, keyed by field. Empty means the input is acceptable. */
 export type WorkerFieldErrors = Partial<Record<WorkerFieldName, string>>;
 
-const fieldLabels: Record<WorkerFieldName, string> = {
-  name: "Name",
-  description: "Description",
-  prompt: "Prompt",
-  websiteUrl: "Website address",
+/**
+ * What each field is called inside a message about it.
+ *
+ * **The form's own labels, rather than a second set.** A length complaint that
+ * named a field differently from the box it came from would be describing
+ * something else — and in Japanese it would name it in English.
+ */
+const fieldLabelKeys: Record<WorkerFieldName, TranslationKey> = {
+  name: "worker.field.name",
+  description: "worker.field.description",
+  prompt: "worker.prompt",
+  websiteUrl: "worker.field.websiteUrl",
 };
 
 export type WorkerFormInput = {
@@ -217,11 +225,16 @@ function applyLengthLimit(
   errors: WorkerFieldErrors,
   field: WorkerFieldName,
   value: string,
+  language: string,
 ): void {
   const limit = workerFieldLimits[field];
   if (value.length > limit) {
-    errors[field] =
-      `${fieldLabels[field]} must be ${limit.toLocaleString("en-US")} characters or fewer.`;
+    // The number is grouped the way it always was: how a figure is written is
+    // a formatting question, and this Sprint changes wording only.
+    errors[field] = t(language, "worker.validation.tooLong", {
+      label: t(language, fieldLabelKeys[field]),
+      limit: limit.toLocaleString("en-US"),
+    });
   }
 }
 
@@ -262,11 +275,12 @@ function applyLengthLimit(
 export function validateWorkerForm(
   input: WorkerFormInput,
   context: WorkerFormContext,
+  language: string = DEFAULT_LANGUAGE,
 ): WorkerFieldErrors {
   const errors: WorkerFieldErrors = {};
 
   if (!input.name) {
-    errors.name = "Name is required.";
+    errors.name = t(language, "worker.validation.nameRequired");
   }
 
   if (
@@ -274,14 +288,17 @@ export function validateWorkerForm(
     context.frequency !== "manual" &&
     input.prompt === ""
   ) {
-    errors.prompt = "Prompt is required for scheduled active workers.";
+    errors.prompt = t(
+      language,
+      "worker.validation.promptRequiredForScheduled",
+    );
   }
 
   for (const field of sharedTextFields) {
     // A field already rejected keeps its first message: "Name is required"
     // says more than a length complaint about an empty string ever could.
     if (!errors[field]) {
-      applyLengthLimit(errors, field, input[field]);
+      applyLengthLimit(errors, field, input[field], language);
     }
   }
 
@@ -321,21 +338,22 @@ export function validateWorkerFormForKind(
   input: WorkerFormInput,
   context: WorkerFormContext,
   kind: RoutineKind,
+  language: string = DEFAULT_LANGUAGE,
 ): WorkerFieldErrors {
-  const errors = validateWorkerForm(input, context);
+  const errors = validateWorkerForm(input, context, language);
 
   if (kind !== "website") {
     return errors;
   }
 
   if (input.websiteUrl === "") {
-    errors.websiteUrl = "Website address is required.";
+    errors.websiteUrl = t(language, "worker.validation.websiteUrlRequired");
   } else {
-    applyLengthLimit(errors, "websiteUrl", input.websiteUrl);
+    applyLengthLimit(errors, "websiteUrl", input.websiteUrl, language);
   }
 
   if (input.prompt === "" && !errors.prompt) {
-    errors.prompt = "Tell the worker what to do when the page changes.";
+    errors.prompt = t(language, "worker.validation.changePromptRequired");
   }
 
   return errors;
@@ -350,10 +368,13 @@ export function hasWorkerFormErrors(errors: WorkerFieldErrors): boolean {
  *
  * The fields keep the detail; this only has to say that something is wrong.
  */
-export function summarizeWorkerFormErrors(errors: WorkerFieldErrors): string {
+export function summarizeWorkerFormErrors(
+  errors: WorkerFieldErrors,
+  language: string = DEFAULT_LANGUAGE,
+): string {
   const messages = Object.values(errors);
 
   return messages.length === 1
     ? messages[0]
-    : `${messages.length} fields need attention.`;
+    : t(language, "worker.validation.summary", { count: messages.length });
 }

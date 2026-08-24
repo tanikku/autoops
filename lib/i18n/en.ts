@@ -294,6 +294,97 @@ export const en = {
   "run.detail.output": "Output",
   "run.detail.error": "Error",
 
+  /**
+   * What a form says about what was typed into it.
+   *
+   * **The rules are not here — only the words for them.** Which fields are
+   * required, and when, is `lib/worker-input.ts`'s answer and is the same in
+   * every language; a translation decides how the refusal reads.
+   *
+   * `{label}` is the field's own name, taken from the labels the form already
+   * shows, so a Japanese message cannot name an English field. `{limit}` is
+   * grouped the way it always was — a formatting question rather than a
+   * wording one.
+   */
+  "worker.validation.nameRequired": "Name is required.",
+  "worker.validation.promptRequiredForScheduled":
+    "Prompt is required for scheduled active workers.",
+  "worker.validation.tooLong": "{label} must be {limit} characters or fewer.",
+  "worker.validation.websiteUrlRequired": "Website address is required.",
+  "worker.validation.changePromptRequired":
+    "Tell the worker what to do when the page changes.",
+  /**
+   * **Syntax only, and the example is not translated.** Nothing has been
+   * resolved or requested when this is said; a page that passes here can still
+   * be refused on every run. A URL is not language.
+   */
+  "worker.validation.websiteUrlInvalid":
+    "Enter a full website address, like https://example.com/news.",
+  /** One line for the toast when several fields are wrong at once. */
+  "worker.validation.summary": "{count} fields need attention.",
+
+  /**
+   * What saving, deleting or running a worker says back.
+   *
+   * **The name inside is the owner's**, placed into the sentence rather than
+   * glued to one end of it: the two languages do not put it in the same spot,
+   * and neither of them translates it.
+   */
+  "worker.action.kindRequired":
+    "Choose whether this worker runs a prompt or watches a page.",
+  /** Missing and someone else's are deliberately the same answer. */
+  "worker.action.notFound": "Worker not found.",
+  "worker.action.createFailed": "Could not create the worker.",
+  "worker.action.created": "Worker \"{name}\" created.",
+  "worker.action.noWatchedPage":
+    "This worker has no watched page, so it cannot be saved.",
+  "worker.action.saveFailed": "Could not save the worker.",
+  "worker.action.saved": "Worker \"{name}\" saved.",
+  "worker.action.deleteFailed": "Could not delete the worker.",
+  "worker.action.deleted": "Worker deleted.",
+
+  /**
+   * What a hand-started run says back.
+   *
+   * **Busy is not broken.** "Already running" is not a failure — nothing was
+   * attempted — and the sentence has to lead somewhere different from the one
+   * that means something went wrong.
+   *
+   * **None of these is what the run produced.** Output and the reason a run
+   * failed are stored on the execution and shown there, in the words they
+   * arrived in.
+   */
+  "run.action.noWorkerSelected": "No worker selected.",
+  "run.action.alreadyRunning": "\"{name}\" is already running.",
+  "run.action.outcomeNotRecorded":
+    "\"{name}\" started, but its outcome could not be recorded.",
+  "run.action.failed": "\"{name}\" failed to run.",
+  "run.action.succeeded": "\"{name}\" ran successfully.",
+
+  "settings.title": "Settings",
+  "settings.description":
+    "How AutoOps reads and schedules times for your account.",
+  "settings.timezone.title": "Timezone",
+  /**
+   * What saving a zone does, and deliberately not what it does not.
+   *
+   * Saving writes one column, and nothing reads or rewrites a worker's pending
+   * slot on the way — so the run already scheduled stays exactly where it was.
+   *
+   * **What happens to the runs after that one is not described here, in any
+   * language.** It is not one rule: a worker with a Run at time has that time
+   * re-read in the new zone when its schedule next advances, while a worker
+   * with Run at left empty keeps the moment it already had. Any sentence short
+   * enough for this page would be wrong about one of the two.
+   */
+  "settings.timezone.note":
+    "Timestamps are shown in this zone, and a worker set to run at 09:00 " +
+    "runs at 09:00 here. Changing the timezone does not change any " +
+    "worker\u2019s already-scheduled next run.",
+  "settings.timezone.invalid": "Select a timezone from the list.",
+  "settings.timezone.failed": "Could not save your timezone.",
+  "settings.timezone.saved": "Timezone saved.",
+
   "settings.language.title": "Language",
   "settings.language.description":
     "The language AutoOps uses for its own screens. Your workers and what they produce are unaffected.",

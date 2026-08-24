@@ -5,8 +5,9 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getRoutineForEdit, updateRoutine } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
+import { t } from "@/lib/i18n";
 import { requireUserId } from "@/lib/session";
-import { getUserTimezone } from "@/lib/users";
+import { getUserLanguage, getUserTimezone } from "@/lib/users";
 import { isWatcherError } from "@/lib/watcher/errors";
 import { parseWatchUrl } from "@/lib/watcher/url";
 import { deleteWebsiteSnapshot } from "@/lib/website-snapshots";
@@ -20,10 +21,6 @@ import {
   type WorkerFormInput,
 } from "@/lib/worker-input";
 import type { ActionResult, RoutineInput } from "@/types";
-
-/** Said the same way whichever rule the address broke. See the hire action. */
-const INVALID_WEBSITE_URL =
-  "Enter a full website address, like https://example.com/news.";
 
 /**
  * Abandons the transaction because the worker stopped existing during it.
@@ -54,6 +51,10 @@ export async function updateRoutineAction(
 ): Promise<UpdateRoutineState> {
   const userId = await requireUserId();
 
+  // Read for the wording of the answer, and for nothing else — the same as the
+  // hire action does. What gets written does not depend on it.
+  const language = await getUserLanguage(userId);
+
   // Reading through the tenant-scoped query means another owner's worker is
   // indistinguishable from one that does not exist.
   //
@@ -77,7 +78,7 @@ export async function updateRoutineAction(
   if (website && !source) {
     return {
       status: "error",
-      message: "This worker has no watched page, so it cannot be saved.",
+      message: t(language, "worker.action.noWatchedPage"),
     };
   }
 
@@ -97,11 +98,12 @@ export async function updateRoutineAction(
     input,
     { status, frequency },
     existing.kind,
+    language,
   );
   if (hasWorkerFormErrors(errors)) {
     return {
       status: "error",
-      message: summarizeWorkerFormErrors(errors),
+      message: summarizeWorkerFormErrors(errors, language),
       values: input,
       errors,
     };
@@ -120,11 +122,13 @@ export async function updateRoutineAction(
         throw error;
       }
 
-      const urlErrors: WorkerFieldErrors = { websiteUrl: INVALID_WEBSITE_URL };
+      const urlErrors: WorkerFieldErrors = {
+        websiteUrl: t(language, "worker.validation.websiteUrlInvalid"),
+      };
 
       return {
         status: "error",
-        message: summarizeWorkerFormErrors(urlErrors),
+        message: summarizeWorkerFormErrors(urlErrors, language),
         values: input,
         errors: urlErrors,
       };
@@ -230,13 +234,17 @@ export async function updateRoutineAction(
     }
   } catch (error) {
     if (error instanceof RoutineVanished) {
-      return { status: "error", message: "Worker not found.", values: input };
+      return {
+        status: "error",
+        message: t(language, "worker.action.notFound"),
+        values: input,
+      };
     }
 
     console.error("[worker] update failed", error);
     return {
       status: "error",
-      message: "Could not save the worker.",
+      message: t(language, "worker.action.saveFailed"),
       values: input,
     };
   }
@@ -249,7 +257,11 @@ export async function updateRoutineAction(
   // landed, and it did not. `deleteWorkerAction` already checks its own
   // count for the same reason.
   if (!saved) {
-    return { status: "error", message: "Worker not found.", values: input };
+    return {
+      status: "error",
+      message: t(language, "worker.action.notFound"),
+      values: input,
+    };
   }
 
   // The detail and edit pages both render this worker, so revalidating only
@@ -260,5 +272,8 @@ export async function updateRoutineAction(
   revalidatePath(`/dashboard/workers/${id}`);
   revalidatePath(`/dashboard/workers/${id}/edit`);
 
-  return { status: "success", message: `Worker "${input.name}" saved.` };
+  return {
+    status: "success",
+    message: t(language, "worker.action.saved", { name: input.name }),
+  };
 }

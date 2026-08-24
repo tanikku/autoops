@@ -473,3 +473,150 @@ describe("validateWorkerFormForKind — prompt workers", () => {
     expect(errors.websiteUrl).toBeUndefined();
   });
 });
+
+/**
+ * The same rules, refused in Japanese.
+ *
+ * **What is checked does not move.** Which fields are required, when a blank
+ * prompt is allowed, and where each limit sits are the same questions in both
+ * languages — these tests fix that the answers differ only in wording, and
+ * that a Japanese refusal never names a field in English.
+ */
+describe("in Japanese", () => {
+  const blank = {
+    name: "",
+    description: "",
+    prompt: "",
+    websiteUrl: "",
+    kind: null,
+    status: null,
+    frequency: null,
+    runAtMinutes: null,
+    runAtWeekday: null,
+    runAtDay: null,
+  };
+
+  const draft = { status: "draft" as const, frequency: "manual" as const };
+  const scheduled = { status: "active" as const, frequency: "daily" as const };
+
+  it("says a name is required", () => {
+    const errors = validateWorkerForm(blank, draft, "ja");
+
+    expect(errors.name).toBe("名前は必須です。");
+  });
+
+  it("says a scheduled active worker needs a prompt", () => {
+    const errors = validateWorkerForm(
+      { ...blank, name: "Watcher" },
+      scheduled,
+      "ja",
+    );
+
+    expect(errors.prompt).toBe(
+      "稼働中で定期実行する Worker にはプロンプトが必要です。",
+    );
+  });
+
+  /** A Japanese message must not name the field in English. */
+  it("names the field in Japanese when something is too long", () => {
+    const errors = validateWorkerForm(
+      { ...blank, name: "a".repeat(workerFieldLimits.name + 1) },
+      draft,
+      "ja",
+    );
+
+    expect(errors.name).toBe("名前は100文字以内で入力してください。");
+    expect(errors.name).not.toContain("Name");
+  });
+
+  it("says a website worker needs an address", () => {
+    const errors = validateWorkerFormForKind(
+      { ...blank, name: "Watcher", prompt: "Tell me." },
+      draft,
+      "website",
+      "ja",
+    );
+
+    expect(errors.websiteUrl).toBe("Web ページのアドレスは必須です。");
+  });
+
+  it("says a website worker needs change instructions", () => {
+    const errors = validateWorkerFormForKind(
+      { ...blank, name: "Watcher", websiteUrl: "https://example.com" },
+      draft,
+      "website",
+      "ja",
+    );
+
+    expect(errors.prompt).toBe(
+      "ページが変わったときに何をするかを入力してください。",
+    );
+  });
+
+  it("counts the fields that need attention", () => {
+    const errors = validateWorkerFormForKind(blank, draft, "website", "ja");
+
+    expect(Object.keys(errors).length).toBeGreaterThan(1);
+    expect(summarizeWorkerFormErrors(errors, "ja")).toBe(
+      `${Object.keys(errors).length} 件の入力を確認してください。`,
+    );
+  });
+
+  it("hands a single message straight through, in either language", () => {
+    const errors = validateWorkerForm(blank, draft, "ja");
+
+    expect(summarizeWorkerFormErrors(errors, "ja")).toBe("名前は必須です。");
+  });
+});
+
+/**
+ * What a language does not decide.
+ *
+ * The rules are the contract; the words are not. Every case below asks the
+ * same question in both languages and expects the same answer about *which*
+ * fields are wrong — only the sentences differ.
+ */
+describe("what the language does not change", () => {
+  const base = {
+    name: "",
+    description: "",
+    prompt: "",
+    websiteUrl: "",
+    kind: null,
+    status: null,
+    frequency: null,
+    runAtMinutes: null,
+    runAtWeekday: null,
+    runAtDay: null,
+  };
+
+  it.each([
+    ["a blank draft", base, { status: "draft" as const, frequency: "manual" as const }],
+    [
+      "a scheduled active worker",
+      { ...base, name: "Watcher" },
+      { status: "active" as const, frequency: "daily" as const },
+    ],
+    [
+      "an over-long prompt",
+      { ...base, name: "Watcher", prompt: "a".repeat(workerFieldLimits.prompt + 1) },
+      { status: "draft" as const, frequency: "manual" as const },
+    ],
+  ])("rejects the same fields for %s", (_label, input, context) => {
+    const english = validateWorkerForm(input, context, "en");
+    const japanese = validateWorkerForm(input, context, "ja");
+
+    expect(Object.keys(japanese).sort()).toEqual(Object.keys(english).sort());
+  });
+
+  it("falls back to English for a language it does not know", () => {
+    expect(validateWorkerForm(base, { status: "draft", frequency: "manual" }, "fr").name)
+      .toBe("Name is required.");
+  });
+
+  /** Callers that have not been given a language yet keep what they had. */
+  it("still answers in English when none is given", () => {
+    expect(validateWorkerForm(base, { status: "draft", frequency: "manual" }).name)
+      .toBe("Name is required.");
+  });
+});

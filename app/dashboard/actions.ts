@@ -5,7 +5,9 @@ import { isExecutionSuppressed } from "@/lib/execution-lease";
 import { enqueueRoutine } from "@/lib/queue";
 import { deleteRoutine, getRoutine } from "@/lib/routines";
 import { isRunPersistenceError } from "@/lib/runs";
+import { DEFAULT_LANGUAGE, t } from "@/lib/i18n";
 import { requireUserId } from "@/lib/session";
+import { getUserLanguage } from "@/lib/users";
 import type { ActionResult } from "@/types";
 
 export type RunRoutineState = ActionResult | null;
@@ -29,6 +31,9 @@ export async function deleteWorkerAction(
   void prevState; // required by `useActionState`, unused here
   const userId = await requireUserId();
 
+  // Read for the wording of the answer, and for nothing else.
+  const language = await getUserLanguage(userId);
+
   // **A delete that threw is not a delete that found nothing.** The two are
   // the same to whoever pressed the button — the worker is still there either
   // way — but only one of them means something is wrong, and the reason for it
@@ -40,18 +45,21 @@ export async function deleteWorkerAction(
     deleted = await deleteRoutine(id, userId);
   } catch (error) {
     console.error("[worker] delete failed", error);
-    return { status: "error", message: "Could not delete the worker." };
+    return {
+      status: "error",
+      message: t(language, "worker.action.deleteFailed"),
+    };
   }
 
   // Missing and someone else's are deliberately the same answer: the query
   // matched on `id` *and* `userId`, so a worker that is not this account's
   // cannot be told apart from one that does not exist.
   if (!deleted) {
-    return { status: "error", message: "Worker not found." };
+    return { status: "error", message: t(language, "worker.action.notFound") };
   }
 
   revalidatePath("/dashboard");
-  return { status: "success", message: "Worker deleted." };
+  return { status: "success", message: t(language, "worker.action.deleted") };
 }
 
 export async function runRoutineAction(
@@ -60,16 +68,35 @@ export async function runRoutineAction(
 ): Promise<RunRoutineState> {
   const routineId = String(formData.get("routineId") ?? "");
   if (!routineId) {
-    return { status: "error", message: "No worker selected." };
+    // **The one message here that stays English**, and deliberately.
+    //
+    // A form that submitted nothing is answered before anybody is
+    // authenticated, which is the order this action has always kept — and
+    // whose language to answer in is not a question that can be asked yet.
+    // Reading the account row first would send a visitor with no session to
+    // sign in where they used to get this sentence, which is a change to what
+    // the action does rather than to what it says.
+    //
+    // The wording still comes from the dictionary so it stays with the rest of
+    // them; only the language is fixed. The ordering itself is a separate
+    // question from this Sprint's.
+    return {
+      status: "error",
+      message: t(DEFAULT_LANGUAGE, "run.action.noWorkerSelected"),
+    };
   }
 
   // Only the owner may run a worker. `getRoutine` returns null for a worker
   // that belongs to someone else, so this rejects without revealing that the
   // id exists.
   const userId = await requireUserId();
+
+  // Read for the wording of the answers below, and for nothing else.
+  const language = await getUserLanguage(userId);
+
   const routine = await getRoutine(routineId, userId);
   if (!routine) {
-    return { status: "error", message: "Worker not found." };
+    return { status: "error", message: t(language, "worker.action.notFound") };
   }
 
   let run;
@@ -85,7 +112,9 @@ export async function runRoutineAction(
     if (isExecutionSuppressed(error)) {
       return {
         status: "error",
-        message: `"${routine.name}" is already running.`,
+        message: t(language, "run.action.alreadyRunning", {
+          name: routine.name,
+        }),
       };
     }
 
@@ -97,12 +126,17 @@ export async function runRoutineAction(
     if (isRunPersistenceError(error)) {
       return {
         status: "error",
-        message: `"${routine.name}" started, but its outcome could not be recorded.`,
+        message: t(language, "run.action.outcomeNotRecorded", {
+          name: routine.name,
+        }),
       };
     }
 
     console.error("[worker] manual run failed", error);
-    return { status: "error", message: `"${routine.name}" failed to run.` };
+    return {
+      status: "error",
+      message: t(language, "run.action.failed", { name: routine.name }),
+    };
   }
 
   revalidatePath("/dashboard");
@@ -110,8 +144,17 @@ export async function runRoutineAction(
   // A failed run is recorded rather than thrown, so the absence of an
   // exception no longer means the worker succeeded.
   if (run.status === "failed") {
-    return { status: "error", message: `"${routine.name}" failed to run.` };
+    return {
+      status: "error",
+      message: t(language, "run.action.failed", { name: routine.name }),
+    };
   }
 
-  return { status: "success", message: `"${routine.name}" ran successfully.` };
+  // **What the run produced is not in here.** Its output, and the reason a
+  // failed one gives, are stored on the execution and shown on its own page,
+  // in the words they arrived in.
+  return {
+    status: "success",
+    message: t(language, "run.action.succeeded", { name: routine.name }),
+  };
 }

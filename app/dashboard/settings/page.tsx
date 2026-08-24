@@ -27,19 +27,16 @@ export default async function SettingsPage() {
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-10 sm:px-10">
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-          Settings
+          {t(language, "settings.title")}
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          How AutoOps reads and schedules times for your account.
+          {t(language, "settings.description")}
         </p>
 
-        <TimezoneForm timezone={timezone} />
+        <TimezoneForm timezone={timezone} language={language} />
 
-        {/* **The one section translated so far.** Everything else on this page,
-            and every other screen, is still English: this Sprint puts the
-            switch in place rather than throwing it. A heading here says which
-            section the control belongs to — the rest of the wording lives with
-            the form. */}
+        {/* A heading here says which section the control belongs to — the rest
+            of the wording lives with the form. */}
         <section className="mt-12 border-t border-border pt-8">
           <h2 className="text-lg font-medium tracking-tight">
             {t(language, "settings.language.title")}

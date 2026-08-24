@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   getRoutineForEdit: vi.fn(),
   updateRoutine: vi.fn(),
   getUserTimezone: vi.fn(),
+  getUserLanguage: vi.fn(),
   getWebsiteSource: vi.fn(),
   updateWebsiteSourceUrl: vi.fn(),
   deleteWebsiteSnapshot: vi.fn(),
@@ -33,7 +34,10 @@ vi.mock("@/lib/routines", () => ({
   getRoutineForEdit: mocks.getRoutineForEdit,
   updateRoutine: mocks.updateRoutine,
 }));
-vi.mock("@/lib/users", () => ({ getUserTimezone: mocks.getUserTimezone }));
+vi.mock("@/lib/users", () => ({
+  getUserTimezone: mocks.getUserTimezone,
+  getUserLanguage: mocks.getUserLanguage,
+}));
 vi.mock("@/lib/website-sources", () => ({
   getWebsiteSource: mocks.getWebsiteSource,
   updateWebsiteSourceUrl: mocks.updateWebsiteSourceUrl,
@@ -105,6 +109,9 @@ beforeEach(() => {
     .mockReset()
     .mockImplementation((run: (tx: unknown) => Promise<unknown>) => run(TX));
   mocks.getUserTimezone.mockReset().mockResolvedValue("UTC");
+  // English by default, so the assertions above stay about what was saved
+  // rather than about what it was called.
+  mocks.getUserLanguage.mockReset().mockResolvedValue("en");
   mocks.revalidatePath.mockReset();
   mocks.notFound.mockReset().mockImplementation(() => {
     throw new NotFoundSignal();
@@ -602,5 +609,58 @@ describe("updateRoutineAction — the kind cannot be edited", () => {
       NotFoundSignal,
     );
     expect(mocks.updateRoutine).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What saving a worker says back, in the account's language.
+ *
+ * **The worker inside the sentence is the owner's**, and so is everything the
+ * form saved: a language decides the wording of the answer and nothing about
+ * what was written.
+ */
+describe("updateRoutineAction — the words it answers in", () => {
+  beforeEach(() => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+  });
+
+  it("says a worker was saved, keeping its name as typed", async () => {
+    const result = await save(form({ name: "宝塚市 パブリック・コメント" }));
+
+    expect(result).toMatchObject({
+      status: "success",
+      message: "Worker「宝塚市 パブリック・コメント」を保存しました。",
+    });
+  });
+
+  it("refuses a blank name in Japanese", async () => {
+    const result = await save(form({ name: "" }));
+
+    expect(result?.message).toBe("名前は必須です。");
+    expect(result?.errors?.name).toBe("名前は必須です。");
+  });
+
+  it("says a worker was not found in Japanese", async () => {
+    mocks.updateRoutine.mockResolvedValue(null);
+
+    const result = await save(form({}));
+
+    expect(result?.message).toBe("Worker が見つかりません。");
+  });
+
+  it("reports a failed write in Japanese", async () => {
+    mocks.updateRoutine.mockRejectedValue(new Error("connection lost"));
+
+    const result = await save(form({}));
+
+    expect(result?.message).toBe("Worker を保存できませんでした。");
+  });
+
+  it("saves the same values whichever language it answers in", async () => {
+    await save(form({ name: "Watcher" }));
+
+    const call = mocks.updateRoutine.mock.calls.at(-1) as unknown[];
+
+    expect(call[1]).toMatchObject({ name: "Watcher" });
   });
 });

@@ -209,6 +209,59 @@ export const ja: Record<TranslationKey, string> = {
   "run.detail.output": "出力",
   "run.detail.error": "エラー",
 
+  "worker.validation.nameRequired": "名前は必須です。",
+  "worker.validation.promptRequiredForScheduled":
+    "稼働中で定期実行する Worker にはプロンプトが必要です。",
+  "worker.validation.tooLong": "{label}は{limit}文字以内で入力してください。",
+  "worker.validation.websiteUrlRequired":
+    "Web ページのアドレスは必須です。",
+  "worker.validation.changePromptRequired":
+    "ページが変わったときに何をするかを入力してください。",
+  /** 例に出すアドレスは URL なので、日本語版でもそのまま。 */
+  "worker.validation.websiteUrlInvalid":
+    "https://example.com/news のような完全なアドレスを入力してください。",
+  "worker.validation.summary": "{count} 件の入力を確認してください。",
+
+  "worker.action.kindRequired":
+    "この Worker がプロンプトを実行するのか、ページを監視するのかを選んでください。",
+  "worker.action.notFound": "Worker が見つかりません。",
+  "worker.action.createFailed": "Worker を作成できませんでした。",
+  "worker.action.created": "Worker「{name}」を作成しました。",
+  "worker.action.noWatchedPage":
+    "この Worker には監視するページがないため、保存できません。",
+  "worker.action.saveFailed": "Worker を保存できませんでした。",
+  "worker.action.saved": "Worker「{name}」を保存しました。",
+  "worker.action.deleteFailed": "Worker を削除できませんでした。",
+  "worker.action.deleted": "Worker を削除しました。",
+
+  "run.action.noWorkerSelected": "Worker が選択されていません。",
+  "run.action.alreadyRunning": "「{name}」は実行中です。",
+  "run.action.outcomeNotRecorded":
+    "「{name}」は開始しましたが、結果を記録できませんでした。",
+  "run.action.failed": "「{name}」の実行に失敗しました。",
+  "run.action.succeeded": "「{name}」を実行しました。",
+
+  "settings.title": "設定",
+  "settings.description":
+    "AutoOps がこのアカウントの時刻をどう読み、いつ実行するか。",
+  "settings.timezone.title": "タイムゾーン",
+  /**
+   * 英語版と同じ2点だけを言うこと。
+   *
+   * - 表示と「09:00 に実行」がこのタイムゾーンで読まれる
+   * - すでに予定されている次回実行は変わらない
+   *
+   * その次の実行がどうなるかは、Run at の有無で挙動が分かれるため
+   * 英語版と同じく**書かない**。
+   */
+  "settings.timezone.note":
+    "タイムスタンプはこのタイムゾーンで表示され、09:00 に実行する Worker は" +
+    "ここでの 09:00 に実行されます。タイムゾーンを変更しても、すでに予定されて" +
+    "いる次回実行は変わりません。",
+  "settings.timezone.invalid": "一覧からタイムゾーンを選んでください。",
+  "settings.timezone.failed": "タイムゾーンを保存できませんでした。",
+  "settings.timezone.saved": "タイムゾーンを保存しました。",
+
   "settings.language.title": "言語",
   "settings.language.description":
     "AutoOps の画面に使う言語です。Worker と、その出力には影響しません。",

@@ -58,6 +58,9 @@ beforeEach(() => {
   });
   mocks.ensureUser.mockReset().mockResolvedValue(undefined);
   mocks.setUserTimezone.mockReset().mockResolvedValue(undefined);
+  // The timezone save reads this for the wording of its answer. English by
+  // default, so the existing assertions keep describing what they described.
+  mocks.getUserLanguage.mockReset().mockResolvedValue("en");
   mocks.revalidatePath.mockReset();
   mocks.redirect.mockReset().mockImplementation((to: string) => {
     throw new RedirectSignal(to);
@@ -333,5 +336,56 @@ describe("updateLanguageAction", () => {
     await updateLanguageAction(null, languageForm("ja"));
 
     expect(mocks.setUserTimezone).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What saving a zone says back, in the account's language.
+ *
+ * **The zone itself is not translated.** An IANA identifier is what the column
+ * holds and what the scheduler reads; only the sentence about it moves.
+ */
+describe("updateTimezoneAction — the words it answers in", () => {
+  beforeEach(() => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+  });
+
+  it("says a zone was saved", async () => {
+    const result = await updateTimezoneAction(null, form("Asia/Tokyo"));
+
+    expect(result).toEqual({
+      status: "success",
+      message: "タイムゾーンを保存しました。",
+    });
+  });
+
+  it("refuses a zone it does not know", async () => {
+    const result = await updateTimezoneAction(null, form("Mars/Olympus"));
+
+    expect(result).toEqual({
+      status: "error",
+      message: "一覧からタイムゾーンを選んでください。",
+    });
+    expect(mocks.setUserTimezone).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed write", async () => {
+    mocks.setUserTimezone.mockRejectedValue(new Error("connection lost"));
+
+    const result = await updateTimezoneAction(null, form("Asia/Tokyo"));
+
+    expect(result).toEqual({
+      status: "error",
+      message: "タイムゾーンを保存できませんでした。",
+    });
+  });
+
+  it("stores the identifier itself, unchanged", async () => {
+    await updateTimezoneAction(null, form("Asia/Tokyo"));
+
+    expect(mocks.setUserTimezone).toHaveBeenCalledWith(
+      expect.anything(),
+      "Asia/Tokyo",
+    );
   });
 });

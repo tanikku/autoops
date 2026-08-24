@@ -790,3 +790,78 @@ describe("generateWorkerDraftAction — the words a failure comes back in", () =
     expect(Object.keys(request).sort()).toEqual(["request", "urlCandidates"]);
   });
 });
+
+/**
+ * What creating a worker says back, in the account's language.
+ *
+ * **The name inside the sentence is the owner's.** It goes in exactly as it
+ * was typed, and neither language touches it.
+ */
+describe("createRoutineAction — the words it answers in", () => {
+  beforeEach(() => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+  });
+
+  it("says a worker was created, keeping its name as typed", async () => {
+    const result = await createRoutineAction(
+      null,
+      form({ name: "宝塚市 パブリック・コメント" }),
+    );
+
+    expect(result).toMatchObject({
+      status: "success",
+      message: "Worker「宝塚市 パブリック・コメント」を作成しました。",
+    });
+  });
+
+  it("asks for a kind in Japanese", async () => {
+    // An unreadable kind is the one field with no fallback.
+    const result = await createRoutineAction(null, form({ kind: "" }));
+
+    expect(result?.message).toBe(
+      "この Worker がプロンプトを実行するのか、ページを監視するのかを選んでください。",
+    );
+  });
+
+  it("refuses a blank name in Japanese", async () => {
+    const result = await createRoutineAction(null, form({ name: "" }));
+
+    expect(result?.message).toBe("名前は必須です。");
+    expect(result?.errors?.name).toBe("名前は必須です。");
+  });
+
+  it("refuses an unusable address in Japanese, keeping the example URL", async () => {
+    const result = await createRoutineAction(
+      null,
+      form({ kind: "website", websiteUrl: "not-a-url" }),
+    );
+
+    expect(result?.errors?.websiteUrl).toBe(
+      "https://example.com/news のような完全なアドレスを入力してください。",
+    );
+  });
+
+  it("reports a failed write in Japanese", async () => {
+    mocks.createRoutine.mockRejectedValue(new Error("connection lost"));
+
+    const result = await createRoutineAction(null, form());
+
+    expect(result?.message).toBe("Worker を作成できませんでした。");
+  });
+
+  it("writes the same values whichever language it answers in", async () => {
+    await createRoutineAction(null, form());
+
+    const [routine] = mocks.createRoutine.mock.calls.at(-1) as [
+      Record<string, unknown>,
+    ];
+
+    expect(routine).toMatchObject({
+      name: "Daily digest",
+      prompt: "Summarise {{today}}",
+      kind: "prompt",
+      status: "active",
+      frequency: "daily",
+    });
+  });
+});

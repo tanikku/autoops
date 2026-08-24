@@ -41,9 +41,6 @@ import type { ActionResult, CreateRoutineInput } from "@/types";
  * resolved or requested at this point — that happens on every run, in
  * `lib/watcher`, and a page that passes here can still be refused there.
  */
-const INVALID_WEBSITE_URL =
-  "Enter a full website address, like https://example.com/news.";
-
 /**
  * A rejected submission carries the values and the per-field messages back.
  *
@@ -64,7 +61,14 @@ export async function createRoutineAction(
   // session is sent to sign in before anything they submitted is read, whether
   // or not it was valid. This writes nothing — provisioning is a separate step,
   // below, and deliberately not part of authenticating.
-  await requireUserId();
+  const userId = await requireUserId();
+
+  // **Read for the wording of the answer, and for nothing else.** Which fields
+  // are required, and what gets written, are the same in every language. The
+  // account row may not exist yet — this reads through a fallback rather than
+  // creating one, so the order below is untouched: authenticate, validate,
+  // provision, write.
+  const language = await getUserLanguage(userId);
 
   const input = readWorkerForm(formData);
 
@@ -87,17 +91,22 @@ export async function createRoutineAction(
   if (input.kind === null) {
     return {
       status: "error",
-      message: "Choose whether this worker runs a prompt or watches a page.",
+      message: t(language, "worker.action.kindRequired"),
       values: input,
     };
   }
 
   const kind = input.kind;
-  const errors = validateWorkerFormForKind(input, { status, frequency }, kind);
+  const errors = validateWorkerFormForKind(
+    input,
+    { status, frequency },
+    kind,
+    language,
+  );
   if (hasWorkerFormErrors(errors)) {
     return {
       status: "error",
-      message: summarizeWorkerFormErrors(errors),
+      message: summarizeWorkerFormErrors(errors, language),
       values: input,
       errors,
     };
@@ -117,12 +126,12 @@ export async function createRoutineAction(
       }
 
       const urlErrors: WorkerFieldErrors = {
-        websiteUrl: INVALID_WEBSITE_URL,
+        websiteUrl: t(language, "worker.validation.websiteUrlInvalid"),
       };
 
       return {
         status: "error",
-        message: summarizeWorkerFormErrors(urlErrors),
+        message: summarizeWorkerFormErrors(urlErrors, language),
         values: input,
         errors: urlErrors,
       };
@@ -134,7 +143,7 @@ export async function createRoutineAction(
   // this is also what makes sure it exists before the first row that references
   // it: a `Routine` carries a foreign key to it. Asked for after validation, so
   // a rejected submission never creates the row it would have needed.
-  const userId = await requireProvisionedUserId();
+  const provisionedUserId = await requireProvisionedUserId();
 
   // A time of day only means anything alongside a cadence, and a weekday only
   // alongside a week: a manual worker has no slot to place either in, and a
@@ -142,7 +151,7 @@ export async function createRoutineAction(
   const runAtMinutes = frequency === "manual" ? null : input.runAtMinutes;
   const runAtWeekday = frequency === "weekly" ? input.runAtWeekday : null;
   const runAtDay = frequency === "monthly" ? input.runAtDay : null;
-  const timezone = await getUserTimezone(userId);
+  const timezone = await getUserTimezone(provisionedUserId);
 
   const routine: CreateRoutineInput = {
     name: input.name,
@@ -165,7 +174,7 @@ export async function createRoutineAction(
 
   try {
     if (websiteUrl === null) {
-      await createRoutine(routine, userId);
+      await createRoutine(routine, provisionedUserId);
     } else {
       // **Both rows or neither.** A website worker is the pair — a routine that
       // says it watches something and a source that says what. Written apart,
@@ -178,7 +187,7 @@ export async function createRoutineAction(
       // There is nothing to retry: a rollback leaves the account exactly as it
       // was, and the person is still on the form.
       await prisma.$transaction(async (tx) => {
-        const created = await createRoutine(routine, userId, tx);
+        const created = await createRoutine(routine, provisionedUserId, tx);
         await createWebsiteSource(created.id, websiteUrl, tx);
       });
     }
@@ -186,7 +195,7 @@ export async function createRoutineAction(
     console.error("[worker] create failed", error);
     return {
       status: "error",
-      message: "Could not create the worker.",
+      message: t(language, "worker.action.createFailed"),
       values: input,
     };
   }
@@ -194,7 +203,12 @@ export async function createRoutineAction(
   revalidatePath("/dashboard");
   // The caller raises the toast and then navigates, so the outcome never has
   // to survive in the URL.
-  return { status: "success", message: `Worker "${input.name}" created.` };
+  // **The name is the owner's and is placed, not glued.** It goes into the
+  // sentence exactly as it was typed, in whichever language it was written.
+  return {
+    status: "success",
+    message: t(language, "worker.action.created", { name: input.name }),
+  };
 }
 
 /**

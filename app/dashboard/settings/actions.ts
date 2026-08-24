@@ -25,7 +25,11 @@ export async function updateTimezoneAction(
   // no session is sent to sign in before anything they submitted is read,
   // whether or not it was valid. This writes nothing — provisioning is a
   // separate step, below, and deliberately not part of authenticating.
-  await requireUserId();
+  const userId = await requireUserId();
+
+  // Read for the wording of the answer, and for nothing else. The zone that
+  // gets written, and what reads it afterwards, do not depend on it.
+  const language = await getUserLanguage(userId);
 
   const timezone = String(formData.get("timezone") ?? "");
 
@@ -36,7 +40,10 @@ export async function updateTimezoneAction(
   // cannot be saved must not create the row that saving it would have needed.
   // Nothing has been written above this line.
   if (!isSupportedTimezone(timezone)) {
-    return { status: "error", message: "Select a timezone from the list." };
+    return {
+      status: "error",
+      message: t(language, "settings.timezone.invalid"),
+    };
   }
 
   // The owner comes from the session, never from the submitted form — the same
@@ -45,9 +52,9 @@ export async function updateTimezoneAction(
   // account that has never created a worker reaches this page without one. The
   // timezone is a column on that row, so there is nothing to update until it is
   // there.
-  let userId: string;
+  let provisionedUserId: string;
   try {
-    userId = await requireProvisionedUserId();
+    provisionedUserId = await requireProvisionedUserId();
   } catch (error) {
     // A redirect leaves by being thrown too, so anything that is not a
     // provisioning failure has to carry on out of here — catching it would
@@ -60,21 +67,21 @@ export async function updateTimezoneAction(
     // sentence to whoever pressed Save, and different events to whoever reads
     // the log.
     console.error("[settings] could not provision the account row", error);
-    return { status: "error", message: "Could not save your timezone." };
+    return { status: "error", message: t(language, "settings.timezone.failed") };
   }
 
   try {
-    await setUserTimezone(userId, timezone);
+    await setUserTimezone(provisionedUserId, timezone);
   } catch (error) {
     console.error("[settings] timezone update failed", error);
-    return { status: "error", message: "Could not save your timezone." };
+    return { status: "error", message: t(language, "settings.timezone.failed") };
   }
 
   // Every screen renders timestamps, and the workers list reads the same value
   // through the cards, so the whole dashboard is stale after this.
   revalidatePath("/dashboard", "layout");
 
-  return { status: "success", message: "Timezone saved." };
+  return { status: "success", message: t(language, "settings.timezone.saved") };
 }
 
 export type UpdateLanguageState = ActionResult | null;

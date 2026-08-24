@@ -16,19 +16,33 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { t } from "@/lib/i18n";
 import { supportedTimezones } from "@/lib/timezones";
 
-function SaveButton() {
+function SaveButton({ language }: { language: string }) {
   const { pending } = useFormStatus();
 
   return (
     <Button type="submit" disabled={pending}>
-      {pending ? "Saving…" : "Save"}
+      {t(language, pending ? "common.saving" : "common.save")}
     </Button>
   );
 }
 
-export function TimezoneForm({ timezone }: { timezone: string }) {
+export function TimezoneForm({
+  timezone,
+  language,
+}: {
+  timezone: string;
+  /**
+   * The language the labels are written in — the account's, as stored.
+   *
+   * **The zones themselves are not translated.** An IANA identifier is what
+   * the column holds and what the scheduler reads; the list says the same
+   * thing on both versions of this page.
+   */
+  language: string;
+}) {
   const [state, formAction] = useActionState<UpdateTimezoneState, FormData>(
     updateTimezoneAction,
     null,
@@ -45,7 +59,9 @@ export function TimezoneForm({ timezone }: { timezone: string }) {
   return (
     <form action={formAction} className="mt-8 flex max-w-md flex-col gap-6">
       <div className="grid gap-2">
-        <Label htmlFor="timezone-trigger">Timezone</Label>
+        <Label htmlFor="timezone-trigger">
+          {t(language, "settings.timezone.title")}
+        </Label>
 
         <input type="hidden" name="timezone" value={selected} />
 
@@ -66,26 +82,18 @@ export function TimezoneForm({ timezone }: { timezone: string }) {
           </SelectContent>
         </Select>
 
-        {/* **The last sentence says only what saving this does.** Saving writes
-            one column — the account's zone — and nothing reads or rewrites a
-            worker's pending slot on the way, so the run already scheduled stays
-            exactly where it was.
-
-            What happens to the runs *after* that one is deliberately not
-            described here. It is not one rule: a worker with a Run at time has
-            that time re-read in the new zone when its schedule next advances,
-            while a worker with Run at left empty keeps the moment it already
-            had. Any sentence short enough for this page would be wrong about
-            one of the two. */}
+        {/* **The sentence lives in the dictionary now**, and so does what
+            every clause of it is held to — see `settings.timezone.note` in
+            `lib/i18n/en.ts`. What it must not start describing, in any
+            language, is what happens to the runs *after* the one already
+            scheduled. */}
         <p className="text-sm text-muted-foreground">
-          Timestamps are shown in this zone, and a worker set to run at 09:00
-          runs at 09:00 here. Changing the timezone does not change any
-          worker&rsquo;s already-scheduled next run.
+          {t(language, "settings.timezone.note")}
         </p>
       </div>
 
       <div>
-        <SaveButton />
+        <SaveButton language={language} />
       </div>
     </form>
   );
