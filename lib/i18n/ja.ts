@@ -268,8 +268,6 @@ export const ja: Record<TranslationKey, string> = {
   "settings.language.label": "言語",
   "settings.language.english": "English",
   "settings.language.japanese": "日本語",
-  "settings.language.save": "保存",
-  "settings.language.saving": "保存中…",
   "settings.language.saved": "言語を保存しました。",
   "settings.language.invalid": "一覧から言語を選んでください。",
   "settings.language.failed": "言語を保存できませんでした。",

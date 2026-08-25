@@ -35,9 +35,7 @@ function SaveButton({ language }: { language: string }) {
 
   return (
     <Button type="submit" disabled={pending}>
-      {pending
-        ? t(language, "settings.language.saving")
-        : t(language, "settings.language.save")}
+      {t(language, pending ? "common.saving" : "common.save")}
     </Button>
   );
 }

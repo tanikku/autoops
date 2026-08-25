@@ -47,6 +47,21 @@ describe("the dictionaries", () => {
     ]);
   });
 
+  /**
+   * One word, one key.
+   *
+   * The Settings page carried its own `Save` for as long as it was the only
+   * translated screen. Two entries holding the same word in both languages is
+   * one of them waiting to drift, so the section reads the shared key now and
+   * the pair it had is gone.
+   */
+  it("keeps a single key for Save", () => {
+    expect(keys).toContain("common.save");
+    expect(keys).toContain("common.saving");
+    expect(keys).not.toContain("settings.language.save");
+    expect(keys).not.toContain("settings.language.saving");
+  });
+
   it("knows which languages exist", () => {
     expect(supportedLanguages).toEqual(["en", "ja"]);
     expect(DEFAULT_LANGUAGE).toBe("en");

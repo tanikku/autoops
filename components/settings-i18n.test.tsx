@@ -28,12 +28,16 @@ vi.mock("@/components/notification/use-action-result", () => ({
 }));
 
 const { TimezoneForm } = await import("@/components/timezone-form");
+const { LanguageForm } = await import("@/components/language-form");
 const { t } = await import("@/lib/i18n");
 
 const form = (language: string) =>
   renderToStaticMarkup(
     <TimezoneForm timezone="Asia/Tokyo" language={language} />,
   );
+
+const languageForm = (language: "en" | "ja") =>
+  renderToStaticMarkup(<LanguageForm language={language} />);
 
 describe("the timezone form in English", () => {
   const html = form("en");
@@ -125,5 +129,41 @@ describe("what the language does not change", () => {
       html.match(/data-slot="select-value"[^>]*>([^<]*)</)?.[1];
 
     expect(shown(form("ja"))).toBe(shown(form("en")));
+  });
+});
+
+/**
+ * The two sections of this page say Save in one voice.
+ *
+ * They had a key each for a while — the language switch arrived before there
+ * was a shared one — and two entries holding the same word in both languages
+ * is one of them waiting to drift. What is checked here is that the button
+ * still reads exactly as it did, from the key the rest of the product uses.
+ */
+describe("Save, across both settings sections", () => {
+  it.each(["en", "ja"] as const)(
+    "says the same word in both sections in %s",
+    (language) => {
+      const word = `>${t(language, "common.save")}<`;
+
+      expect(languageForm(language)).toContain(word);
+      expect(form(language)).toContain(word);
+    },
+  );
+
+  it("reads as it always did", () => {
+    expect(languageForm("en")).toContain(">Save<");
+    expect(languageForm("ja")).toContain(">保存<");
+    expect(languageForm("ja")).not.toContain(">Save<");
+  });
+
+  /**
+   * The word while a save is in flight. It is only reachable through
+   * `useFormStatus` during a submission, which a static render never enters —
+   * so the dictionary is where it is fixed.
+   */
+  it("has a pending word to switch to, in both", () => {
+    expect(t("en", "common.saving")).toBe("Saving…");
+    expect(t("ja", "common.saving")).toBe("保存中…");
   });
 });

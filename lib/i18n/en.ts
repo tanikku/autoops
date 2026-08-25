@@ -391,8 +391,6 @@ export const en = {
   "settings.language.label": "Language",
   "settings.language.english": "English",
   "settings.language.japanese": "Japanese",
-  "settings.language.save": "Save",
-  "settings.language.saving": "Saving…",
   "settings.language.saved": "Language saved.",
   "settings.language.invalid": "Select a language from the list.",
   "settings.language.failed": "Could not save your language.",
