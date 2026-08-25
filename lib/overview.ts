@@ -1,4 +1,4 @@
-import type { Routine, RunHistoryEntry } from "@/types";
+import type { Routine, RunSummary } from "@/types";
 
 export type WorkerOverview = {
   total: number;
@@ -42,15 +42,44 @@ export function isRunOverdue(
 }
 
 /**
- * Folds the rows the dashboard already loads into its summary numbers.
+ * The most recent run anywhere in the account, from the per-worker summaries.
  *
- * Deliberately a pure function over data in hand rather than a set of
- * aggregate queries: the dashboard reads every worker and every run anyway, so
- * counting them here costs no extra round trips.
+ * **The newest of the newest.** Each summary already carries when its own
+ * worker last ran, counted by the database over that worker's whole history, so
+ * the account's answer is the greatest of them — and a worker that has never
+ * run contributes nothing rather than a zero.
+ */
+export function latestExecution(
+  summaries: Map<string, RunSummary>,
+): Date | null {
+  let latest: Date | null = null;
+
+  for (const summary of summaries.values()) {
+    if (summary.lastRunAt !== null && (latest === null || summary.lastRunAt > latest)) {
+      latest = summary.lastRunAt;
+    }
+  }
+
+  return latest;
+}
+
+/**
+ * Folds the workers the dashboard already loads into its summary numbers.
+ *
+ * **Everything counted here comes from `Routine`.** How many workers there are,
+ * how many are active, and when the next slot falls are all columns on the
+ * worker itself — no run is read to answer any of them, and none ever was.
+ *
+ * **`lastExecution` is passed in rather than derived here.** It is the one
+ * figure on this card that belongs to run history, and it now arrives from the
+ * database's own summary instead of from the head of a list of rows. Taking it
+ * from a bounded list would happen to be right — the newest of the newest
+ * twenty is the newest — and would tie a number that means "ever" to a limit
+ * that means "this page".
  */
 export function summarizeWorkers(
   routines: Routine[],
-  runs: RunHistoryEntry[],
+  lastExecution: Date | null,
   now: Date = new Date(),
 ): WorkerOverview {
   let active = 0;
@@ -82,7 +111,6 @@ export function summarizeWorkers(
     nextScheduledRun,
     nextScheduledRunOverdue:
       nextScheduledRun !== null && nextScheduledRun < now,
-    // Runs arrive newest first, so the head is the most recent execution.
-    lastExecution: runs[0]?.startedAt ?? null,
+    lastExecution,
   };
 }

@@ -14,7 +14,7 @@ import { summarizeRuns } from "@/lib/health";
 import { t, type TranslationKey } from "@/lib/i18n";
 import { isRunOverdue } from "@/lib/overview";
 import { getRoutineWithStoredKind } from "@/lib/routines";
-import { listRunsForWorker } from "@/lib/runs";
+import { summarizeRunsForWorker } from "@/lib/runs";
 import { requireUserId } from "@/lib/session";
 import { getUserLanguage, getUserTimezone } from "@/lib/users";
 import { getWebsiteSource } from "@/lib/website-sources";
@@ -119,12 +119,12 @@ export default async function WorkerDetailPage({
   // description, the address it watches and the instructions it carries are its
   // owner's material and are shown exactly as stored, in whichever language
   // they were written.
-  const [runs, timezone, language] = await Promise.all([
-    listRunsForWorker(worker.id, userId),
+  const [runSummary, timezone, language] = await Promise.all([
+    summarizeRunsForWorker(worker.id, userId),
     getUserTimezone(userId),
     getUserLanguage(userId),
   ]);
-  const health = summarizeRuns(runs);
+  const health = summarizeRuns(runSummary);
   const overdue = isRunOverdue(worker);
 
   return (

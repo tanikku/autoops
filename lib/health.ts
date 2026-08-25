@@ -1,4 +1,4 @@
-import type { RunHistory, RunStatus } from "@/types";
+import type { RunStatus, RunSummary } from "@/types";
 
 /**
  * How long a `running` row can go without finishing before the dashboard
@@ -41,56 +41,42 @@ export const NEVER_RUN: WorkerHealth = {
  * `lib/schedule.ts`'s convention, so the answer is reproducible.
  */
 export function summarizeRuns(
-  runs: RunHistory[],
+  summary: RunSummary,
   now: Date = new Date(),
 ): WorkerHealth {
-  if (runs.length === 0) {
+  if (summary.lastResult === null || summary.lastRunAt === null) {
     return NEVER_RUN;
   }
 
-  let totalFailures = 0;
-  for (const run of runs) {
-    if (run.status === "failed") {
-      totalFailures += 1;
-    }
-  }
-
-  const latest = runs[0];
   const stuck =
-    latest.status === "running" &&
-    now.getTime() - latest.startedAt.getTime() > STUCK_THRESHOLD_MS;
+    summary.lastResult === "running" &&
+    now.getTime() - summary.lastRunAt.getTime() > STUCK_THRESHOLD_MS;
 
   return {
-    lastResult: latest.status,
-    lastRunAt: latest.startedAt,
-    totalRuns: runs.length,
-    totalFailures,
+    lastResult: summary.lastResult,
+    lastRunAt: summary.lastRunAt,
+    totalRuns: summary.totalRuns,
+    totalFailures: summary.totalFailures,
     stuck,
   };
 }
 
 /**
- * Health for every worker, from one pass over the runs the dashboard already
- * loaded — no per-worker query, so the card count never drives the query count.
+ * Health for every worker, from summaries the database already counted.
+ *
+ * **Still one query behind it, and still no per-worker query** — what changed
+ * is that the query returns one row per worker per status instead of every run
+ * the account has ever had. The card count has never driven the query count and
+ * does not now; what it stopped driving is the row count.
  */
 export function groupHealthByWorker(
-  runs: RunHistory[],
+  summaries: Map<string, RunSummary>,
   now: Date = new Date(),
 ): Map<string, WorkerHealth> {
-  const byWorker = new Map<string, RunHistory[]>();
-
-  for (const run of runs) {
-    const existing = byWorker.get(run.routineId);
-    if (existing) {
-      existing.push(run);
-    } else {
-      byWorker.set(run.routineId, [run]);
-    }
-  }
-
   const health = new Map<string, WorkerHealth>();
-  for (const [routineId, workerRuns] of byWorker) {
-    health.set(routineId, summarizeRuns(workerRuns, now));
+
+  for (const [routineId, summary] of summaries) {
+    health.set(routineId, summarizeRuns(summary, now));
   }
 
   return health;

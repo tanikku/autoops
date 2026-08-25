@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { groupHealthByWorker, NEVER_RUN, summarizeRuns } from "@/lib/health";
-import type { RunHistory } from "@/types";
+import type { RunHistory, RunSummary } from "@/types";
 
 /**
  * These fix the reading, not the storing.
@@ -43,13 +43,68 @@ function runningFor(ms: number): RunHistory {
   });
 }
 
+/**
+ * The rows a worker has, as the numbers the database now hands over.
+ *
+ * **This is the aggregate's specification, written as a list of runs.** Health
+ * used to be given the runs and count them; it is given the counts now. Every
+ * case below still describes itself in runs, so what changed is visibly the
+ * shape and not a single answer — and `lib/runs.test.ts` fixes that the grouped
+ * query produces exactly what this produces.
+ *
+ * Newest first, matching the order the old reads returned.
+ */
+function summaryOf(runs: RunHistory[]): RunSummary {
+  const latest = runs[0];
+
+  return {
+    totalRuns: runs.length,
+    totalFailures: runs.filter((entry) => entry.status === "failed").length,
+    lastResult: latest?.status ?? null,
+    lastRunAt: latest?.startedAt ?? null,
+  };
+}
+
+/** The same, per worker. */
+function summariesOf(runs: RunHistory[]): Map<string, RunSummary> {
+  const byWorker = new Map<string, RunHistory[]>();
+
+  for (const entry of runs) {
+    const existing = byWorker.get(entry.routineId);
+    if (existing) {
+      existing.push(entry);
+    } else {
+      byWorker.set(entry.routineId, [entry]);
+    }
+  }
+
+  return new Map(
+    [...byWorker].map(([routineId, workerRuns]) => [
+      routineId,
+      summaryOf(workerRuns),
+    ]),
+  );
+}
+
+/**
+ * The two functions under test, still asked in runs.
+ *
+ * Every case in this file was written against the old signature and is kept
+ * exactly as it was — these are what carry it to the new one.
+ */
+const healthOfRuns = (runs: RunHistory[], now: Date) =>
+  summarizeRuns(summaryOf(runs), now);
+
+const healthPerWorker = (runs: RunHistory[], now: Date) =>
+  groupHealthByWorker(summariesOf(runs), now);
+
 describe("summarizeRuns", () => {
   it("reports a worker that never ran", () => {
-    expect(summarizeRuns([], NOW)).toEqual(NEVER_RUN);
+    expect(healthOfRuns([], NOW)).toEqual(NEVER_RUN);
   });
 
   it("takes the last result from the newest run", () => {
-    const health = summarizeRuns(
+    const health = healthOfRuns(
       [run({ id: "newest", status: "failed" }), run({ id: "older" })],
       NOW,
     );
@@ -60,13 +115,13 @@ describe("summarizeRuns", () => {
   it("reports when the newest run started, not when it finished", () => {
     const startedAt = new Date("2026-08-10T11:00:00.000Z");
 
-    expect(summarizeRuns([run({ startedAt })], NOW).lastRunAt).toEqual(
+    expect(healthOfRuns([run({ startedAt })], NOW).lastRunAt).toEqual(
       startedAt,
     );
   });
 
   it("counts every run and every failure", () => {
-    const health = summarizeRuns(
+    const health = healthOfRuns(
       [
         run({ id: "a", status: "failed" }),
         run({ id: "b" }),
@@ -84,12 +139,12 @@ describe("summarizeRuns", () => {
    * failure total is what makes the health summary worth reading.
    */
   it("does not count a run still in progress as a failure", () => {
-    expect(summarizeRuns([runningFor(0)], NOW).totalFailures).toBe(0);
+    expect(healthOfRuns([runningFor(0)], NOW).totalFailures).toBe(0);
   });
 
   describe("stuck", () => {
     it("is false for a run that has only just started", () => {
-      expect(summarizeRuns([runningFor(0)], NOW).stuck).toBe(false);
+      expect(healthOfRuns([runningFor(0)], NOW).stuck).toBe(false);
     });
 
     /**
@@ -97,14 +152,14 @@ describe("summarizeRuns", () => {
      * run allowed ten minutes by the provider is comfortably inside.
      */
     it("is false at exactly fifteen minutes", () => {
-      expect(summarizeRuns([runningFor(FIFTEEN_MINUTES_MS)], NOW).stuck).toBe(
+      expect(healthOfRuns([runningFor(FIFTEEN_MINUTES_MS)], NOW).stuck).toBe(
         false,
       );
     });
 
     it("is true a millisecond past fifteen minutes", () => {
       expect(
-        summarizeRuns([runningFor(FIFTEEN_MINUTES_MS + 1)], NOW).stuck,
+        healthOfRuns([runningFor(FIFTEEN_MINUTES_MS + 1)], NOW).stuck,
       ).toBe(true);
     });
 
@@ -117,7 +172,7 @@ describe("summarizeRuns", () => {
         startedAt: new Date("2026-01-01T00:00:00.000Z"),
       });
 
-      expect(summarizeRuns([finished], NOW).stuck).toBe(false);
+      expect(healthOfRuns([finished], NOW).stuck).toBe(false);
     });
 
     it("is false for an old run that failed", () => {
@@ -126,7 +181,7 @@ describe("summarizeRuns", () => {
         startedAt: new Date("2026-01-01T00:00:00.000Z"),
       });
 
-      expect(summarizeRuns([failed], NOW).stuck).toBe(false);
+      expect(healthOfRuns([failed], NOW).stuck).toBe(false);
     });
 
     /**
@@ -134,7 +189,7 @@ describe("summarizeRuns", () => {
      * not make a worker that has succeeded since look stuck.
      */
     it("ignores an older run left running", () => {
-      const health = summarizeRuns(
+      const health = healthOfRuns(
         [run({ id: "newest" }), runningFor(FIFTEEN_MINUTES_MS + 1)],
         NOW,
       );
@@ -146,7 +201,7 @@ describe("summarizeRuns", () => {
 
 describe("groupHealthByWorker", () => {
   it("summarises each worker from one pass", () => {
-    const health = groupHealthByWorker(
+    const health = healthPerWorker(
       [
         run({ id: "a", routineId: "worker-1", status: "failed" }),
         run({ id: "b", routineId: "worker-2" }),
@@ -165,7 +220,7 @@ describe("groupHealthByWorker", () => {
    * `lastResult` from, and grouping has to preserve it per worker.
    */
   it("keeps the newest run first within a worker", () => {
-    const health = groupHealthByWorker(
+    const health = healthPerWorker(
       [
         run({ id: "newest", status: "failed" }),
         run({ id: "older", status: "completed" }),
@@ -177,6 +232,6 @@ describe("groupHealthByWorker", () => {
   });
 
   it("has no entry for a worker with no runs", () => {
-    expect(groupHealthByWorker([], NOW).get("worker-1")).toBeUndefined();
+    expect(healthPerWorker([], NOW).get("worker-1")).toBeUndefined();
   });
 });

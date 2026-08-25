@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatDateTimeWithSeconds } from "@/lib/datetime";
 import { t, type TranslationKey } from "@/lib/i18n";
-import type { RunHistoryEntry, RunStatus } from "@/types";
+import type { RecentRun, RunStatus } from "@/types";
 
 /** What a stored run status is called here. The values themselves do not move. */
 const statusKeys: Record<RunStatus, TranslationKey> = {
@@ -26,7 +26,7 @@ export function RunHistoryList({
   timezone,
   language,
 }: {
-  runs: RunHistoryEntry[];
+  runs: RecentRun[];
   timezone: string;
   /**
    * The words around each run. **What a run produced is not among them** — an

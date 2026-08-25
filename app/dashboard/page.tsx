@@ -7,9 +7,9 @@ import { RunHistoryList } from "@/components/run-history-list";
 import { Button } from "@/components/ui/button";
 import { groupHealthByWorker, NEVER_RUN } from "@/lib/health";
 import { t } from "@/lib/i18n";
-import { summarizeWorkers } from "@/lib/overview";
+import { latestExecution, summarizeWorkers } from "@/lib/overview";
 import { listRoutines } from "@/lib/routines";
-import { listRunHistory } from "@/lib/runs";
+import { listRecentRuns, summarizeRunsByWorker } from "@/lib/runs";
 import { requireUserId } from "@/lib/session";
 import { getUserLanguage, getUserTimezone } from "@/lib/users";
 
@@ -26,16 +26,23 @@ export default async function DashboardPage() {
   // Joined to the reads this page already makes rather than added after them:
   // the language is another column on the account row, and asking for it
   // alongside the rest costs a query rather than a round trip.
-  const [routines, runs, timezone, language] = await Promise.all([
-    listRoutines(userId),
-    listRunHistory(userId),
-    getUserTimezone(userId),
-    getUserLanguage(userId),
-  ]);
+  // **Two reads of run history, and neither grows with it.** The activity list
+  // takes the newest few rows; the summaries are counted by the database over
+  // every run there is. One query cannot answer both without one of them being
+  // wrong — a bounded list cannot say how many runs a worker has had, and a
+  // count cannot say what the last one produced.
+  const [routines, recentRuns, runSummaries, timezone, language] =
+    await Promise.all([
+      listRoutines(userId),
+      listRecentRuns(userId),
+      summarizeRunsByWorker(userId),
+      getUserTimezone(userId),
+      getUserLanguage(userId),
+    ]);
 
-  // Both lists are already in memory, so the summaries add no queries.
-  const overview = summarizeWorkers(routines, runs);
-  const healthByWorker = groupHealthByWorker(runs);
+  // Both are already in memory, so the summaries below add no queries.
+  const overview = summarizeWorkers(routines, latestExecution(runSummaries));
+  const healthByWorker = groupHealthByWorker(runSummaries);
 
   return (
     <div className="flex flex-1 flex-col bg-background">
@@ -107,7 +114,11 @@ export default async function DashboardPage() {
           <h2 className="text-lg font-medium tracking-tight">
             {t(language, "dashboard.activity")}
           </h2>
-          <RunHistoryList runs={runs} timezone={timezone} language={language} />
+          <RunHistoryList
+            runs={recentRuns}
+            timezone={timezone}
+            language={language}
+          />
         </section>
       </main>
     </div>

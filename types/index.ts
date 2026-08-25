@@ -171,6 +171,52 @@ export type RunHistory = {
 export type RunHistoryEntry = RunHistory & { routineName: string };
 
 /**
+ * One line of the activity list, and only what that line shows.
+ *
+ * **Narrower than `RunHistory` on purpose.** The dashboard reads the newest
+ * handful of runs on every visit, and a row it never renders is a row it paid
+ * to fetch, serialise and send. What the list draws is the worker's name, when
+ * the run started, how it ended and the first words of what it produced —
+ * `errorMessage` is deliberately absent, because the activity list has never
+ * shown it and the execution's own page is where a diagnostic belongs.
+ */
+export type RecentRun = {
+  id: string;
+  status: RunStatus;
+  startedAt: Date;
+  /** Shown inline, truncated by the layout rather than by the query. */
+  output: string;
+  routineName: string;
+};
+
+/**
+ * What a worker's whole history adds up to, without the history.
+ *
+ * **Counted by the database over every run, not by the application over the
+ * ones it happened to load.** The numbers mean the same thing they always did
+ * — every run this worker has ever had — which is exactly why they cannot come
+ * from a bounded list. A page that showed twenty rows and counted twenty runs
+ * would be reporting the size of its own query.
+ *
+ * `lastResult` and `lastRunAt` are null together, and only for a worker that
+ * has never run.
+ */
+export type RunSummary = {
+  totalRuns: number;
+  totalFailures: number;
+  lastResult: RunStatus | null;
+  lastRunAt: Date | null;
+};
+
+/** A worker with no runs at all. */
+export const NO_RUNS: RunSummary = {
+  totalRuns: 0,
+  totalFailures: 0,
+  lastResult: null,
+  lastRunAt: null,
+};
+
+/**
  * A single run joined with the routine fields the detail view shows.
  *
  * **`routineKind` is null when the stored kind is not one this version knows**,

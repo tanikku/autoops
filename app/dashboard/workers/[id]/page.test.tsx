@@ -14,7 +14,7 @@ import type { ReactNode } from "react";
 const mocks = vi.hoisted(() => ({
   requireUserId: vi.fn(),
   getRoutineWithStoredKind: vi.fn(),
-  listRunsForWorker: vi.fn(),
+  summarizeRunsForWorker: vi.fn(),
   getUserTimezone: vi.fn(),
   getUserLanguage: vi.fn(),
   getWebsiteSource: vi.fn(),
@@ -27,7 +27,9 @@ vi.mock("@/lib/session", () => ({ requireUserId: mocks.requireUserId }));
 vi.mock("@/lib/routines", () => ({
   getRoutineWithStoredKind: mocks.getRoutineWithStoredKind,
 }));
-vi.mock("@/lib/runs", () => ({ listRunsForWorker: mocks.listRunsForWorker }));
+vi.mock("@/lib/runs", () => ({
+  summarizeRunsForWorker: mocks.summarizeRunsForWorker,
+}));
 vi.mock("@/lib/users", () => ({
   getUserTimezone: mocks.getUserTimezone,
   getUserLanguage: mocks.getUserLanguage,
@@ -144,7 +146,14 @@ beforeEach(() => {
   // English by default, so the assertions below stay about which rows a
   // worker has rather than about what they are called.
   mocks.getUserLanguage.mockReset().mockResolvedValue("en");
-  mocks.listRunsForWorker.mockReset().mockResolvedValue([]);
+  // The page reads one summary, not a list of runs: what it shows about
+  // history is four numbers the database counted.
+  mocks.summarizeRunsForWorker.mockReset().mockResolvedValue({
+    totalRuns: 0,
+    totalFailures: 0,
+    lastResult: null,
+    lastRunAt: null,
+  });
   mocks.getWebsiteSource.mockReset().mockResolvedValue(null);
   mocks.getRoutineWithStoredKind
     .mockReset()

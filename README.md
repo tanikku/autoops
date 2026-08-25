@@ -1635,22 +1635,21 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
 
 **Reading**
 
-- **Nothing bounds how much run history a page loads.** Activity reads every
-  run the account has ever had, and a worker's detail page reads every run of
-  that worker — no limit, no cursor, no page. Each row carries its `output`,
-  the whole of what the model produced, and the activity list sends all of them
-  to the browser to show one truncated line each.
+- **There is no way back to run history older than the newest twenty.** Activity
+  shows the twenty most recent runs of an account and stops there; a worker's
+  detail page shows none at all, only what its history adds up to. No cursor, no
+  page, no per-worker list.
 
-  **Production has not felt this**, because production has almost no history to
-  load. What is wrong is the shape: every run makes both reads larger and
-  nothing levels off. **Not a Closed Beta blocker** — a few accounts over a few
-  weeks stays small — but it worsens for as long as the beta runs, which is why
-  it sits high here rather than at the bottom.
+  **The reads themselves are bounded now.** Activity takes twenty rows and the
+  columns it draws; both summaries are counted by the database over the whole
+  history and return one row per worker per status. What used to grow with the
+  number of runs stored no longer does — and the counts beside the list still
+  mean *every* run, which is why the two are read separately.
 
-  **How to bound it is not decided.** A row limit, a cursor, a page, or keeping
-  `output` out of the list are all still open, and they answer different
-  questions. **This is not the scheduler's `take`** — that one is about how many
-  due workers a single tick may claim across every tenant, is deferred for
+  **What is missing is reach, not boundedness.** A cursor, a paged list, or a
+  history page of its own would each answer it, and they answer it differently;
+  none is decided. **This is not the scheduler's `take`** — that one is about how
+  many due workers a single tick may claim across every tenant, is deferred for
   reasons of its own, and shares nothing with this but the word
 
 **Testing**

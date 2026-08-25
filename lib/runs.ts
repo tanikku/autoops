@@ -36,9 +36,11 @@ import { getWebsiteSource } from "@/lib/website-sources";
 import {
   isRoutineKind,
   isRunStatus,
+  NO_RUNS,
+  type RecentRun,
   type RunHistory,
   type RunHistoryDetail,
-  type RunHistoryEntry,
+  type RunSummary,
 } from "@/types";
 
 const provider = createAIProvider();
@@ -149,37 +151,160 @@ function toRun(record: RunRecord): RunHistory {
   };
 }
 
-export async function listRunHistory(
+/**
+ * How many runs the activity list shows.
+ *
+ * **A bound on the page, not on the history.** Every run is still recorded and
+ * still reachable from its own worker's summary; what this decides is how many
+ * of them one screen loads. The list previously took every run the account had
+ * ever had — for a page that shows one line each.
+ *
+ * Twenty is a screenful and a bit. Nothing derives from it: the summary numbers
+ * beside the list are counted by the database over the whole history, so this
+ * can be changed without changing what any of them mean.
+ */
+export const RECENT_ACTIVITY_LIMIT = 20;
+
+/**
+ * The newest runs across an account, for the activity list.
+ *
+ * **Bounded, and narrowed to what the list draws.** Both halves matter: the
+ * `take` stops the row count growing with the account's history, and the
+ * `select` stops each row carrying columns the list never renders. Before this
+ * the page loaded every run in full, `errorMessage` included, to show one
+ * truncated line each.
+ *
+ * **`output` stays**, because the list shows it. Dropping it would be a change
+ * to what the page says rather than to how much it reads.
+ *
+ * Ordered newest first, which is both what the list wants and what makes the
+ * bound the *newest* twenty rather than an arbitrary twenty.
+ */
+export async function listRecentRuns(
   userId: string,
-): Promise<RunHistoryEntry[]> {
+  limit: number = RECENT_ACTIVITY_LIMIT,
+): Promise<RecentRun[]> {
   const records = await prisma.runHistory.findMany({
     where: { userId },
     orderBy: { startedAt: "desc" },
-    include: { routine: { select: { name: true } } },
+    take: limit,
+    select: {
+      id: true,
+      status: true,
+      startedAt: true,
+      output: true,
+      routine: { select: { name: true } },
+    },
   });
 
-  return records.map(({ routine, ...record }) => ({
-    ...toRun(record),
-    routineName: routine.name,
+  return records.map((record) => ({
+    id: record.id,
+    status: isRunStatus(record.status) ? record.status : "running",
+    startedAt: record.startedAt,
+    output: record.output,
+    routineName: record.routine.name,
   }));
 }
 
 /**
- * Every run of a single worker, newest first.
+ * What every worker's history adds up to, in one query.
  *
- * Tenant-scoped like every other read, so it cannot report runs belonging to
- * someone else's worker.
+ * **Grouped by worker *and* status, which is what makes one query enough.**
+ * Each row is a worker, a status, how many runs it has in that status, and the
+ * newest of them. From that:
+ *
+ * - `totalRuns` is the counts added up,
+ * - `totalFailures` is the count on the `failed` row,
+ * - and the latest run is whichever row has the newest `startedAt` — the run
+ *   that is newest overall is also the newest within its own status, so the
+ *   greatest of the per-status maxima is it.
+ *
+ * **The query count does not follow the worker count.** Asking each worker for
+ * its own numbers would be one query per card, which is the failure this
+ * replaced a different failure with; the database groups them instead, and the
+ * rows that come back are at most one per worker per status.
+ *
+ * **No run's payload is read.** `output` and `errorMessage` are not in the
+ * grouping, are not aggregated, and never leave the database on this path.
+ *
+ * Tenant-scoped, like every other read here.
  */
-export async function listRunsForWorker(
-  routineId: string,
+export async function summarizeRunsByWorker(
   userId: string,
-): Promise<RunHistory[]> {
-  const records = await prisma.runHistory.findMany({
-    where: { routineId, userId },
-    orderBy: { startedAt: "desc" },
+): Promise<Map<string, RunSummary>> {
+  const groups = await prisma.runHistory.groupBy({
+    by: ["routineId", "status"],
+    where: { userId },
+    _count: { _all: true },
+    _max: { startedAt: true },
   });
 
-  return records.map(toRun);
+  return foldRunGroups(groups);
+}
+
+/**
+ * The same numbers for one worker.
+ *
+ * Scoped by `routineId` *and* `userId`, so it cannot report on somebody else's
+ * worker — the summary is the only thing the detail page reads about runs, and
+ * it used to read all of them to work the same four numbers out.
+ */
+export async function summarizeRunsForWorker(
+  routineId: string,
+  userId: string,
+): Promise<RunSummary> {
+  const groups = await prisma.runHistory.groupBy({
+    by: ["routineId", "status"],
+    where: { routineId, userId },
+    _count: { _all: true },
+    _max: { startedAt: true },
+  });
+
+  return foldRunGroups(groups).get(routineId) ?? NO_RUNS;
+}
+
+/** One grouped row, as the aggregate returns it. */
+type RunGroup = {
+  routineId: string;
+  status: string;
+  _count: { _all: number };
+  _max: { startedAt: Date | null };
+};
+
+/**
+ * Turns grouped rows into one summary per worker.
+ *
+ * **A status the database holds but this version cannot read still counts.** It
+ * is a run that happened, so it belongs in `totalRuns`; what it cannot do is
+ * claim to be the latest result, because there is no word for what it was. That
+ * matches `toRun`, which narrows an unreadable status rather than inventing one.
+ */
+function foldRunGroups(groups: RunGroup[]): Map<string, RunSummary> {
+  const summaries = new Map<string, RunSummary>();
+
+  for (const group of groups) {
+    const current = summaries.get(group.routineId) ?? { ...NO_RUNS };
+    const count = group._count._all;
+    const latestOfStatus = group._max.startedAt;
+
+    current.totalRuns += count;
+    if (group.status === "failed") {
+      current.totalFailures += count;
+    }
+
+    if (
+      latestOfStatus !== null &&
+      (current.lastRunAt === null || latestOfStatus > current.lastRunAt) &&
+      isRunStatus(group.status)
+    ) {
+      current.lastRunAt = latestOfStatus;
+      current.lastResult = group.status;
+    }
+
+    summaries.set(group.routineId, current);
+  }
+
+  return summaries;
 }
 
 /** Returns null for both "missing" and "someone else's" — callers 404 on either. */

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isRunOverdue, summarizeWorkers } from "@/lib/overview";
-import type { Routine, RunHistoryEntry } from "@/types";
+import {
+  isRunOverdue,
+  latestExecution,
+  summarizeWorkers,
+} from "@/lib/overview";
+import type { Routine, RunSummary } from "@/types";
 
 /**
  * Overdue is a reading of `nextRunAt`, and the whole of what it means is
@@ -36,20 +40,6 @@ function worker(overrides: Partial<Routine> = {}): Routine {
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,
-  };
-}
-
-function entry(startedAt: Date): RunHistoryEntry {
-  return {
-    id: "run-1",
-    routineId: "worker-1",
-    userId: "user-1",
-    status: "completed",
-    startedAt,
-    finishedAt: startedAt,
-    output: "",
-    errorMessage: null,
-    routineName: "Worker",
   };
 }
 
@@ -95,7 +85,7 @@ describe("isRunOverdue", () => {
 
 describe("summarizeWorkers", () => {
   it("counts nothing when there are no workers", () => {
-    expect(summarizeWorkers([], [], NOW)).toEqual({
+    expect(summarizeWorkers([], null, NOW)).toEqual({
       total: 0,
       active: 0,
       paused: 0,
@@ -112,7 +102,7 @@ describe("summarizeWorkers", () => {
         worker({ id: "b", status: "paused" }),
         worker({ id: "c", status: "draft" }),
       ],
-      [],
+      null,
       NOW,
     );
 
@@ -126,7 +116,7 @@ describe("summarizeWorkers", () => {
 
     const overview = summarizeWorkers(
       [worker({ id: "a", nextRunAt: FUTURE }), worker({ id: "b", nextRunAt: soon })],
-      [],
+      null,
       NOW,
     );
 
@@ -143,7 +133,7 @@ describe("summarizeWorkers", () => {
         worker({ id: "a", status: "paused", nextRunAt: PAST }),
         worker({ id: "b", status: "active", nextRunAt: FUTURE }),
       ],
-      [],
+      null,
       NOW,
     );
 
@@ -153,7 +143,7 @@ describe("summarizeWorkers", () => {
   it("has no next run when every active worker is manual", () => {
     const overview = summarizeWorkers(
       [worker({ frequency: "manual", nextRunAt: null })],
-      [],
+      null,
       NOW,
     );
 
@@ -162,24 +152,69 @@ describe("summarizeWorkers", () => {
   });
 
   it("marks the soonest slot overdue once it has passed", () => {
-    const overview = summarizeWorkers([worker({ nextRunAt: PAST })], [], NOW);
+    const overview = summarizeWorkers([worker({ nextRunAt: PAST })], null, NOW);
 
     expect(overview.nextScheduledRunOverdue).toBe(true);
   });
 
   it("does not mark a slot landing exactly now as overdue", () => {
-    const overview = summarizeWorkers([worker({ nextRunAt: NOW })], [], NOW);
+    const overview = summarizeWorkers([worker({ nextRunAt: NOW })], null, NOW);
 
     expect(overview.nextScheduledRunOverdue).toBe(false);
   });
 
-  /**
-   * Runs arrive newest first, so the head is the most recent execution — and
-   * it is `startedAt` that is reported, matching the health summary.
-   */
-  it("reports the most recent execution from the head of the list", () => {
-    const overview = summarizeWorkers([], [entry(PAST), entry(NOW)], NOW);
+  /** Reported as given: the figure is counted by the database, not here. */
+  it("reports the most recent execution it was handed", () => {
+    const overview = summarizeWorkers([], PAST, NOW);
 
     expect(overview.lastExecution).toEqual(PAST);
+  });
+
+  it("reports none when no worker has ever run", () => {
+    expect(summarizeWorkers([], null, NOW).lastExecution).toBeNull();
+  });
+});
+
+/**
+ * The account's most recent execution, taken from the per-worker summaries.
+ *
+ * **The number means "ever", so it cannot come from a bounded list.** The
+ * activity list beside it shows the newest twenty rows; this is the newest of
+ * every worker's own newest, each of which the database counted over that
+ * worker's whole history.
+ */
+describe("latestExecution", () => {
+  const summary = (lastRunAt: Date | null): RunSummary => ({
+    totalRuns: lastRunAt === null ? 0 : 1,
+    totalFailures: 0,
+    lastResult: lastRunAt === null ? null : "completed",
+    lastRunAt,
+  });
+
+  it("is null when there are no workers", () => {
+    expect(latestExecution(new Map())).toBeNull();
+  });
+
+  it("is null when no worker has ever run", () => {
+    expect(latestExecution(new Map([["worker-1", summary(null)]]))).toBeNull();
+  });
+
+  it("takes the newest across every worker", () => {
+    const summaries = new Map([
+      ["worker-1", summary(PAST)],
+      ["worker-2", summary(NOW)],
+      ["worker-3", summary(null)],
+    ]);
+
+    expect(latestExecution(summaries)).toEqual(NOW);
+  });
+
+  it("does not mind which order the workers arrive in", () => {
+    const summaries = new Map([
+      ["worker-2", summary(NOW)],
+      ["worker-1", summary(PAST)],
+    ]);
+
+    expect(latestExecution(summaries)).toEqual(NOW);
   });
 });
