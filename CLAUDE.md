@@ -305,7 +305,7 @@ Sprint 34(拒否の理由をログへ)、Sprint 36(失敗の kind をログへ)�
 | 値 | 出どころ |
 |---|---|
 | **edge idle timeout = 300秒** | Railway 公式(無通信のまま300秒で切断。通信が続けば最大15分) |
-| **provider timeout = 600秒** | `lib/ai/claude-provider.ts`。**edge 制限の2倍**で、1回の呼び出しだけで切断されうる |
+| **provider fallback timeout = 600秒** | `lib/ai/claude-provider.ts`。**本番の caller はどれもここへ落ちない** — prompt worker 180秒 / website AI 120秒 / draft 30秒を各自明示する |
 | **`drainingSeconds = null`** | Railway のデフォルトは猶予 **0秒**。SIGTERM の直後に SIGKILL |
 | **`numReplicas = 1`** | `healthcheckPath` も `overlapSeconds` も null |
 | cron interval = 300秒 | `*/5 * * * *`。**edge の制限と同じ値** |
@@ -350,10 +350,12 @@ Postgres への read-only 照会から。
 
 **dispatcher の time budget も hard limit にはならない。** 「経過が閾値を超えたら
 新規着手をやめる」は soft limit で、保証されるのは *新しく始めない* ことだけ。
-最悪の tick は `budget + 最後に始めた1件` ≒ budget + 600秒(provider timeout)に
-なる。**provider timeout が edge の 300秒を上回っている限り、budget をいくつに
-しても 300秒は保証できない。** よって P1-B2 は単独課題ではなく、provider timeout
-/ cancellation / execution ownership と同じ **P1-D の execution lifecycle** 側で
+最悪の tick は `budget + 最後に始めた1件` ≒ budget + その1件の timeout になる。
+**この2つ目の項は 2026-08-25 に 600秒から 180秒へ縮んだ**(prompt worker が自分の
+deadline を明示するようになった)。**それでも 300秒は保証されない** — budget
+240秒の直前に始まった1件が 180秒使えば 420秒になる。**縮んだのは最悪値であって、
+hard limit になったわけではない。** よって P1-B2 は単独課題ではなく、
+cancellation / execution ownership と同じ **P1-D の execution lifecycle** 側で
 扱う。
 
 **150秒は observability の閾値であって、execution control の値ではない。**

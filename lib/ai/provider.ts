@@ -32,14 +32,17 @@ export type AIExecutionRequest = {
   /** What the instruction is applied to. */
   user: string;
   /**
-   * How long this one call may take, when the caller has a reason to differ
-   * from the provider's own allowance.
+   * How long this one call may take.
    *
-   * **Set by callers whose work sits inside a larger budget.** A website change
-   * is one step of a scheduled tick that also has to fetch a page and finish
-   * inside the time an HTTP response is allowed; a prompt worker is the whole
-   * of its run and is given the provider's full allowance. Omitted means the
-   * provider decides, which is what every existing caller does.
+   * **Every caller in production names one, and they are all different.** A
+   * website change is one step of a run that has already fetched a page; a
+   * draft is somebody waiting at a form; a prompt worker's request is the whole
+   * of its run. Each knows what it has to fit inside, and the provider knows
+   * none of it — which is why the number arrives with the request rather than
+   * being decided here.
+   *
+   * Omitted means the provider decides. That fallback is still what an unnamed
+   * caller gets, and nothing in production is one.
    */
   timeoutMs?: number;
 };

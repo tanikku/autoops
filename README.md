@@ -470,7 +470,7 @@ reported as one.
 [Backlog](#backlog) — and nothing rewrites its status when that happens. The
 Health section adds one more line rather than a new status: a worker whose
 latest run is `running` and started more than fifteen minutes ago — comfortably
-past the ten minutes a single Claude request is allowed — reads "Running for
+past the three minutes a prompt worker's request is allowed — reads "Running for
 longer than expected". This is computed at read time from `status` and
 `startedAt`, not stored, and it is deliberately not called "stuck" or "failed":
 the row looks identical to one that is genuinely still in progress, and only
@@ -1114,7 +1114,16 @@ minutes per request, and **no retries**. Neither value changes what the SDK
 would have done on its own by much — it defaults to the same ten minutes for
 this token count — but leaving them implicit meant the default also brought two
 automatic retries with it, which nobody chose and which bills a timed-out
-generation three times over. **`maxRetries: 0` is what switches the SDK's own
+generation three times over.
+
+**Those ten minutes are a fallback, and nothing in production reaches them.**
+Each caller names the deadline its own work has to fit inside, and there are
+three: a prompt worker gets **three minutes**, a website change **two**, and a
+draft **thirty seconds**. They are deliberately different numbers — a website
+change is one step of a run that has already fetched a page, a draft is
+somebody waiting at a form, and a prompt worker's request is the whole of its
+run. What they have in common is that each is shorter than the tick it runs
+inside; the fallback was shorter than nothing. **`maxRetries: 0` is what switches the SDK's own
 retrying off**, and it puts this layer where the
 [dispatcher](#scheduling-engine) already stood: deciding that a failure deserves
 another attempt is a policy, and nothing in the pipeline holds one. A request
@@ -1529,10 +1538,12 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
 **Execution**
 
 - **A slow worker still holds up the ones behind it.** The dispatcher works
-  through due workers one at a time, so ten minutes spent waiting on a provider
-  is ten minutes nothing else runs. Per-worker timeouts bound one worker, not a
-  tick — that needs the runs to stop being sequential, which is the real queue
-  backend's job
+  through due workers one at a time, so three minutes spent waiting on a
+  provider is three minutes nothing else runs. Per-worker timeouts bound one
+  worker, not a tick — five workers may still take fifteen minutes between
+  them, and the tick's own budget only stops the next one from *starting*.
+  Bounding a tick needs the runs to stop being sequential, which is the real
+  queue backend's job
 - A run can be left `running` for good. `runRoutine` records the outcome in a
   second write, and if that write is the thing that fails there is nothing left
   to record it with. The row is neither a success nor a failure, and the health
@@ -1569,10 +1580,11 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
   | Reconsider | A single execution reaches **300 seconds**, a cron call fails or goes unanswered, or the request lifecycle constrains something real |
 
   A tick already reports its duration, so the first row is observable today —
-  see [How long a tick took](#how-long-a-tick-took). **The second row is
-  reached without any growth in the number of workers**: one request may take
-  ten minutes, which is twice what the edge allows a silent response, so a
-  single slow run breaches it on its own.
+  see [How long a tick took](#how-long-a-tick-took). **A single run no longer
+  breaches the second row on its own**: every caller now names a deadline
+  shorter than the tick's own budget, so reaching 300 seconds takes several
+  slow runs in one tick rather than one. It was one, for as long as a prompt
+  worker could ask for ten minutes.
 
   When it is reconsidered, the **separate process** is the one to look at
   first. Running inside the Next.js server needs no extra service and no extra

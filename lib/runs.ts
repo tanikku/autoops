@@ -332,6 +332,37 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
 }
 
 /**
+ * How long the model is given to answer a prompt worker.
+ *
+ * **Named here because it belongs to this caller, not to the provider.** The
+ * provider still keeps its own ten-minute fallback for anything that asks for
+ * nothing; what that fallback was never meant to be is a decision about how
+ * long a scheduled worker may hold a tick. It arrived as the number the SDK
+ * would have calculated from `max_tokens`, and it stayed because nothing had
+ * chosen anything else.
+ *
+ * **Three minutes, and the two numbers it sits between are the reason.** A
+ * tick answers an HTTP request that is cut off at the edge after five minutes
+ * of silence, and the dispatcher stops starting workers after four. At three
+ * minutes a single run finishes inside both: one worker cannot spend the whole
+ * response on its own, and a run that reaches the limit still leaves the
+ * dispatcher a check to make before it starts the next one. Ten minutes fits
+ * inside neither, which is the whole of what this changes.
+ *
+ * **Deliberately not `WEBSITE_AI_TIMEOUT_MS`, and not derived from it.** That
+ * one is two minutes because a website change is *one step* of a run that has
+ * already spent time fetching a page; this is the whole of a prompt worker's
+ * run. The two answer different questions and happen to be close, which is not
+ * a reason to write them once.
+ *
+ * **It is not a claim about how long a generation takes.** No prompt worker has
+ * ever been observed running long in production, so this is a bound taken from
+ * what the platform allows rather than from what the model needs — and a
+ * generation that would have finished at four minutes now fails at three.
+ */
+export const PROMPT_AI_TIMEOUT_MS = 180_000;
+
+/**
  * A prompt worker's execution, once the right to run it is held.
  *
  * Split out so the lease has a single, obvious span: everything in here
@@ -364,7 +395,15 @@ async function executePrompt(
     // **No `system`.** A prompt worker's instruction and its material are the
     // same text, exactly as they have always been — the field exists for the
     // caller that has two separate things to send.
-    output = await provider.execute({ user: prompt });
+    //
+    // **The deadline is said rather than left to the provider.** Every other
+    // caller already names its own; this one was the last taking whatever the
+    // provider happened to allow, which was longer than the tick it runs
+    // inside. See `PROMPT_AI_TIMEOUT_MS`.
+    output = await provider.execute({
+      user: prompt,
+      timeoutMs: PROMPT_AI_TIMEOUT_MS,
+    });
   } catch (error) {
     // **The kind is logged, not stored**, and it is logged only here — this is
     // the one place the failure is a provider's. Naming a column for it means

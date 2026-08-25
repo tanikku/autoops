@@ -51,10 +51,16 @@ vi.mock("@/lib/prisma", () => ({
 const {
   isUnsupportedRoutineKind,
   latestExecutionFailureAt,
+  PROMPT_AI_TIMEOUT_MS,
   runRoutine,
   RunPersistenceError,
 } = await import("@/lib/runs");
 const { ExecutionSuppressedError } = await import("@/lib/execution-lease");
+// Imported for one comparison, and only here: the two constants belong to
+// different modules on purpose — the dispatcher must not know what a prompt
+// worker asks a model for, and execution must not import the dispatcher that
+// calls it. A test is the one place both can be read at once.
+const { MAX_TICK_EXECUTION_MS } = await import("@/lib/dispatcher");
 
 const LEASE = { token: "token-a", expiresAt: new Date("2026-08-10T12:15:00Z") };
 
@@ -109,7 +115,9 @@ describe("runRoutine — which kind is being run", () => {
   it("runs a prompt worker's prompt", async () => {
     await runRoutine("worker-1");
 
-    expect(mocks.execute).toHaveBeenCalledWith({ user: "hello" });
+    expect(mocks.execute).toHaveBeenCalledWith(
+      expect.objectContaining({ user: "hello" }),
+    );
   });
 
   it.each(["", "Prompt", "PROMPT", "website ", "rss", "corrupt-value", "null"])(
@@ -167,7 +175,9 @@ describe("runRoutine — lease acquired", () => {
     const run = await runRoutine("worker-1");
 
     expect(mocks.create).toHaveBeenCalledTimes(1);
-    expect(mocks.execute).toHaveBeenCalledWith({ user: "hello" });
+    expect(mocks.execute).toHaveBeenCalledWith(
+      expect.objectContaining({ user: "hello" }),
+    );
     expect(run.status).toBe("completed");
   });
 
@@ -524,16 +534,54 @@ describe("latestExecutionFailureAt", () => {
   });
 });
 
+
 /**
- * **A prompt worker's request is the whole of its run**, so it keeps the
- * provider's own allowance rather than borrowing a shorter one from a caller
- * that has other work to fit around.
+ * How long a prompt worker may wait for a model.
+ *
+ * **The deadline is the caller's, said out loud.** Every other caller of the
+ * provider already names one — a website change gets two minutes, a draft
+ * thirty seconds — and this was the last one taking whatever the provider
+ * happened to allow. What it happened to allow was ten minutes, which is
+ * longer than the tick the run sits inside and longer than the HTTP response
+ * that tick is answering.
  */
-describe("runRoutine — how long a prompt worker is given", () => {
-  it("asks for no particular deadline", async () => {
+describe("how long a prompt worker waits for a model", () => {
+  it("asks for its own deadline rather than the provider's", async () => {
     await runRoutine("worker-1");
 
-    expect(mocks.execute).toHaveBeenCalledWith({ user: "hello" });
-    expect(mocks.execute.mock.calls[0][0]).not.toHaveProperty("timeoutMs");
+    expect(mocks.execute).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: PROMPT_AI_TIMEOUT_MS }),
+    );
+  });
+
+  it("is three minutes", () => {
+    expect(PROMPT_AI_TIMEOUT_MS).toBe(180_000);
+  });
+
+  /**
+   * **The invariant, not the value.** Either number may be revisited; what must
+   * not happen again is one of them moving on its own until a single worker can
+   * hold a tick for longer than the tick is willing to spend. Read here rather
+   * than asserted in production code, which would mean execution importing the
+   * dispatcher that calls it.
+   */
+  it("leaves the dispatcher a decision to make afterwards", () => {
+    expect(PROMPT_AI_TIMEOUT_MS).toBeLessThan(MAX_TICK_EXECUTION_MS);
+  });
+
+  /** The prompt itself is unchanged by the deadline travelling with it. */
+  it("sends the same request it always did", async () => {
+    await runRoutine("worker-1");
+
+    const request = mocks.execute.mock.calls.at(-1)?.[0] as Record<
+      string,
+      unknown
+    >;
+
+    expect(request.user).toBe("hello");
+    // A prompt worker's instruction and its material are one text: it has no
+    // `system`, and giving it a deadline does not give it one.
+    expect(request).not.toHaveProperty("system");
+    expect(Object.keys(request).sort()).toEqual(["timeoutMs", "user"]);
   });
 });
