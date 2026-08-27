@@ -40,9 +40,14 @@ export default async function DashboardPage() {
       getUserLanguage(userId),
     ]);
 
+  // **One reading of the clock for the whole page.** The summaries and every
+  // activity row are judged against the same instant, so nothing on screen can
+  // disagree with the rest of it about what "now" was.
+  const now = new Date();
+
   // Both are already in memory, so the summaries below add no queries.
-  const overview = summarizeWorkers(routines, latestExecution(runSummaries));
-  const healthByWorker = groupHealthByWorker(runSummaries);
+  const overview = summarizeWorkers(routines, latestExecution(runSummaries), now);
+  const healthByWorker = groupHealthByWorker(runSummaries, now);
 
   return (
     <div className="flex flex-1 flex-col bg-background">
@@ -118,6 +123,7 @@ export default async function DashboardPage() {
             runs={recentRuns}
             timezone={timezone}
             language={language}
+            now={now}
           />
         </section>
       </main>

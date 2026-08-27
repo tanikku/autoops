@@ -24,9 +24,19 @@ const run = (overrides: Partial<WorkerRun> = {}): WorkerRun => ({
   ...overrides,
 });
 
-const list = (runs: WorkerRun[], language = "en", timezone = "UTC") =>
+const list = (
+  runs: WorkerRun[],
+  language = "en",
+  timezone = "UTC",
+  now: Date = NOW,
+) =>
   renderToStaticMarkup(
-    <WorkerRunList runs={runs} timezone={timezone} language={language} />,
+    <WorkerRunList
+      runs={runs}
+      timezone={timezone}
+      language={language}
+      now={now}
+    />,
   );
 
 describe("a worker with no runs", () => {
@@ -115,5 +125,73 @@ describe("what the list leaves to the execution's own page", () => {
     const html = list([run()]);
 
     expect(html).not.toContain("Watcher");
+  });
+});
+
+/**
+ * A run that has been going for longer than one reasonably takes.
+ *
+ * The same note the account's activity list shows, from the same threshold —
+ * and, as there, the badge and the link are untouched because the stored status
+ * has not changed.
+ */
+describe("a run that has been running too long", () => {
+  const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
+  const started = (msAgo: number) => new Date(NOW.getTime() - msAgo);
+  const running = (msAgo: number) =>
+    run({ status: "running", startedAt: started(msAgo) });
+
+  it("says nothing about a run that started a moment ago", () => {
+    const html = list([running(0)]);
+
+    expect(html).toContain(">Running<");
+    expect(html).not.toContain("Running for longer than expected");
+  });
+
+  it("says nothing at exactly the threshold", () => {
+    expect(list([running(FIFTEEN_MINUTES_MS)])).not.toContain(
+      "Running for longer than expected",
+    );
+  });
+
+  it("says so one millisecond past it", () => {
+    expect(list([running(FIFTEEN_MINUTES_MS + 1)])).toContain(
+      "Running for longer than expected",
+    );
+  });
+
+  it("keeps the Running badge and the link", () => {
+    const html = list([running(FIFTEEN_MINUTES_MS + 1)]);
+
+    expect(html).toContain(">Running<");
+    expect(html).not.toContain(">Failed<");
+    expect(html).toContain('href="/dashboard/runs/run-1"');
+  });
+
+  it("says so in Japanese", () => {
+    const html = list([running(FIFTEEN_MINUTES_MS + 1)], "ja");
+
+    expect(html).toContain("想定より長く実行が続いています");
+    expect(html).toContain(">実行中<");
+  });
+
+  it.each(["completed", "failed"] as const)(
+    "says nothing about an old %o run",
+    (status) => {
+      const html = list([
+        run({ status, startedAt: started(FIFTEEN_MINUTES_MS * 100) }),
+      ]);
+
+      expect(html).not.toContain("Running for longer than expected");
+    },
+  );
+
+  it("judges every row against the same moment", () => {
+    const html = list([
+      running(FIFTEEN_MINUTES_MS + 1),
+      { ...running(0), id: "run-2" },
+    ]);
+
+    expect(html.match(/Running for longer than expected/g)).toHaveLength(1);
   });
 });

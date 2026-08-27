@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { groupHealthByWorker, NEVER_RUN, summarizeRuns } from "@/lib/health";
+import {
+  groupHealthByWorker,
+  isRunStuck,
+  NEVER_RUN,
+  summarizeRuns,
+} from "@/lib/health";
 import type { RunHistory, RunSummary } from "@/types";
 
 /**
@@ -233,5 +238,71 @@ describe("groupHealthByWorker", () => {
 
   it("has no entry for a worker with no runs", () => {
     expect(healthPerWorker([], NOW).get("worker-1")).toBeUndefined();
+  });
+});
+
+/**
+ * The one definition of "running for longer than one reasonably takes".
+ *
+ * **Read by four screens now, not one.** The health summary asks it about a
+ * worker's newest run; the activity list, a worker's own history and an
+ * execution's page ask it about each row they draw. The cases below are the
+ * same boundary the `stuck` describe above fixes — stated once more against the
+ * helper itself, because that is what every one of those screens calls.
+ */
+describe("isRunStuck", () => {
+  const startedAgo = (ms: number) => new Date(NOW.getTime() - ms);
+
+  it("is false for a run that started a moment ago", () => {
+    expect(isRunStuck("running", startedAgo(0), NOW)).toBe(false);
+  });
+
+  it("is false just short of the threshold", () => {
+    expect(isRunStuck("running", startedAgo(FIFTEEN_MINUTES_MS - 1), NOW)).toBe(
+      false,
+    );
+  });
+
+  /** Exactly the threshold is not past it. */
+  it("is false at exactly fifteen minutes", () => {
+    expect(isRunStuck("running", startedAgo(FIFTEEN_MINUTES_MS), NOW)).toBe(
+      false,
+    );
+  });
+
+  it("is true one millisecond past it", () => {
+    expect(isRunStuck("running", startedAgo(FIFTEEN_MINUTES_MS + 1), NOW)).toBe(
+      true,
+    );
+  });
+
+  /**
+   * A run that already has an answer is never described this way, however long
+   * ago it started.
+   */
+  it.each(["completed", "failed"] as const)(
+    "is false for an old %o run",
+    (status) => {
+      expect(isRunStuck(status, startedAgo(FIFTEEN_MINUTES_MS * 100), NOW)).toBe(
+        false,
+      );
+    },
+  );
+
+  /** The summary and the rows read the same definition, not two copies. */
+  it("agrees with the health summary about the same run", () => {
+    const startedAt = startedAgo(FIFTEEN_MINUTES_MS + 1);
+    const health = summarizeRuns(
+      {
+        totalRuns: 1,
+        totalFailures: 0,
+        lastResult: "running",
+        lastRunAt: startedAt,
+      },
+      NOW,
+    );
+
+    expect(health.stuck).toBe(isRunStuck("running", startedAt, NOW));
+    expect(health.stuck).toBe(true);
   });
 });

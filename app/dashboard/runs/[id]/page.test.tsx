@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
 /**
@@ -292,3 +292,133 @@ describe("run detail in Japanese", () => {
     expect(japanese["実行時間"]).toBe(english["Execution Time"]);
   });
 });
+
+/**
+ * A run that has been going for longer than one reasonably takes.
+ *
+ * **A note beside the status, and nothing more.** The run is still `running`
+ * and is still recorded that way: no finish time is invented, no reason is
+ * made up, and nothing here calls it failed. It is the same sentence the
+ * worker's health summary shows, from the same threshold — said on the page
+ * somebody lands on when they click the run.
+ */
+describe("run detail — a run that has been running too long", () => {
+  const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
+  const CLOCK = new Date("2026-08-13T01:00:00.000Z");
+
+  /** Only `Date` is faked: nothing here waits on a timer. */
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(CLOCK);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const runningFor = (ms: number) =>
+    run({
+      status: "running",
+      startedAt: new Date(CLOCK.getTime() - ms),
+      finishedAt: null,
+      output: "",
+    });
+
+  it("says nothing about a run that started a moment ago", async () => {
+    mocks.getRun.mockResolvedValue(runningFor(0));
+
+    const shown = strings(await render());
+
+    expect(shown).toContain("Running");
+    expect(shown).not.toContain("Running for longer than expected");
+  });
+
+  it("says nothing at exactly the threshold", async () => {
+    mocks.getRun.mockResolvedValue(runningFor(FIFTEEN_MINUTES_MS));
+
+    expect(strings(await render())).not.toContain(
+      "Running for longer than expected",
+    );
+  });
+
+  it("says so one millisecond past it", async () => {
+    mocks.getRun.mockResolvedValue(runningFor(FIFTEEN_MINUTES_MS + 1));
+
+    expect(strings(await render())).toContain(
+      "Running for longer than expected",
+    );
+  });
+
+  /**
+   * **Still a running run.** Saying it has taken a while must not turn into
+   * saying it failed — there is no Error section, and the output section is
+   * the one a run that has not failed gets.
+   */
+  it("adds no error section and no reason", async () => {
+    mocks.getRun.mockResolvedValue(runningFor(FIFTEEN_MINUTES_MS + 1));
+
+    const sections = labelled(await render());
+
+    expect(sections).not.toHaveProperty("Error");
+    expect(sections).toHaveProperty("Output");
+    expect(sections["Finished At"]).toBe("—");
+  });
+
+  it("says so in Japanese", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    mocks.getRun.mockResolvedValue(runningFor(FIFTEEN_MINUTES_MS + 1));
+
+    expect(strings(await render())).toContain("想定より長く実行が続いています");
+  });
+
+  it.each(["completed", "failed"] as const)(
+    "says nothing about an old %o run",
+    async (status) => {
+      mocks.getRun.mockResolvedValue(
+        run({
+          status,
+          startedAt: new Date(CLOCK.getTime() - FIFTEEN_MINUTES_MS * 100),
+          errorMessage: status === "failed" ? "Provider said no." : null,
+          output: status === "failed" ? "" : "What the model said.",
+        }),
+      );
+
+      expect(strings(await render())).not.toContain(
+        "Running for longer than expected",
+      );
+    },
+  );
+});
+
+/** Every string the page put on screen itself. */
+function strings(node: ReactNode): string[] {
+  const found: string[] = [];
+
+  const walk = (current: unknown): void => {
+    if (typeof current === "string") {
+      found.push(current);
+      return;
+    }
+
+    if (Array.isArray(current)) {
+      current.forEach(walk);
+      return;
+    }
+
+    if (!current || typeof current !== "object") {
+      return;
+    }
+
+    const props = (current as { props?: Record<string, unknown> }).props;
+    if (!props) {
+      return;
+    }
+
+    for (const value of Object.values(props)) {
+      walk(value);
+    }
+  };
+
+  walk(node);
+  return found;
+}

@@ -1,7 +1,9 @@
 import Link from "next/link";
+import { TriangleAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatDateTimeWithSeconds } from "@/lib/datetime";
+import { isRunStuck } from "@/lib/health";
 import { t, type TranslationKey } from "@/lib/i18n";
 import type { RunStatus, WorkerRun } from "@/types";
 
@@ -41,10 +43,13 @@ export function WorkerRunList({
   runs,
   timezone,
   language,
+  now,
 }: {
   runs: WorkerRun[];
   timezone: string;
   language: string;
+  /** The instant every row is judged against. See `RunHistoryList`. */
+  now: Date;
 }) {
   if (runs.length === 0) {
     return (
@@ -66,9 +71,17 @@ export function WorkerRunList({
             <p className="min-w-0 truncate text-sm">
               {formatDateTimeWithSeconds(run.startedAt, timezone)}
             </p>
-            <Badge variant={statusVariants[run.status]}>
-              {t(language, statusKeys[run.status])}
-            </Badge>
+            <div className="flex shrink-0 items-center gap-2">
+              {isRunStuck(run.status, run.startedAt, now) ? (
+                <span className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                  <TriangleAlert className="size-3.5 shrink-0" aria-hidden />
+                  {t(language, "health.stuck")}
+                </span>
+              ) : null}
+              <Badge variant={statusVariants[run.status]}>
+                {t(language, statusKeys[run.status])}
+              </Badge>
+            </div>
           </Link>
         ))}
       </CardContent>

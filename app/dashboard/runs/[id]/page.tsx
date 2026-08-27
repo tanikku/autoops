@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { TriangleAlert } from "lucide-react";
 import { DashboardNav } from "@/components/dashboard-nav";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDateTimeWithSeconds } from "@/lib/datetime";
+import { isRunStuck } from "@/lib/health";
 import { t, type TranslationKey } from "@/lib/i18n";
 import { promptVariables, renderPrompt } from "@/lib/prompt";
 import { getRun } from "@/lib/runs";
@@ -89,6 +91,9 @@ export default async function RunDetailPage({
     notFound();
   }
 
+  // One reading of the clock, as the pages that list runs do.
+  const now = new Date();
+
   // **Only a prompt run has a rendered prompt to show.**
   //
   // What a prompt run sends is the worker's prompt with its variables filled
@@ -135,12 +140,26 @@ export default async function RunDetailPage({
             label={t(language, "run.detail.worker")}
             value={run.routineName}
           />
+          {/* **A note beside the status, not a status of its own.** The run
+              is still `running` and is still recorded that way: nothing here
+              writes a finish time, invents a reason, or calls it failed. What
+              it says is that the row has been in this state for longer than a
+              run reasonably takes — which is the same thing the worker's health
+              summary says about it, from the same threshold. */}
           <Field
             label={t(language, "common.statusLabel")}
             value={
-              <Badge variant={statusVariants[run.status]}>
-                {t(language, statusKeys[run.status])}
-              </Badge>
+              <span className="flex flex-col items-start gap-1">
+                <Badge variant={statusVariants[run.status]}>
+                  {t(language, statusKeys[run.status])}
+                </Badge>
+                {isRunStuck(run.status, run.startedAt, now) ? (
+                  <span className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                    <TriangleAlert className="size-3.5 shrink-0" aria-hidden />
+                    {t(language, "health.stuck")}
+                  </span>
+                ) : null}
+              </span>
             }
           />
           <Field

@@ -130,8 +130,10 @@ export default async function WorkerDetailPage({
     getUserTimezone(userId),
     getUserLanguage(userId),
   ]);
-  const health = summarizeRuns(runSummary);
-  const overdue = isRunOverdue(worker);
+  // One reading of the clock for the whole page, as the dashboard does.
+  const now = new Date();
+  const health = summarizeRuns(runSummary, now);
+  const overdue = isRunOverdue(worker, now);
 
   return (
     <div className="flex flex-1 flex-col bg-background">
@@ -283,6 +285,7 @@ export default async function WorkerDetailPage({
               runs={recentRuns}
               timezone={timezone}
               language={language}
+              now={now}
             />
           </section>
 

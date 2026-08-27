@@ -1,7 +1,9 @@
 import Link from "next/link";
+import { TriangleAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatDateTimeWithSeconds } from "@/lib/datetime";
+import { isRunStuck } from "@/lib/health";
 import { t, type TranslationKey } from "@/lib/i18n";
 import type { RecentRun, RunStatus } from "@/types";
 
@@ -25,6 +27,7 @@ export function RunHistoryList({
   runs,
   timezone,
   language,
+  now,
 }: {
   runs: RecentRun[];
   timezone: string;
@@ -33,6 +36,14 @@ export function RunHistoryList({
    * output is the worker's own material and is shown exactly as it was stored.
    */
   language: string;
+  /**
+   * The instant every row is judged against.
+   *
+   * Decided once by the page rather than read per row, so two rows a
+   * millisecond apart cannot land on opposite sides of the threshold — and so
+   * the boundary can be tested at all.
+   */
+  now: Date;
 }) {
   if (runs.length === 0) {
     return (
@@ -58,9 +69,21 @@ export function RunHistoryList({
                 {run.output ? ` — ${run.output}` : null}
               </p>
             </div>
-            <Badge variant={statusVariants[run.status]}>
-              {t(language, statusKeys[run.status])}
-            </Badge>
+            <div className="flex shrink-0 items-center gap-2">
+              {/* **The badge still says `running`, because the row still is.**
+                  Nothing here changes what is stored or what the run will be
+                  recorded as; this only says that it has been running for
+                  longer than one reasonably takes. */}
+              {isRunStuck(run.status, run.startedAt, now) ? (
+                <span className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                  <TriangleAlert className="size-3.5 shrink-0" aria-hidden />
+                  {t(language, "health.stuck")}
+                </span>
+              ) : null}
+              <Badge variant={statusVariants[run.status]}>
+                {t(language, statusKeys[run.status])}
+              </Badge>
+            </div>
           </Link>
         ))}
       </CardContent>
