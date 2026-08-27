@@ -13,14 +13,14 @@ datasource db {
 /// A signed-in Google account. `id` is the provider account id (the JWT `sub`),
 /// which is what every owned row is scoped by.
 model User {
-  id        String       @id
-  email     String       @unique
-  name      String?
-  image     String?
+  id         String            @id
+  email      String            @unique
+  name       String?
+  image      String?
   /// IANA zone the dashboard renders timestamps in, e.g. "Asia/Tokyo".
   /// Defaults to UTC so existing rows keep displaying exactly what they did
   /// before there was a setting to change.
-  timezone  String       @default("UTC")
+  timezone   String            @default("UTC")
   /// Language AutoOps uses for its own screens, "en" or "ja".
   ///
   /// A plain string rather than a database enum: adding a language should be a
@@ -31,10 +31,11 @@ model User {
   /// **It says nothing about what a worker produces.** Instructions, watched
   /// pages and model output are the owner's own material and are never
   /// translated to match this.
-  language  String       @default("en")
-  createdAt DateTime     @default(now())
-  routines  Routine[]
-  runs      RunHistory[]
+  language   String            @default("en")
+  createdAt  DateTime          @default(now())
+  routines   Routine[]
+  runs       RunHistory[]
+  rateLimits RateLimitBucket[]
 }
 
 model Routine {
@@ -228,4 +229,44 @@ model WebsiteSnapshot {
   /// about the domain rather than about the row.
   createdAt         DateTime      @default(now())
   websiteSource     WebsiteSource @relation(fields: [websiteSourceId], references: [id], onDelete: Cascade)
+}
+
+/// How much of a rate-limited action an account has used, and since when.
+///
+/// **One row per account and scope, rewritten in place.** It is a counter, not
+/// a log: nothing here says which requests were made or when each one arrived,
+/// because nothing asks. A table of individual requests would grow with usage
+/// and would need a retention policy that nothing has decided.
+///
+/// **The window is a fixed span measured from `windowStartedAt`, not a calendar
+/// hour.** It starts on the first request that finds no live window and lasts
+/// exactly `AI_DRAFT_WINDOW_MS` from that instant, so it depends on neither the
+/// owner's timezone nor the clock's minute hand.
+///
+/// **In the database rather than in memory**, for the two reasons that decide
+/// it: a limit kept in a process resets on every deploy and restart, and stops
+/// being one limit at all the moment a second replica exists.
+///
+/// `scope` is a plain string narrowed by whoever writes it, the same as
+/// `status`, `frequency` and `kind` are. Today there is exactly one value —
+/// `worker-draft` (`AI_DRAFT_SCOPE`) — and adding another should be a constant
+/// rather than a migration.
+model RateLimitBucket {
+  id              String   @id @default(cuid())
+  /// The account the allowance belongs to. **The owner, not a session** — a
+  /// window survives signing out, and signing back in does not reset it.
+  userId          String
+  /// Which allowance this is. See the note above on why it is not an enum.
+  scope           String
+  /// When the current window began. Everything is measured from here.
+  windowStartedAt DateTime
+  /// How many requests the current window has taken. Incremented by the
+  /// database rather than read and written back — see `lib/rate-limit.ts`.
+  count           Int
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// One window per account and scope, and the key both writes address the row
+  /// by. It is what makes two simultaneous first requests produce one row and
+  /// one unique-constraint failure rather than two rows that each allow ten.
+  @@unique([userId, scope])
 }

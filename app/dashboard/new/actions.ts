@@ -11,6 +11,7 @@ import {
 import { createWorkerDraftGenerator } from "@/lib/ai/worker-draft-factory";
 import { t, type TranslationKey } from "@/lib/i18n";
 import { prisma } from "@/lib/prisma";
+import { consumeAiDraftQuota } from "@/lib/rate-limit";
 import { createRoutine } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
 import { requireProvisionedUserId, requireUserId } from "@/lib/session";
@@ -245,10 +246,11 @@ const DRAFT_MESSAGE_KEYS = {
   timeout: "worker.draft.timeout",
   unavailable: "worker.draft.unavailable",
   unreadable: "worker.draft.unreadable",
+  limitReached: "worker.draft.limitReached",
 } as const satisfies Record<string, TranslationKey>;
 
 /**
- * One of the six, in the language the account reads.
+ * One of the seven, in the language the account reads.
  *
  * **The limit is formatted the way it always was.** Grouping a number is a
  * formatting question rather than a wording one, and Day 2B changes wording
@@ -266,12 +268,27 @@ function draftMessage(
 /**
  * Describes a worker from a sentence, without creating one.
  *
- * **Nothing here writes anything.** No routine, no source, no account row: the
- * result is a set of values for a form somebody is looking at, and the only
- * path to the database is still `createRoutineAction` below, reached by
- * pressing Save. That is why this asks `requireUserId` rather than
- * `requireProvisionedUserId` — provisioning exists for writes that need the
- * account row to exist first, and this is not one.
+ * **It creates no worker, and it does write one thing.** No routine and no
+ * source: the result is a set of values for a form somebody is looking at, and
+ * the only path to those tables is still `createRoutineAction` below, reached
+ * by pressing Save. What it does write is the account's own allowance — asking
+ * a model costs something, so a request that is going to be made is counted
+ * before it is made.
+ *
+ * **That write is why provisioning appears here at all.** It did not before,
+ * and the comment that said so was right at the time: with nothing being
+ * written there was no row that had to exist. `RateLimitBucket` carries a
+ * foreign key to `User`, so now there is — and the order it is asked for in is
+ * the one Sprint 42 settled, unchanged:
+ *
+ * ```
+ * authentication  →  validation  →  provisioning  →  the write itself
+ * ```
+ *
+ * **Everything that can reject the request comes first**, and none of it
+ * provisions: an empty request, one past the length limit, and an AutoOps with
+ * no AI configured all leave without the account row being brought into being.
+ * Somebody who pressed the button and typed nothing has still written nothing.
  *
  * **The addresses are found here rather than by the model.** `lib/ai` is handed
  * the ones already written in the request, and its answer can only point at
@@ -307,6 +324,38 @@ export async function generateWorkerDraftAction(
       status: "error",
       message: draftMessage(language, "notConfigured"),
     };
+  }
+
+  // **The row has to exist before the allowance can point at it.** This is the
+  // same boundary `createRoutineAction` and Settings go through, asked for at
+  // the same place in the same order: after everything that could reject the
+  // request, before the first write. A failure to write it leaves as a
+  // `UserProvisioningError` and is not caught here — nothing has been counted
+  // and no model has been asked, which is exactly the state a caller that saw
+  // the throw would want.
+  const provisionedUserId = await requireProvisionedUserId();
+
+  // **Counted before the request is made, and never given back after.** What
+  // the allowance protects against is the asking, so the count has to move on
+  // the way in; a failure afterwards has already cost whatever the call cost.
+  let allowed: boolean;
+  try {
+    allowed = await consumeAiDraftQuota(provisionedUserId);
+  } catch (error) {
+    // **Fail closed.** Not knowing how much of the allowance is left is not the
+    // same as knowing there is some, and the safe reading of a database that
+    // will not answer is that the request does not go ahead. The driver's own
+    // complaint stays in the log: it names tables and connection strings, and
+    // the person at the form can do nothing with it.
+    console.error("[draft] the rate limit could not be read", error);
+    return { status: "error", message: draftMessage(language, "unavailable") };
+  }
+
+  if (!allowed) {
+    // An ordinary answer, not a failure: the account asked for more drafts in
+    // an hour than the allowance holds. Nothing is logged as an error, because
+    // nothing went wrong.
+    return { status: "error", message: draftMessage(language, "limitReached") };
   }
 
   try {

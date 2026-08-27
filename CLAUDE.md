@@ -35,12 +35,13 @@
   `lib/scheduler.ts` / `lib/dispatcher.ts` / `lib/health.ts` / `lib/overview.ts` /
   `lib/runs.ts` / `lib/execution-lease.ts` / `lib/session.ts` /
   `lib/worker-input.ts` / `lib/prompt.ts` / `lib/ai/claude-provider.ts` /
-  `lib/beta-access.ts` / cron route / **server action 5つすべて**(run / create /
-  edit / timezone / delete)。**Test Files 17 / Tests 332。**
+  `lib/beta-access.ts` / `lib/rate-limit.ts` / cron route / **server action 5つ
+  すべて**(run / create / edit / timezone / delete)。
+  **Test Files 55 / Tests 1647**(Node v24.16.0 のローカル実測。CI は Node 22)。
 - **テストが1つも無いもの**を把握しておくこと: 全 component、
   `lib/schedule-label.ts`、**`auth.ts` 本体**(admission の判定ロジックは
   `lib/beta-access.ts` へ分離してテスト済みだが、callback の結線自体は未テスト)。
-  **「332件通った」は「全部カバーした」ではない。**
+  **「1647件通った」は「全部カバーした」ではない。**
 - **server action をテストするときは、末端だけを mock して境界は実物を使う。**
   `@/auth` / `@/lib/users` / `@/lib/routines` / `next/cache` / `next/navigation`
   を `vi.mock` し、`@/lib/session` は実物のまま通す。こうすると
@@ -153,7 +154,7 @@
 
 **現在地点: Sprint 45 まで正式 CLOSED。Sprint 46 Day 1 の Backlog 再評価では
 「実装しない」(Option 0)を選び、Closed Beta Observation Phase に入っている。**
-Test Files 17 / Tests 332。
+Test Files 55 / Tests 1647(ローカル実測)。
 
 **Observation Phase は継続中で、Documentation Sprint はその上で走っている。**
 Documentation Sprint の成果物(`docs/` 3点、README の導線と Backlog、

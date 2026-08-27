@@ -553,6 +553,7 @@ Beyond the capability boundary in [section 2](#2-what-autoops-can-and-cannot-do)
 | Limitation | Detail |
 | --- | --- |
 | **Invite only** | Sign-in is limited to invited addresses |
+| **Ten AI drafts an hour** | Asking AutoOps to write a Worker for you is limited to ten requests an hour per account. Running a Worker is not limited |
 | **No notifications** | Failures are visible in the app; nothing is sent to you |
 | **No retry** | A failed run waits for its next slot |
 | **Each run list shows the newest twenty** | Activity shows an account's, a Worker's page shows that Worker's. No paging, no filtering, no search — older runs are kept, and nothing lists them |

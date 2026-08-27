@@ -102,14 +102,15 @@ export async function setUserTimezone(
  * Sessions are JWT-only (no Prisma adapter), so nothing creates the row at
  * sign-in — and **this is not called at sign-in either**. It runs at the
  * provisioning boundary (`requireProvisionedUserId`), which the write paths
- * that need the row go through: creating a worker, and saving a timezone.
+ * that need the row go through: creating a worker, saving a timezone, and
+ * spending an AI draft from the account's allowance.
  *
  * **The row is needed for two different reasons, and only one of them is a
- * foreign key.** A `Routine` points at it, so it has to exist before the first
- * one is written; the account's own settings also live on it, so it has to
- * exist before one of those can be changed. A comment naming only the first
- * is how the second went unnoticed until an account with no worker could not
- * save its timezone.
+ * foreign key.** A `Routine` points at it — and so does a `RateLimitBucket` —
+ * so it has to exist before the first of either is written; the account's own
+ * settings also live on it, so it has to exist before one of those can be
+ * changed. A comment naming only the first is how the second went unnoticed
+ * until an account with no worker could not save its timezone.
  *
  * **`timezone` is not touched.** Every other column here comes from the
  * provider and is safe to overwrite with a newer copy of itself; that one is

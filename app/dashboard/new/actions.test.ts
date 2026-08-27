@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   createWorkerDraftGenerator: vi.fn(),
   generate: vi.fn(),
   ensureUser: vi.fn(),
+  consumeAiDraftQuota: vi.fn(),
   getUserTimezone: vi.fn(),
   getUserLanguage: vi.fn(),
   createRoutine: vi.fn(),
@@ -33,6 +34,12 @@ vi.mock("@/lib/users", () => ({
   getUserLanguage: mocks.getUserLanguage,
 }));
 vi.mock("@/lib/routines", () => ({ createRoutine: mocks.createRoutine }));
+// The allowance is a boundary of its own — what it does with the row it keeps
+// is fixed in `lib/rate-limit.test.ts`. What these need from it is the answer
+// and when it was asked for.
+vi.mock("@/lib/rate-limit", () => ({
+  consumeAiDraftQuota: mocks.consumeAiDraftQuota,
+}));
 vi.mock("@/lib/website-sources", () => ({
   createWebsiteSource: mocks.createWebsiteSource,
 }));
@@ -85,6 +92,7 @@ beforeEach(() => {
     },
   });
   mocks.ensureUser.mockReset().mockResolvedValue(undefined);
+  mocks.consumeAiDraftQuota.mockReset().mockResolvedValue(true);
   mocks.getUserTimezone.mockReset().mockResolvedValue("Asia/Tokyo");
   mocks.getUserLanguage.mockReset().mockResolvedValue("en");
   mocks.createRoutine.mockReset().mockResolvedValue({ id: "worker-1" });
@@ -487,11 +495,25 @@ describe("generateWorkerDraftAction", () => {
   });
 
   /**
-   * Provisioning is for writes that need the account row to exist. This writes
-   * nothing, so asking for one would create a row because somebody pressed a
-   * button and changed their mind.
+   * When the account row is brought into being, and when it is not.
+   *
+   * **This used to provision nothing at all, and that was right at the time.**
+   * Drafting wrote nothing, so there was no row that had to exist first. The
+   * allowance changed that — `RateLimitBucket` carries a foreign key to
+   * `User` — and what replaces the old contract is not "provision on the way
+   * in" but the order Sprint 42 settled, applied to a path that now has a
+   * write in it:
+   *
+   * ```
+   * authentication  ->  validation  ->  provisioning  ->  the write itself
+   * ```
+   *
+   * So the question each of these asks is the same one: was this request ever
+   * going to reach a model? A request that was refused, or one there is
+   * nothing configured to answer, must leave the account exactly as it found
+   * it.
    */
-  it("does not provision the account row", async () => {
+  it("provisions the account row for a request that will reach a model", async () => {
     mocks.generate.mockResolvedValue({
       status: "supported",
       draft: PROMPT_DRAFT,
@@ -499,7 +521,96 @@ describe("generateWorkerDraftAction", () => {
 
     await ask("three ideas each morning");
 
+    expect(mocks.ensureUser).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["empty", ""],
+    ["past the limit", "a".repeat(MAX_WORKER_DRAFT_REQUEST_CHARS + 1)],
+  ])("provisions nothing for a request that is %s", async (_label, request) => {
+    await ask(request);
+
     expect(mocks.ensureUser).not.toHaveBeenCalled();
+    expect(mocks.consumeAiDraftQuota).not.toHaveBeenCalled();
+    expect(mocks.generate).not.toHaveBeenCalled();
+  });
+
+  it("provisions nothing when there is no generator to ask", async () => {
+    mocks.createWorkerDraftGenerator.mockReturnValue(null);
+
+    await ask("three ideas each morning");
+
+    expect(mocks.ensureUser).not.toHaveBeenCalled();
+    expect(mocks.consumeAiDraftQuota).not.toHaveBeenCalled();
+  });
+
+  it("provisions the row before anything is counted against it", async () => {
+    mocks.generate.mockResolvedValue({
+      status: "supported",
+      draft: PROMPT_DRAFT,
+    });
+
+    await ask("three ideas each morning");
+
+    // The foreign key is the reason for the order, not tidiness: the row the
+    // allowance points at has to exist before the allowance is written.
+    expect(mocks.ensureUser.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.consumeAiDraftQuota.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("does not count anything when the account row could not be written", async () => {
+    mocks.ensureUser.mockRejectedValue(new Error("connection terminated"));
+
+    await expect(ask("three ideas each morning")).rejects.toThrow();
+
+    expect(mocks.consumeAiDraftQuota).not.toHaveBeenCalled();
+    expect(mocks.generate).not.toHaveBeenCalled();
+  });
+
+  it("counts the request against the account that asked", async () => {
+    mocks.generate.mockResolvedValue({
+      status: "supported",
+      draft: PROMPT_DRAFT,
+    });
+
+    await ask("three ideas each morning");
+
+    expect(mocks.consumeAiDraftQuota).toHaveBeenCalledTimes(1);
+    expect(mocks.consumeAiDraftQuota).toHaveBeenCalledWith("google-sub-1");
+  });
+
+  it("counts the request before the model is asked", async () => {
+    mocks.generate.mockResolvedValue({
+      status: "supported",
+      draft: PROMPT_DRAFT,
+    });
+
+    await ask("three ideas each morning");
+
+    expect(mocks.consumeAiDraftQuota.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.generate.mock.invocationCallOrder[0],
+    );
+  });
+
+  /**
+   * **Nothing gives the allowance back.** What it guards is the asking, and by
+   * the time a failure is known the asking has already happened.
+   */
+  it("gives nothing back when the model fails", async () => {
+    mocks.generate.mockRejectedValue(new ProviderError("timeout", "timed out"));
+
+    await ask("three ideas each morning");
+
+    expect(mocks.consumeAiDraftQuota).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends a visitor with no session away before counting anything", async () => {
+    mocks.auth.mockResolvedValue(null);
+
+    await expect(ask("watch a page")).rejects.toBeInstanceOf(RedirectSignal);
+    expect(mocks.ensureUser).not.toHaveBeenCalled();
+    expect(mocks.consumeAiDraftQuota).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -685,6 +796,91 @@ describe("generateWorkerDraftAction", () => {
 
     expect(mocks.createRoutine).not.toHaveBeenCalled();
     expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What being out of drafts looks like from the form.
+ *
+ * **A denial is an answer, not a failure.** Nothing went wrong: the account
+ * asked for more drafts in an hour than the allowance holds, and the useful
+ * thing to say is that waiting works. That is why nothing is logged as an
+ * error here and why no model is asked — the cost the allowance exists to
+ * bound is the asking itself.
+ *
+ * **A database that will not answer is the other case, and it fails closed.**
+ * Not knowing how much of the allowance is left is not the same as knowing
+ * there is some. The driver's complaint stays in the log, where it names
+ * tables and connections to somebody who can act on that; what comes back to
+ * the form says only that drafting did not work.
+ */
+describe("generateWorkerDraftAction — the allowance", () => {
+  function ask(request: string) {
+    const data = new FormData();
+    data.set("request", request);
+    return generateWorkerDraftAction(null, data);
+  }
+
+  it("asks no model once the allowance is spent", async () => {
+    mocks.consumeAiDraftQuota.mockResolvedValue(false);
+
+    const result = await ask("three ideas each morning");
+
+    expect(result).toEqual({
+      status: "error",
+      message: "AI draft limit reached. Try again later.",
+    });
+    expect(mocks.generate).not.toHaveBeenCalled();
+  });
+
+  it("says so in Japanese for an account that reads Japanese", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    mocks.consumeAiDraftQuota.mockResolvedValue(false);
+
+    const result = await ask("three ideas each morning");
+
+    expect(result).toHaveProperty(
+      "message",
+      "AI 下書きの利用上限に達しました。しばらくしてからもう一度お試しください。",
+    );
+  });
+
+  it("logs no error for a denial, because none happened", async () => {
+    mocks.consumeAiDraftQuota.mockResolvedValue(false);
+    // The spy is installed once and outlives a single test, so what is being
+    // asserted about is this call and not the file's history.
+    vi.mocked(console.error).mockClear();
+
+    await ask("three ideas each morning");
+
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it("asks no model when the allowance itself could not be read", async () => {
+    mocks.consumeAiDraftQuota.mockRejectedValue(
+      new Error("connection terminated: relation \"RateLimitBucket\""),
+    );
+
+    const result = await ask("three ideas each morning");
+
+    expect(result).toHaveProperty("status", "error");
+    expect(mocks.generate).not.toHaveBeenCalled();
+  });
+
+  it("keeps the driver's own words out of what comes back", async () => {
+    mocks.consumeAiDraftQuota.mockRejectedValue(
+      new Error("connection terminated: relation \"RateLimitBucket\""),
+    );
+
+    vi.mocked(console.error).mockClear();
+
+    const result = await ask("three ideas each morning");
+    const message = (result as { message: string }).message;
+
+    expect(message).not.toContain("RateLimitBucket");
+    expect(message).not.toContain("connection terminated");
+    // It is a failure, so it is logged — unlike the denial above.
+    expect(console.error).toHaveBeenCalled();
   });
 });
 

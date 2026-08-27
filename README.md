@@ -889,8 +889,8 @@ without setting anything. **That fallback protects the CLI only** — see
 
 ## Data Model
 
-Three tables. Every owned row carries `userId` so a query can be scoped without
-a join, and both relations cascade on delete.
+Every owned row carries `userId` so a query can be scoped without a join, and
+every relation cascades on delete.
 
 ```
 User ──┬── Routine ──── RunHistory
@@ -902,6 +902,7 @@ User ──┬── Routine ──── RunHistory
 | **User** | What AutoOps keeps for an account, not the account itself | `id` is the provider account id, not a generated key. Written lazily — see [Account Provisioning](#account-provisioning) |
 | **Routine** | A worker | Four columns define the schedule; `nextRunAt` is what it resolves to |
 | **RunHistory** | One execution | `userId` denormalised from the routine |
+| **RateLimitBucket** | How much of a rate-limited action an account has used | One row per account and scope, rewritten in place — see [AI drafting is bounded](#ai-drafting-is-bounded) |
 
 The columns that carry a schedule:
 
@@ -1136,6 +1137,44 @@ attempt. That is the price of the pipeline saying what it does: the failure
 lands in the run history and the [health summary](#worker-health), which is
 where an argument for a retry policy should come from — not from a default
 nobody read.
+
+### AI drafting is bounded
+
+**Ten drafts an hour, per account.** Asking AutoOps to write a worker from a
+sentence is the one place a signed-in person can spend model time without a
+worker existing yet, and nothing else stood between a held-down button and the
+bill. The limit is the account's, not the browser's: a form that has disabled
+its own button is not what enforces it, and a request made straight to the
+server action is counted the same way.
+
+**A fixed hour measured from the request that opened it**, rather than a
+calendar hour. The window starts when the first request arrives and ends
+exactly an hour later — the same rule for every account, in every timezone, and
+one that cannot be reset by signing out, waiting for a deploy, or arriving at
+59 minutes past.
+
+**It is a row in the database, and that is the point.** A counter kept in the
+process would reset on every restart and would stop being one limit the moment
+a second replica existed; both are ordinary here. The count is moved by the
+database — the limit is a condition inside the `UPDATE` rather than a number
+read back and compared — which is what makes two requests arriving together
+produce one increment. It is the same shape as `claimRoutineSlot` and
+`acquireExecutionLease`, and `lib/rate-limit.ts` is where it lives.
+
+**Spent on the way in, and never given back.** The count moves immediately
+before the model is asked, so a generation that fails, times out or is refused
+still costs one: what is being bounded is the asking. A request the form
+rejected, or one there is no AI configured to answer, is not counted at all and
+does not even create the account row.
+
+**A database that will not answer fails closed.** Not knowing how much of the
+allowance is left is not the same as knowing there is some, so drafting stops
+and no request is made. The driver's own complaint goes to the log and never to
+the screen.
+
+**This bounds AI drafting and nothing else.** Running a worker by hand is
+bounded by nothing here or anywhere else, so a sentence saying AutoOps rate
+limits its AI usage in general would be false.
 
 ### What kind of failure it was
 
@@ -1433,7 +1472,9 @@ falls back to UTC — so provisioning on the way in would put a write behind
 every page view and buy nothing.
 
 **Writes that need the row use the second**, and today those are creating a
-worker and saving a timezone. Deleting, editing or running a worker does not:
+worker, saving a timezone, and asking AutoOps to draft a worker — that last one
+writes no worker, but it does spend an allowance whose row points at the
+account. Deleting, editing or running a worker does not:
 each acts on a `Routine`, whose existence already proves the row is there. That
 is the rule rather than "every write" — the question is whether the row has to
 be brought into being, not whether something is being written.
