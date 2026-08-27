@@ -224,7 +224,7 @@ export const en = {
   /**
    * Why drafting produced nothing.
    *
-   * **All seven are AutoOps speaking, which is what lets them be translated.**
+   * **All eight are AutoOps speaking, which is what lets them be translated.**
    * What a generator returns for `unsupported` or `needs_input` is a sentence
    * the model wrote about a particular request; it goes to the screen exactly
    * as it arrived and has no key here.
@@ -243,6 +243,18 @@ export const en = {
    * would invite counting, and the useful thing is that waiting works.
    */
   "worker.draft.limitReached": "AI draft limit reached. Try again later.",
+  /**
+   * Drafting did not work, and what stopped it was AutoOps rather than the
+   * model — today, the allowance it keeps in its own database.
+   *
+   * **It names no cause, and that is the accurate thing to do rather than the
+   * vague one.** `unavailable` says the AI service could not be reached, which
+   * would be a false statement about a database that would not answer; the
+   * database is not the reader's business either. What is true and useful is
+   * that drafting cannot happen at the moment and that trying later is worth
+   * it.
+   */
+  "worker.draft.failed": "Drafting is unavailable right now. Try again.",
 
   "worker.detail.noDescription": "No description.",
   "worker.detail.workerType": "Worker type",

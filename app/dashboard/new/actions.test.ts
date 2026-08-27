@@ -815,6 +815,11 @@ describe("generateWorkerDraftAction", () => {
  * the form says only that drafting did not work.
  */
 describe("generateWorkerDraftAction — the allowance", () => {
+  /** What a database that will not answer arrives as. */
+  function driverFailure() {
+    return new Error('connection terminated: relation "RateLimitBucket"');
+  }
+
   function ask(request: string) {
     const data = new FormData();
     data.set("request", request);
@@ -833,7 +838,7 @@ describe("generateWorkerDraftAction — the allowance", () => {
     expect(mocks.generate).not.toHaveBeenCalled();
   });
 
-  it("says so in Japanese for an account that reads Japanese", async () => {
+  it("says the allowance is spent in Japanese for an account that reads Japanese", async () => {
     mocks.getUserLanguage.mockResolvedValue("ja");
     mocks.consumeAiDraftQuota.mockResolvedValue(false);
 
@@ -857,20 +862,48 @@ describe("generateWorkerDraftAction — the allowance", () => {
   });
 
   it("asks no model when the allowance itself could not be read", async () => {
-    mocks.consumeAiDraftQuota.mockRejectedValue(
-      new Error("connection terminated: relation \"RateLimitBucket\""),
-    );
+    mocks.consumeAiDraftQuota.mockRejectedValue(driverFailure());
 
     const result = await ask("three ideas each morning");
 
-    expect(result).toHaveProperty("status", "error");
+    expect(result).toEqual({
+      status: "error",
+      message: "Drafting is unavailable right now. Try again.",
+    });
+    expect(mocks.createWorkerDraftGenerator).toHaveBeenCalledTimes(1);
     expect(mocks.generate).not.toHaveBeenCalled();
   });
 
-  it("keeps the driver's own words out of what comes back", async () => {
-    mocks.consumeAiDraftQuota.mockRejectedValue(
-      new Error("connection terminated: relation \"RateLimitBucket\""),
+  /**
+   * **It does not say the AI service could not be reached**, which is what
+   * `worker.draft.unavailable` says and what nothing here has tried to do. The
+   * failure is AutoOps' own, and the sentence that goes back names no cause —
+   * the database is not the reader's business either.
+   */
+  it("blames neither the model nor the database", async () => {
+    mocks.consumeAiDraftQuota.mockRejectedValue(driverFailure());
+
+    const result = await ask("three ideas each morning");
+    const message = (result as { message: string }).message;
+
+    expect(message).not.toContain("AI service");
+    expect(message).not.toContain("database");
+  });
+
+  it("says so in Japanese for an account that reads Japanese", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    mocks.consumeAiDraftQuota.mockRejectedValue(driverFailure());
+
+    const result = await ask("three ideas each morning");
+
+    expect(result).toHaveProperty(
+      "message",
+      "現在、AI 下書きを作成できません。しばらくしてからもう一度お試しください。",
     );
+  });
+
+  it("keeps the driver's own words out of what comes back", async () => {
+    mocks.consumeAiDraftQuota.mockRejectedValue(driverFailure());
 
     vi.mocked(console.error).mockClear();
 
@@ -879,8 +912,12 @@ describe("generateWorkerDraftAction — the allowance", () => {
 
     expect(message).not.toContain("RateLimitBucket");
     expect(message).not.toContain("connection terminated");
-    // It is a failure, so it is logged — unlike the denial above.
-    expect(console.error).toHaveBeenCalled();
+    // It is a failure, so it is logged — unlike the denial above — and the
+    // prefix is what makes it findable next to the rest of `[draft]`.
+    expect(console.error).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(console.error).mock.calls[0][0]).toBe(
+      "[draft] the rate limit could not be read",
+    );
   });
 });
 

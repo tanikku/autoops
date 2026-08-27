@@ -167,6 +167,8 @@ export const ja: Record<TranslationKey, string> = {
     "AutoOps が回答を読み取れませんでした。内容を書き直してお試しください。",
   "worker.draft.limitReached":
     "AI 下書きの利用上限に達しました。しばらくしてからもう一度お試しください。",
+  "worker.draft.failed":
+    "現在、AI 下書きを作成できません。しばらくしてからもう一度お試しください。",
 
   "worker.detail.noDescription": "説明はありません。",
   "worker.detail.workerType": "Worker の種類",

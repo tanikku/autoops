@@ -247,10 +247,11 @@ const DRAFT_MESSAGE_KEYS = {
   unavailable: "worker.draft.unavailable",
   unreadable: "worker.draft.unreadable",
   limitReached: "worker.draft.limitReached",
+  failed: "worker.draft.failed",
 } as const satisfies Record<string, TranslationKey>;
 
 /**
- * One of the seven, in the language the account reads.
+ * One of the eight, in the language the account reads.
  *
  * **The limit is formatted the way it always was.** Grouping a number is a
  * formatting question rather than a wording one, and Day 2B changes wording
@@ -347,8 +348,14 @@ export async function generateWorkerDraftAction(
     // will not answer is that the request does not go ahead. The driver's own
     // complaint stays in the log: it names tables and connection strings, and
     // the person at the form can do nothing with it.
+    //
+    // **Not `unavailable`.** That sentence says the AI service could not be
+    // reached, and nothing here has tried to reach it — the failure is
+    // AutoOps' own. What goes back names no cause at all, which is the only
+    // accurate thing left to say once the database is ruled out as something
+    // to tell a reader about.
     console.error("[draft] the rate limit could not be read", error);
-    return { status: "error", message: draftMessage(language, "unavailable") };
+    return { status: "error", message: draftMessage(language, "failed") };
   }
 
   if (!allowed) {
