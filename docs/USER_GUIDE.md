@@ -475,6 +475,10 @@ If the newest run has been **Running** for more than fifteen minutes, Health
 adds **Running for longer than expected**. That is a note, not a diagnosis: a
 genuinely slow run and a run that will never finish look the same from here.
 
+Below Health, **Run History** lists that Worker's twenty most recent runs — the
+time each started and how it ended. Clicking one opens its **Execution** page,
+which is where a failed run's **Error** is shown.
+
 ---
 
 ## 19. Editing a Worker
@@ -551,7 +555,7 @@ Beyond the capability boundary in [section 2](#2-what-autoops-can-and-cannot-do)
 | **Invite only** | Sign-in is limited to invited addresses |
 | **No notifications** | Failures are visible in the app; nothing is sent to you |
 | **No retry** | A failed run waits for its next slot |
-| **Activity shows the newest twenty runs** | No paging, no filtering, no search — older runs are kept, but there is no screen that lists them |
+| **Each run list shows the newest twenty** | Activity shows an account's, a Worker's page shows that Worker's. No paging, no filtering, no search — older runs are kept, and nothing lists them |
 | **Runs are kept indefinitely** | Nothing expires. Deleting a Worker deletes its runs |
 | **No account deletion** | There is no button to delete your whole account. Deleting each Worker removes those Workers and their runs |
 | **Manual and scheduled runs look identical afterwards** | A result does not record which one started it |

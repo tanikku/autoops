@@ -190,6 +190,22 @@ export type RecentRun = {
 };
 
 /**
+ * One line of a worker's own run history.
+ *
+ * **Narrower than `RecentRun`, and for a different reason.** The activity list
+ * is account-wide, so each of its lines has to say which worker it belongs to
+ * and what came of it; this list is already on that worker's page, and its job
+ * is to get somebody to the execution rather than to summarise it. What a run
+ * produced and why one failed live on the run's own page — putting either here
+ * would be a second, worse copy of it.
+ */
+export type WorkerRun = {
+  id: string;
+  status: RunStatus;
+  startedAt: Date;
+};
+
+/**
  * What a worker's whole history adds up to, without the history.
  *
  * **Counted by the database over every run, not by the application over the

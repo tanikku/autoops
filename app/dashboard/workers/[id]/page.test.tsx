@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   requireUserId: vi.fn(),
   getRoutineWithStoredKind: vi.fn(),
   summarizeRunsForWorker: vi.fn(),
+  listRecentRunsForWorker: vi.fn(),
   getUserTimezone: vi.fn(),
   getUserLanguage: vi.fn(),
   getWebsiteSource: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock("@/lib/routines", () => ({
 }));
 vi.mock("@/lib/runs", () => ({
   summarizeRunsForWorker: mocks.summarizeRunsForWorker,
+  listRecentRunsForWorker: mocks.listRecentRunsForWorker,
 }));
 vi.mock("@/lib/users", () => ({
   getUserTimezone: mocks.getUserTimezone,
@@ -154,6 +156,10 @@ beforeEach(() => {
     lastResult: null,
     lastRunAt: null,
   });
+  // The page also lists the newest few of those runs, so there is a way from a
+  // worker to one of its executions once the dashboard's activity list has
+  // moved past it.
+  mocks.listRecentRunsForWorker.mockReset().mockResolvedValue([]);
   mocks.getWebsiteSource.mockReset().mockResolvedValue(null);
   mocks.getRoutineWithStoredKind
     .mockReset()
@@ -348,3 +354,172 @@ describe("worker detail in Japanese", () => {
     expect(shown).not.toContain("Watched page");
   });
 });
+
+/**
+ * The way from a worker to one of its executions.
+ *
+ * **The route this restores.** Bounding the dashboard's activity list to the
+ * newest twenty rows left every older run recorded and unreachable: the row was
+ * still there, and no screen carried its id. A worker's own history is where
+ * that id lives now, which is what makes the reason a run failed — shown on the
+ * execution's own page — findable again.
+ */
+describe("worker detail — its own run history", () => {
+  const run = (overrides: Record<string, unknown> = {}) => ({
+    id: "run-1",
+    status: "completed" as const,
+    startedAt: NOW,
+    ...overrides,
+  });
+
+  it("reads the worker's runs as this account", async () => {
+    await render();
+
+    expect(mocks.listRecentRunsForWorker).toHaveBeenCalledWith(
+      "worker-1",
+      "user-1",
+    );
+  });
+
+  it("gives the section a heading of its own", async () => {
+    expect(text(await render())).toContain("Run History");
+  });
+
+  /**
+   * The order comes from the query, and the page passes it through — a list
+   * re-sorted here would be a second opinion about which run is newest.
+   */
+  it("keeps the order it was given", async () => {
+    const newest = run({ id: "newest" });
+    const older = run({ id: "older" });
+    mocks.listRecentRunsForWorker.mockResolvedValue([newest, older]);
+
+    const passed = passedRuns(await render());
+
+    expect(passed).toEqual([newest, older]);
+  });
+
+  /** Whatever the helper returns is what is shown; the bound is in the query. */
+  it("hands the list over without trimming it", async () => {
+    const runs = Array.from({ length: 20 }, (_, index) =>
+      run({ id: `run-${index}` }),
+    );
+    mocks.listRecentRunsForWorker.mockResolvedValue(runs);
+
+    expect(passedRuns(await render())).toBe(runs);
+  });
+
+  it("names the section in Japanese", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+
+    const shown = text(await render());
+
+    expect(shown).toContain("実行履歴");
+    expect(shown).not.toContain("Run History");
+  });
+
+  /** The list is told which language to draw itself in. */
+  it("hands the list the account's language and zone", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    mocks.getUserTimezone.mockResolvedValue("Asia/Tokyo");
+    mocks.listRecentRunsForWorker.mockResolvedValue([run()]);
+
+    const section = sectionProps(await render());
+
+    expect(section.language).toBe("ja");
+    expect(section.timezone).toBe("Asia/Tokyo");
+  });
+
+  /**
+   * What a run produced, and the reason a failed one gives, are the execution
+   * page's to show. Reading them for a list that shows neither would be paying
+   * for both.
+   */
+  it("never asks for the output or the diagnostic", async () => {
+    mocks.listRecentRunsForWorker.mockResolvedValue([
+      run({ status: "failed" }),
+    ]);
+
+    const passed = passedRuns(await render()) as Record<string, unknown>[];
+
+    expect(Object.keys(passed[0]).sort()).toEqual([
+      "id",
+      "startedAt",
+      "status",
+    ]);
+  });
+});
+
+/** The list handed to the run history section. */
+function passedRuns(node: ReactNode): unknown {
+  let found: unknown;
+
+  const walk = (current: unknown): void => {
+    if (found !== undefined) {
+      return;
+    }
+
+    if (Array.isArray(current)) {
+      current.forEach(walk);
+      return;
+    }
+
+    if (!current || typeof current !== "object") {
+      return;
+    }
+
+    const props = (current as { props?: Record<string, unknown> }).props;
+    if (!props) {
+      return;
+    }
+
+    if ("runs" in props) {
+      found = props.runs;
+      return;
+    }
+
+    for (const value of Object.values(props)) {
+      walk(value);
+    }
+  };
+
+  walk(node);
+  return found;
+}
+
+/** Every prop given to the component that was handed the run list. */
+function sectionProps(node: ReactNode): Record<string, unknown> {
+  let found: Record<string, unknown> = {};
+
+  const walk = (current: unknown): void => {
+    if (Object.keys(found).length > 0) {
+      return;
+    }
+
+    if (Array.isArray(current)) {
+      current.forEach(walk);
+      return;
+    }
+
+    if (!current || typeof current !== "object") {
+      return;
+    }
+
+    const props = (current as { props?: Record<string, unknown> }).props;
+    if (!props) {
+      return;
+    }
+
+    if ("runs" in props) {
+      found = props;
+      return;
+    }
+
+    for (const value of Object.values(props)) {
+      walk(value);
+    }
+  };
+
+  walk(node);
+  return found;
+}

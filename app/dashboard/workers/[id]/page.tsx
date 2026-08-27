@@ -9,12 +9,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { WorkerHealthSummary } from "@/components/worker-health";
+import { WorkerRunList } from "@/components/worker-run-list";
 import { formatDateTimeWithSeconds } from "@/lib/datetime";
 import { summarizeRuns } from "@/lib/health";
 import { t, type TranslationKey } from "@/lib/i18n";
 import { isRunOverdue } from "@/lib/overview";
 import { getRoutineWithStoredKind } from "@/lib/routines";
-import { summarizeRunsForWorker } from "@/lib/runs";
+import { listRecentRunsForWorker, summarizeRunsForWorker } from "@/lib/runs";
 import { requireUserId } from "@/lib/session";
 import { getUserLanguage, getUserTimezone } from "@/lib/users";
 import { getWebsiteSource } from "@/lib/website-sources";
@@ -119,8 +120,13 @@ export default async function WorkerDetailPage({
   // description, the address it watches and the instructions it carries are its
   // owner's material and are shown exactly as stored, in whichever language
   // they were written.
-  const [runSummary, timezone, language] = await Promise.all([
+  // **Two reads of this worker's history, and neither grows with it.** The
+  // summary is counted by the database over every run there is; the list is the
+  // newest few, and exists so that a run older than the dashboard's activity
+  // list still has somewhere to be reached from.
+  const [runSummary, recentRuns, timezone, language] = await Promise.all([
     summarizeRunsForWorker(worker.id, userId),
+    listRecentRunsForWorker(worker.id, userId),
     getUserTimezone(userId),
     getUserLanguage(userId),
   ]);
@@ -268,6 +274,17 @@ export default async function WorkerDetailPage({
             </Button>
             <RunRoutineButton routineId={worker.id} language={language} />
           </div>
+
+          <section className="mt-10">
+            <h2 className="text-sm font-medium tracking-tight">
+              {t(language, "worker.detail.runHistory")}
+            </h2>
+            <WorkerRunList
+              runs={recentRuns}
+              timezone={timezone}
+              language={language}
+            />
+          </section>
 
           <section className="mt-12 border-t border-border pt-8">
             <h2 className="text-sm font-medium tracking-tight text-destructive">

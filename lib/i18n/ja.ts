@@ -173,6 +173,8 @@ export const ja: Record<TranslationKey, string> = {
   "worker.detail.createdAt": "作成日時",
   "worker.detail.updatedAt": "更新日時",
   "worker.detail.watchedPage": "監視中のページ",
+  "worker.detail.runHistory": "実行履歴",
+  "worker.detail.runHistoryEmpty": "この Worker はまだ実行されていません。",
   "worker.detail.dangerZone": "危険な操作",
   "worker.detail.deleteWarning":
     "この Worker を削除すると、実行履歴も削除されます。元に戻せません。",

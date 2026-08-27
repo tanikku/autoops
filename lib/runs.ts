@@ -41,6 +41,7 @@ import {
   type RunHistory,
   type RunHistoryDetail,
   type RunSummary,
+  type WorkerRun,
 } from "@/types";
 
 const provider = createAIProvider();
@@ -203,6 +204,52 @@ export async function listRecentRuns(
     startedAt: record.startedAt,
     output: record.output,
     routineName: record.routine.name,
+  }));
+}
+
+/**
+ * How many runs a worker's own history shows.
+ *
+ * **Its own number, not the activity list's.** They are both twenty today and
+ * they answer different questions: the dashboard's is how much of an account's
+ * recent activity fits on a summary screen, and this is how far back the trail
+ * from a worker to one of its executions reaches. Sharing a constant would mean
+ * a change to one of those decisions silently making the other.
+ */
+export const WORKER_RUN_HISTORY_LIMIT = 20;
+
+/**
+ * The newest runs of one worker, for its own history list.
+ *
+ * **The way back to a run that is no longer recent.** The activity list is
+ * bounded to the newest twenty of an account, so a failure older than that had
+ * no route to its own page — the row was still there, and nothing named its id.
+ * This is that route, per worker.
+ *
+ * **Bounded in the query and narrowed to three columns.** `output` and
+ * `errorMessage` are not among them: what a run produced and why one failed are
+ * shown on the execution's own page, and reading them for a list that shows
+ * neither would be paying for both.
+ *
+ * Scoped by `routineId` *and* `userId`, so the id in a URL cannot reach another
+ * account's runs — the same pairing every other read here uses.
+ */
+export async function listRecentRunsForWorker(
+  routineId: string,
+  userId: string,
+  limit: number = WORKER_RUN_HISTORY_LIMIT,
+): Promise<WorkerRun[]> {
+  const records = await prisma.runHistory.findMany({
+    where: { routineId, userId },
+    orderBy: { startedAt: "desc" },
+    take: limit,
+    select: { id: true, status: true, startedAt: true },
+  });
+
+  return records.map((record) => ({
+    id: record.id,
+    status: isRunStatus(record.status) ? record.status : "running",
+    startedAt: record.startedAt,
   }));
 }
 

@@ -1635,22 +1635,24 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
 
 **Reading**
 
-- **There is no way back to run history older than the newest twenty.** Activity
-  shows the twenty most recent runs of an account and stops there; a worker's
-  detail page shows none at all, only what its history adds up to. No cursor, no
-  page, no per-worker list.
+- **Run history reaches back twenty runs per screen, and no further.** Activity
+  shows the twenty most recent runs of an account; a worker's own page shows the
+  twenty most recent of that worker. Between them every recent execution has a
+  route to its own page — which is where the reason a failed run gives is shown
+  — but a run older than both is still recorded with nothing naming its id. No
+  cursor, no paging.
 
-  **The reads themselves are bounded now.** Activity takes twenty rows and the
-  columns it draws; both summaries are counted by the database over the whole
-  history and return one row per worker per status. What used to grow with the
-  number of runs stored no longer does — and the counts beside the list still
-  mean *every* run, which is why the two are read separately.
+  **The reads themselves are bounded.** Each list takes twenty rows and the
+  columns it draws; the summaries beside them are counted by the database over
+  the whole history and return one row per worker per status. What used to grow
+  with the number of runs stored no longer does — and the counts still mean
+  *every* run, which is why the lists and the summaries are read separately.
 
-  **What is missing is reach, not boundedness.** A cursor, a paged list, or a
-  history page of its own would each answer it, and they answer it differently;
-  none is decided. **This is not the scheduler's `take`** — that one is about how
-  many due workers a single tick may claim across every tenant, is deferred for
-  reasons of its own, and shares nothing with this but the word
+  **What is left is depth, not boundedness.** A cursor, a paged list, or a
+  history page of its own would each reach further, and they answer it
+  differently; none is decided. **This is not the scheduler's `take`** — that one
+  is about how many due workers a single tick may claim across every tenant, is
+  deferred for reasons of its own, and shares nothing with this but the word
 
 **Testing**
 

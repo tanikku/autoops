@@ -30,9 +30,11 @@ vi.mock("@/lib/prisma", () => ({
 
 const {
   listRecentRuns,
+  listRecentRunsForWorker,
   RECENT_ACTIVITY_LIMIT,
   summarizeRunsByWorker,
   summarizeRunsForWorker,
+  WORKER_RUN_HISTORY_LIMIT,
 } = await import("@/lib/runs");
 
 /** One grouped row, as the aggregate returns it. */
@@ -299,5 +301,126 @@ describe("a single worker's summary", () => {
     const args = JSON.stringify(groupByArgs());
     expect(args).not.toContain("output");
     expect(args).not.toContain("errorMessage");
+  });
+});
+
+/**
+ * A worker's own runs, and how far back the list reaches.
+ *
+ * **The read exists because a route disappeared.** Bounding the account's
+ * activity list to twenty rows left every older run recorded and unnamed: the
+ * row was there, and nothing on any screen carried its id. This is the way
+ * back, and it is bounded for the same reason the other one is.
+ */
+describe("a worker's own run history", () => {
+  it("asks for that worker's runs, as that account", async () => {
+    await listRecentRunsForWorker("worker-1", "user-1");
+
+    expect(findManyArgs().where).toEqual({
+      routineId: "worker-1",
+      userId: "user-1",
+    });
+  });
+
+  /**
+   * **The id in a URL cannot reach another account's runs.** Scoping on the
+   * worker alone would let one, since a routine id is guessable in principle
+   * and the page never confirms which account it belongs to.
+   */
+  it("never scopes on the worker alone", async () => {
+    await listRecentRunsForWorker("worker-1", "user-1");
+
+    const where = findManyArgs().where as Record<string, unknown>;
+    expect(where).toHaveProperty("userId", "user-1");
+    expect(Object.keys(where).sort()).toEqual(["routineId", "userId"]);
+  });
+
+  it("takes the newest first", async () => {
+    await listRecentRunsForWorker("worker-1", "user-1");
+
+    expect(findManyArgs().orderBy).toEqual({ startedAt: "desc" });
+  });
+
+  it("asks for twenty of them", async () => {
+    await listRecentRunsForWorker("worker-1", "user-1");
+
+    expect(findManyArgs().take).toBe(20);
+    expect(WORKER_RUN_HISTORY_LIMIT).toBe(20);
+  });
+
+  /**
+   * **The bound is in the query.** A list sliced afterwards has already been
+   * read, and the row count would climb with the worker's history.
+   */
+  it("never asks without a limit", async () => {
+    await listRecentRunsForWorker("worker-1", "user-1");
+
+    expect(findManyArgs()).toHaveProperty("take");
+    expect(findManyArgs().take).toBeLessThanOrEqual(WORKER_RUN_HISTORY_LIMIT);
+  });
+
+  it("returns no more than the limit, whatever the history holds", async () => {
+    mocks.findMany.mockImplementation(
+      async (args: { take: number }) =>
+        Array.from({ length: Math.min(args.take, 500) }, (_, index) => ({
+          id: `run-${index}`,
+          status: "completed",
+          startedAt: new Date("2026-08-10T12:00:00.000Z"),
+        })),
+    );
+
+    const runs = await listRecentRunsForWorker("worker-1", "user-1");
+
+    expect(runs).toHaveLength(WORKER_RUN_HISTORY_LIMIT);
+  });
+
+  it("asks for the columns the list draws, and no others", async () => {
+    await listRecentRunsForWorker("worker-1", "user-1");
+
+    expect(findManyArgs().select).toEqual({
+      id: true,
+      status: true,
+      startedAt: true,
+    });
+  });
+
+  /**
+   * What a run produced, and the reason a failed one gives, are on the
+   * execution's own page. This list is how somebody gets there.
+   */
+  it("reads neither the output nor the diagnostic", async () => {
+    await listRecentRunsForWorker("worker-1", "user-1");
+
+    const select = findManyArgs().select as Record<string, unknown>;
+    expect(select).not.toHaveProperty("output");
+    expect(select).not.toHaveProperty("errorMessage");
+    expect(select).not.toHaveProperty("finishedAt");
+  });
+
+  it("narrows a status it does not recognise", async () => {
+    mocks.findMany.mockResolvedValue([
+      {
+        id: "run-1",
+        status: "corrupt",
+        startedAt: new Date("2026-08-10T12:00:00.000Z"),
+      },
+    ]);
+
+    const [run] = await listRecentRunsForWorker("worker-1", "user-1");
+
+    expect(run.status).toBe("running");
+  });
+
+  /**
+   * **Its own number, deliberately.** The two limits are both twenty and answer
+   * different questions — how much recent activity fits on the dashboard, and
+   * how far back a worker's diagnostic trail reaches.
+   */
+  it("keeps a limit of its own, apart from the activity list's", async () => {
+    expect(WORKER_RUN_HISTORY_LIMIT).toBe(RECENT_ACTIVITY_LIMIT);
+
+    await listRecentRunsForWorker("worker-1", "user-1", 5);
+
+    expect(findManyArgs().take).toBe(5);
   });
 });

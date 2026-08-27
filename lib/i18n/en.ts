@@ -246,6 +246,15 @@ export const en = {
   "worker.detail.createdAt": "Created At",
   "worker.detail.updatedAt": "Updated At",
   "worker.detail.watchedPage": "Watched page",
+  /**
+   * The way from a worker to one of its executions.
+   *
+   * Named for what it lists rather than for what it is for — the reason a run
+   * failed is on the run's own page, and this is how somebody gets there once
+   * the account's activity list has moved on past it.
+   */
+  "worker.detail.runHistory": "Run History",
+  "worker.detail.runHistoryEmpty": "This worker has not run yet.",
   "worker.detail.dangerZone": "Danger zone",
   "worker.detail.deleteWarning":
     "Deleting this worker also removes its activity history. This cannot be undone.",
