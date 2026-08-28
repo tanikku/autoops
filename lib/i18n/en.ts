@@ -383,6 +383,26 @@ export const en = {
    */
   "run.action.noWorkerSelected": "No worker selected.",
   "run.action.alreadyRunning": "\"{name}\" is already running.",
+  /**
+   * The account already has a hand-started run going — a different worker's,
+   * or this one would have said `alreadyRunning` instead.
+   *
+   * **Two sentences rather than one**, because they lead somewhere different:
+   * that one says the worker you pressed is busy, and this one says you are.
+   * Naming no worker is the point — the run in the way may be any of them.
+   */
+  "run.action.userBusy":
+    "Another run of yours is still in progress. Wait for it to finish.",
+  /**
+   * Nothing was started, and what stopped it was AutoOps rather than the
+   * worker — today, the guard it keeps in its own database.
+   *
+   * **It does not say the run failed**, which `run.action.failed` says and
+   * which would be untrue: nothing ran, nothing was billed, and there is no
+   * result page to look at.
+   */
+  "run.action.couldNotStart":
+    "\"{name}\" could not be started. Try again in a moment.",
   "run.action.outcomeNotRecorded":
     "\"{name}\" started, but its outcome could not be recorded.",
   "run.action.failed": "\"{name}\" failed to run.",

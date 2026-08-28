@@ -242,6 +242,10 @@ export const ja: Record<TranslationKey, string> = {
 
   "run.action.noWorkerSelected": "Worker が選択されていません。",
   "run.action.alreadyRunning": "「{name}」は実行中です。",
+  "run.action.userBusy":
+    "別の実行がまだ進行中です。完了してからもう一度お試しください。",
+  "run.action.couldNotStart":
+    "「{name}」を開始できませんでした。しばらくしてからもう一度お試しください。",
   "run.action.outcomeNotRecorded":
     "「{name}」は開始しましたが、結果を記録できませんでした。",
   "run.action.failed": "「{name}」の実行に失敗しました。",

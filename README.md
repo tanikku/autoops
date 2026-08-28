@@ -585,8 +585,9 @@ twice, so losing a slot is the safer direction.
 slot — and a run with no slot in play never meets the check at all. A manual
 run is exactly that: it goes straight to the queue without reading or writing
 `nextRunAt`, so it neither takes a slot nor notices one being taken. A
-scheduled run and a hand-started one can therefore overlap, and so can two
-hand-started ones.
+scheduled run and a hand-started one can therefore overlap. Two hand-started
+ones cannot, but nothing in this mechanism is what stops them — see [One manual
+run per account](#one-manual-run-per-account).
 
 That is the boundary of what this mechanism covers, stated because the two are
 easy to read as one: it makes a scheduled slot dispatch once, and it is not a
@@ -617,6 +618,47 @@ For a cron tick that is neither a hand-off nor a failure, so the tick counts it
 as neither; for someone pressing the button it reads as *already running*
 rather than as a failure. **The slot a scheduled run claimed is spent either
 way** — it was taken before the lease was asked for.
+
+#### One manual run per account
+
+The lease above is held per worker, so it says nothing about an account running
+*different* workers at once. Pressing Run on four workers starts four runs, each
+one legitimate on its own and each one a call to a provider or a fetch of
+somebody else's website. **What bounds that is a slot held per account**, taken
+in the run action after ownership has been established and given back in its
+cleanup:
+
+```
+manual   own the worker ──► take account slot ──► hand off ──► take lease ──► run ──► release both
+```
+
+**Hand-started runs only.** A scheduled run never asks for one: a tick already
+takes at most `MAX_DISPATCHES_PER_TICK` workers and works through them one at a
+time, and refusing one because its owner was running something by hand would
+make the schedule depend on what somebody happened to be doing. The bound an
+account is under is therefore its manual runs, alongside whatever the tick is
+doing.
+
+**Prompt and website workers share the slot.** What is being bounded is the work
+an account can ask for at once, and both kinds spend somebody else's resources —
+a model's, or a website's.
+
+**A refusal is not a failure**: nothing is recorded, no run row exists, and the
+answer says another run of theirs is still going rather than that this one went
+wrong. It is deliberately a different sentence from *already running*, which is
+about the worker on the button rather than about the account.
+
+**A slot lapses on its own after fifteen minutes.** A process that dies mid-run
+never reaches its cleanup, and nothing sweeps the row — expiry is the whole of
+the recovery, exactly as it is for the lease. The number is a product decision
+about how long somebody should wait after a crash, and is deliberately neither
+derived from nor shared with `EXECUTION_LEASE_MS`, which happens to be the same
+fifteen minutes and answers a different question.
+
+**It is a concurrency guard and not a rate limit.** One run at a time, over and
+over, is unbounded work and is still allowed; counting requests over a window is
+what `RateLimitBucket` does for AI drafts, and the two are kept apart
+deliberately.
 
 **The lease lasts fifteen minutes and nothing renews it.** That is comfortably
 longer than the ten a single request is allowed, with the rest covering what

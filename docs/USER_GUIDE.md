@@ -374,6 +374,12 @@ appears in Activity when it finishes.
 Run, you get *already running* instead of a second run. That protects you from
 paying for the same work twice.
 
+**And one Run at a time overall.** While a Worker you started by hand is still
+going, pressing Run on a *different* Worker tells you another run of yours is
+still in progress. Wait for the first to finish and press it again — nothing is
+queued for you, and nothing was started. This applies to prompt and website
+Workers alike, and it does not hold up your scheduled runs.
+
 ---
 
 ## 14. Scheduled execution
@@ -553,7 +559,7 @@ Beyond the capability boundary in [section 2](#2-what-autoops-can-and-cannot-do)
 | Limitation | Detail |
 | --- | --- |
 | **Invite only** | Sign-in is limited to invited addresses |
-| **Ten AI drafts an hour** | Asking AutoOps to write a Worker for you is limited to ten requests an hour per account. Running a Worker is not limited |
+| **Ten AI drafts an hour** | Asking AutoOps to write a Worker for you is limited to ten requests an hour per account |
 | **No notifications** | Failures are visible in the app; nothing is sent to you |
 | **No retry** | A failed run waits for its next slot |
 | **Each run list shows the newest twenty** | Activity shows an account's, a Worker's page shows that Worker's. No paging, no filtering, no search — older runs are kept, and nothing lists them |
@@ -563,6 +569,7 @@ Beyond the capability boundary in [section 2](#2-what-autoops-can-and-cannot-do)
 | **Five-minute granularity** | The soonest a scheduled run can start after its time |
 | **Text only** | No file upload, no images, no attachments |
 | **One run per Worker at a time** | A second attempt is refused while one is in progress |
+| **One manual run at a time** | Pressing Run while a Worker you started by hand is still going is refused, whichever Worker it is. There is no limit on how many you may start over a day |
 | **Availability is not guaranteed** | It is a beta; runs may be missed |
 
 ---

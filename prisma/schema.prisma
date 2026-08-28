@@ -13,14 +13,14 @@ datasource db {
 /// A signed-in Google account. `id` is the provider account id (the JWT `sub`),
 /// which is what every owned row is scoped by.
 model User {
-  id         String            @id
-  email      String            @unique
-  name       String?
-  image      String?
+  id             String            @id
+  email          String            @unique
+  name           String?
+  image          String?
   /// IANA zone the dashboard renders timestamps in, e.g. "Asia/Tokyo".
   /// Defaults to UTC so existing rows keep displaying exactly what they did
   /// before there was a setting to change.
-  timezone   String            @default("UTC")
+  timezone       String            @default("UTC")
   /// Language AutoOps uses for its own screens, "en" or "ja".
   ///
   /// A plain string rather than a database enum: adding a language should be a
@@ -31,11 +31,12 @@ model User {
   /// **It says nothing about what a worker produces.** Instructions, watched
   /// pages and model output are the owner's own material and are never
   /// translated to match this.
-  language   String            @default("en")
-  createdAt  DateTime          @default(now())
-  routines   Routine[]
-  runs       RunHistory[]
-  rateLimits RateLimitBucket[]
+  language       String            @default("en")
+  createdAt      DateTime          @default(now())
+  routines       Routine[]
+  runs           RunHistory[]
+  rateLimits     RateLimitBucket[]
+  manualRunSlots ManualRunSlot[]
 }
 
 model Routine {
@@ -269,4 +270,51 @@ model RateLimitBucket {
   /// by. It is what makes two simultaneous first requests produce one row and
   /// one unique-constraint failure rather than two rows that each allow ten.
   @@unique([userId, scope])
+}
+
+/// The right to have one hand-started run in progress, held per account.
+///
+/// **A user-level slot, and deliberately not the worker-level lease.**
+/// `Routine.executionOwner` decides whether *this worker* is already running;
+/// this decides whether *this account* already has a manual run going, whatever
+/// worker it belongs to. Both are held during the same execution and neither
+/// replaces the other: without this one, an account could start as many runs as
+/// it has workers, each of them perfectly legitimate on its own.
+///
+/// **Rows rather than a counter.** One row is one execution with one expiry, so
+/// a process that dies leaves exactly one slot to lapse; a count would leave a
+/// number nobody can correct, since nothing records what the missing decrement
+/// was for. It is also what makes the limit a product decision rather than a
+/// migration — raising it adds rows, not columns.
+///
+/// **Created on the first hand-started run and kept afterwards.** An account
+/// that has never pressed Run has no row, exactly as one that has never asked
+/// for a draft has no `RateLimitBucket`.
+///
+/// **Manual runs only.** Scheduled execution is bounded elsewhere — the tick
+/// takes five workers at most and works through them one at a time — and is
+/// never asked for a slot here.
+model ManualRunSlot {
+  /// The account the slot belongs to.
+  userId     String
+  /// Which of the account's slots this is, counting from zero. With a limit of
+  /// one there is only ever slot `0`; the column exists so raising the limit is
+  /// a constant and some more rows rather than a schema change.
+  slotNumber Int
+  /// Who holds it, as an opaque token minted per acquisition. Null means free.
+  ///
+  /// **What it protects is the release**: a run that overran its lease no
+  /// longer holds the slot, and matching on this token is what stops it from
+  /// freeing the run that took it over.
+  owner      String?
+  /// When the current holder's claim lapses, after which another may take it.
+  /// Null means free.
+  ///
+  /// **Expiry is the whole of the recovery.** A process that dies mid-run never
+  /// reaches its release, and nothing sweeps these rows.
+  leaseUntil DateTime?
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// One row per account and slot, and the key acquisition addresses it by.
+  @@id([userId, slotNumber])
 }

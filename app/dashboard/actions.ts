@@ -2,6 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { isExecutionSuppressed } from "@/lib/execution-lease";
+import {
+  acquireManualRunSlot,
+  releaseManualRunSlot,
+} from "@/lib/manual-run-slot";
 import { enqueueRoutine } from "@/lib/queue";
 import { deleteRoutine, getRoutine } from "@/lib/routines";
 import { isRunPersistenceError } from "@/lib/runs";
@@ -99,6 +103,38 @@ export async function runRoutineAction(
     return { status: "error", message: t(language, "worker.action.notFound") };
   }
 
+  // **After ownership, before anything runs.** The account may have one
+  // hand-started run in progress at a time, whichever worker it belongs to —
+  // see `lib/manual-run-slot.ts` for why that is a different question from
+  // whether *this* worker is busy, which execution answers for itself a layer
+  // down.
+  //
+  // Asked for here rather than inside `enqueueRoutine`, and that placement is
+  // the design: everything below the queue is shared with scheduled execution,
+  // and a tick is bounded by its own limits rather than by this one.
+  let slot;
+  try {
+    slot = await acquireManualRunSlot(userId);
+  } catch (error) {
+    // **Fail closed.** Not knowing whether the account has a run going is not
+    // the same as knowing it has not, and the safe reading of a database that
+    // will not answer is that nothing starts. The driver's own complaint stays
+    // in the log — it names tables and connections, and the person who pressed
+    // a button can do nothing with it.
+    console.error("[worker] manual run guard could not be read", error);
+    return {
+      status: "error",
+      message: t(language, "run.action.couldNotStart", { name: routine.name }),
+    };
+  }
+
+  if (slot === null) {
+    // An answer rather than a failure, and deliberately not the same sentence
+    // as a worker that is already running: that one is about the worker on the
+    // button, this one is about the account.
+    return { status: "error", message: t(language, "run.action.userBusy") };
+  }
+
   let run;
   try {
     run = await enqueueRoutine(routineId);
@@ -137,6 +173,14 @@ export async function runRoutineAction(
       status: "error",
       message: t(language, "run.action.failed", { name: routine.name }),
     };
+  } finally {
+    // **Every way out of the execution above comes through here** — the
+    // result, a run that failed, a worker that was already running, a
+    // non-`Error` somebody threw. The release cannot throw, so a failed
+    // cleanup never replaces the outcome it was cleaning up after, and a slot
+    // left behind lapses on its own. A process that dies mid-run reaches
+    // nothing here at all, which is what the TTL is for.
+    await releaseManualRunSlot(userId, slot.slotNumber, slot.token);
   }
 
   revalidatePath("/dashboard");

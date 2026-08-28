@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   getRoutine: vi.fn(),
   deleteRoutine: vi.fn(),
   enqueueRoutine: vi.fn(),
+  acquireManualRunSlot: vi.fn(),
+  releaseManualRunSlot: vi.fn(),
   claimRoutineSlot: vi.fn(),
   revalidatePath: vi.fn(),
 }));
@@ -31,6 +33,13 @@ vi.mock("@/lib/session", () => ({ requireUserId: mocks.requireUserId }));
 // that CI does not have.
 vi.mock("@/lib/users", () => ({ getUserLanguage: mocks.getUserLanguage }));
 vi.mock("@/lib/queue", () => ({ enqueueRoutine: mocks.enqueueRoutine }));
+// The account-level guard is a boundary of its own — what it does with the row
+// it keeps is fixed in `lib/manual-run-slot.test.ts`. What these need from it is
+// the answer, when it was asked for, and whether it was given back.
+vi.mock("@/lib/manual-run-slot", () => ({
+  acquireManualRunSlot: mocks.acquireManualRunSlot,
+  releaseManualRunSlot: mocks.releaseManualRunSlot,
+}));
 vi.mock("@/lib/routines", () => ({
   getRoutine: mocks.getRoutine,
   deleteRoutine: mocks.deleteRoutine,
@@ -43,6 +52,8 @@ const { deleteWorkerAction, runRoutineAction } = await import(
 
 /** `requireUserId` leaves by throwing when there is no session, as `redirect` does. */
 class RedirectSignal extends Error {}
+
+const NOW = new Date("2026-08-28T12:00:00.000Z");
 
 function form(routineId: string) {
   const data = new FormData();
@@ -61,6 +72,10 @@ beforeEach(() => {
   });
   mocks.deleteRoutine.mockReset().mockResolvedValue(true);
   mocks.enqueueRoutine.mockReset().mockResolvedValue({ status: "completed" });
+  mocks.acquireManualRunSlot
+    .mockReset()
+    .mockResolvedValue({ slotNumber: 0, token: "slot-token", expiresAt: NOW });
+  mocks.releaseManualRunSlot.mockReset().mockResolvedValue("released");
   mocks.claimRoutineSlot.mockReset();
   mocks.revalidatePath.mockReset();
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -258,6 +273,206 @@ describe("deleteWorkerAction", () => {
  * translated and not glued to one end of it — the two languages do not put it
  * in the same spot.
  */
+/**
+ * One hand-started run per account, whatever worker it belongs to.
+ *
+ * **The button's `pending` state is not this.** It disables one form in one
+ * browser tab; the guard is asked for on the server, on every invocation of the
+ * action, so a second tab or a request made by hand goes through the same door.
+ *
+ * **It is asked after ownership and before the queue**, which is where the
+ * manual path stops being its own and becomes the one scheduled execution
+ * shares. Everything below that is bounded by the tick's own limits instead.
+ */
+describe("runRoutineAction — one run per account", () => {
+  it("asks for the slot after ownership and before anything runs", async () => {
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.acquireManualRunSlot).toHaveBeenCalledWith("user-1");
+    expect(mocks.getRoutine.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.acquireManualRunSlot.mock.invocationCallOrder[0],
+    );
+    expect(mocks.acquireManualRunSlot.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.enqueueRoutine.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("starts nothing when the account already has a run going", async () => {
+    mocks.acquireManualRunSlot.mockResolvedValue(null);
+
+    expect(await runRoutineAction(null, form("worker-1"))).toEqual({
+      status: "error",
+      message:
+        "Another run of yours is still in progress. Wait for it to finish.",
+    });
+    expect(mocks.enqueueRoutine).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("logs nothing for a refusal, because nothing went wrong", async () => {
+    mocks.acquireManualRunSlot.mockResolvedValue(null);
+    vi.mocked(console.error).mockClear();
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(console.error).not.toHaveBeenCalled();
+    // Nothing was taken, so there is nothing to give back.
+    expect(mocks.releaseManualRunSlot).not.toHaveBeenCalled();
+  });
+
+  it("says so in Japanese for an account that reads Japanese", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    mocks.acquireManualRunSlot.mockResolvedValue(null);
+
+    expect(await runRoutineAction(null, form("worker-1"))).toEqual({
+      status: "error",
+      message: "別の実行がまだ進行中です。完了してからもう一度お試しください。",
+    });
+  });
+
+  it("never asks for a slot for a worker that is not the account's", async () => {
+    mocks.getRoutine.mockResolvedValue(null);
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.acquireManualRunSlot).not.toHaveBeenCalled();
+  });
+
+  it("never asks for one when there is no session", async () => {
+    mocks.requireUserId.mockImplementation(() => {
+      throw new RedirectSignal("/");
+    });
+
+    await expect(
+      runRoutineAction(null, form("worker-1")),
+    ).rejects.toBeInstanceOf(RedirectSignal);
+    expect(mocks.acquireManualRunSlot).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Giving the slot back, whichever way the run ended.
+ *
+ * **A crash is the one case none of these covers**, and nothing here pretends
+ * otherwise: a process that dies never reaches a `finally`. What recovers the
+ * slot then is its expiry, which is why it has one.
+ */
+describe("runRoutineAction — giving the slot back", () => {
+  function expectReleased() {
+    expect(mocks.releaseManualRunSlot).toHaveBeenCalledWith(
+      "user-1",
+      0,
+      "slot-token",
+    );
+  }
+
+  it("releases it after a run that finished", async () => {
+    await runRoutineAction(null, form("worker-1"));
+
+    expectReleased();
+  });
+
+  it("releases it after a run that failed", async () => {
+    mocks.enqueueRoutine.mockResolvedValue({ status: "failed" });
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expectReleased();
+  });
+
+  it("releases it after execution threw", async () => {
+    mocks.enqueueRoutine.mockRejectedValue(new Error("boom"));
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expectReleased();
+  });
+
+  it("releases it after something that was not an Error was thrown", async () => {
+    mocks.enqueueRoutine.mockRejectedValue("not an error");
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expectReleased();
+  });
+
+  it("releases it after the outcome could not be recorded", async () => {
+    mocks.enqueueRoutine.mockRejectedValue(
+      new RunPersistenceError("completed", "run-1"),
+    );
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expectReleased();
+  });
+
+  /**
+   * **The account's slot and the worker's lease are different questions**, and
+   * this is where they meet: the account was free, the worker was not. The
+   * answer somebody gets is the one they always got, and the slot taken on the
+   * way in does not stay taken.
+   */
+  it("releases it when the worker turned out to be busy, keeping the old answer", async () => {
+    mocks.enqueueRoutine.mockRejectedValue(
+      new ExecutionSuppressedError("worker-1"),
+    );
+
+    expect(await runRoutineAction(null, form("worker-1"))).toEqual({
+      status: "error",
+      message: '"Daily digest" is already running.',
+    });
+    expectReleased();
+  });
+});
+
+/**
+ * A guard that cannot be read is not a guard that said yes.
+ */
+describe("runRoutineAction — a guard that will not answer", () => {
+  function driverFailure() {
+    return new Error('connection terminated: relation "ManualRunSlot"');
+  }
+
+  it("starts nothing and says so without naming the database", async () => {
+    mocks.acquireManualRunSlot.mockRejectedValue(driverFailure());
+
+    const result = await runRoutineAction(null, form("worker-1"));
+
+    expect(result).toEqual({
+      status: "error",
+      message: '"Daily digest" could not be started. Try again in a moment.',
+    });
+    expect(mocks.enqueueRoutine).not.toHaveBeenCalled();
+    expect(mocks.releaseManualRunSlot).not.toHaveBeenCalled();
+  });
+
+  it("keeps the driver's own words out of what comes back", async () => {
+    mocks.acquireManualRunSlot.mockRejectedValue(driverFailure());
+    vi.mocked(console.error).mockClear();
+
+    const result = await runRoutineAction(null, form("worker-1"));
+    const message = (result as { message: string }).message;
+
+    expect(message).not.toContain("ManualRunSlot");
+    expect(message).not.toContain("connection terminated");
+    expect(console.error).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(console.error).mock.calls[0][0]).toBe(
+      "[worker] manual run guard could not be read",
+    );
+  });
+
+  it("says it could not be started in Japanese, rather than that it failed", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    mocks.acquireManualRunSlot.mockRejectedValue(driverFailure());
+
+    expect(await runRoutineAction(null, form("worker-1"))).toEqual({
+      status: "error",
+      message:
+        "「Daily digest」を開始できませんでした。しばらくしてからもう一度お試しください。",
+    });
+  });
+});
+
 describe("what the button says in Japanese", () => {
   beforeEach(() => {
     mocks.getUserLanguage.mockResolvedValue("ja");

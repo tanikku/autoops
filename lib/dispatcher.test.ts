@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   claimRoutineSlot: vi.fn(),
   enqueueRoutine: vi.fn(),
   getUserTimezone: vi.fn(),
+  acquireManualRunSlot: vi.fn(),
   calls: [] as string[],
 }));
 
@@ -34,6 +35,14 @@ vi.mock("@/lib/scheduler", () => ({ getDueWorkers: mocks.getDueWorkers }));
 vi.mock("@/lib/routines", () => ({ claimRoutineSlot: mocks.claimRoutineSlot }));
 vi.mock("@/lib/queue", () => ({ enqueueRoutine: mocks.enqueueRoutine }));
 vi.mock("@/lib/users", () => ({ getUserTimezone: mocks.getUserTimezone }));
+// **Not a collaborator of the dispatcher, and this is what fixes that.** The
+// account-level guard bounds runs somebody started by hand; a tick is bounded
+// by how many workers it takes and how long it may spend, and a scheduled run
+// refused because of something its owner did by hand would be a decision
+// nothing here should make.
+vi.mock("@/lib/manual-run-slot", () => ({
+  acquireManualRunSlot: mocks.acquireManualRunSlot,
+}));
 
 const { dispatchDueWorkers, MAX_TICK_EXECUTION_MS } = await import(
   "@/lib/dispatcher",
@@ -57,6 +66,7 @@ function due(id: string, overrides: Partial<DueWorker> = {}): DueWorker {
 
 beforeEach(() => {
   mocks.calls.length = 0;
+  mocks.acquireManualRunSlot.mockReset();
   mocks.getDueWorkers.mockReset().mockResolvedValue([]);
   mocks.claimRoutineSlot.mockReset().mockResolvedValue(true);
   mocks.enqueueRoutine.mockReset().mockResolvedValue({ status: "completed" });
@@ -78,6 +88,21 @@ describe("dispatchDueWorkers", () => {
 
     expect(mocks.enqueueRoutine).toHaveBeenCalledWith("worker-1");
     expect(result).toEqual({ dispatched: ["worker-1"], failed: 0 });
+  });
+
+  /**
+   * **A scheduled run is not a hand-started one, and is not counted as one.**
+   * The account-level guard bounds what somebody starts by pressing Run; a
+   * tick is bounded by `MAX_DISPATCHES_PER_TICK` and its own execution budget.
+   * Asking here would mean a worker skipping its slot because its owner
+   * happened to be running something else at the time.
+   */
+  it("asks for no account slot, whatever it hands off", async () => {
+    mocks.getDueWorkers.mockResolvedValue([due("worker-1"), due("worker-2")]);
+
+    await dispatchDueWorkers(NOW);
+
+    expect(mocks.acquireManualRunSlot).not.toHaveBeenCalled();
   });
 
   it("does not hand off a worker whose slot it lost", async () => {

@@ -145,6 +145,9 @@
 | **`User` 行は sign-in では作らない。** provisioning は「行を新たに存在させる必要がある write」の境界でだけ行う | 3案を比較した結果。`auth.ts` に DB を入れる案は「adapter を入れない = middleware を Edge で動かす」根拠を消すうえ、**JWT は sign-in 時にしか発行されないので既存セッションには効かない**。`requireUserId()` に入れる案は read path 5箇所が全て write になり、DB 障害が認証障害として見える。**読み取りが行を作ってはいけない** |
 | **`requireUserId()` に provisioning を足さない。** read-safe 契約はテストで固定してある | 足した瞬間、ページ表示ごとに upsert が走る。AutoOps 全体の「読み取りは書かない」性質(scheduler は read-only、health / overview は導出)を初めて破ることになる |
 | 有効な write で `auth()` が2回走ることは**許容する** | authentication と provisioning の責務分離を優先した結果。`requireUserId({ provision: true })` のような flag API や、session を広く配る abstraction は作らない。性能最適化はこの分離を壊す理由にならない |
+| Manual Run の per-user guard は **manual entry point だけ**に置く。`enqueueRoutine` / `runRoutine` の共通 path には入れない | scheduled は tick 側(`MAX_DISPATCHES_PER_TICK` / tick budget / 逐次 hand-off)で別に bounded されている。共通 path に入れれば、cron の実行が「所有者が手で何かを走らせていたから」という理由で落ちる。**スケジュールが人の操作に依存してはいけない** |
+| `MANUAL_RUN_SLOT_TTL_MS` は `EXECUTION_LEASE_MS` から**導出も共有もしない**(現在たまたま同じ15分) | 前者は「crash 後にアカウントを何分待たせるか」という product の判断、後者は「worker をいつまで実行中とみなすか」という platform の判断。片方を動かしたときにもう片方が黙って動くのは、`STUCK_THRESHOLD_MS` と `EXECUTION_LEASE_MS` を分けたのと同じ理由で避ける |
+| Manual Run guard は **concurrency であって rate ではない**。`RateLimitBucket` を semaphore に流用しない | `count` は「固定 window 内の回数」で、解放という概念を持たない。AI Draft では「失敗しても quota は返さない」と決めており、同じ列に「返す値」を同居させれば意味が二重になる。1本ずつ延々と回す利用が依然無制限であることは**既知の残課題**であって、この guard の欠陥ではない |
 | `take` は **未採用**。ただし scheduler に置くことを永久に禁じたわけでもない | 本番 Routine 0件で行数の実害がなく、catch-up と組み合わせるとバックログが1 interval を超えた時点でスロットを静かに失う。tenant fairness の論点も未解決。**根拠が揃うまで入れない**、が理由のすべて |
 
 ## 現在地
