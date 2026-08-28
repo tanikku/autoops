@@ -374,7 +374,12 @@ describe("what each step of the pipeline is given", () => {
 
     await runRoutine("worker-1");
 
-    expect(mocks.fetchWatchedPage).toHaveBeenCalledWith(SOURCE.url);
+    // The address, and the one dependency this layer supplies: how often a
+    // host may be fetched is remembered in the database, which `lib/watcher`
+    // deliberately knows nothing about.
+    expect(mocks.fetchWatchedPage).toHaveBeenCalledWith(SOURCE.url, {
+      throttle: expect.any(Function),
+    });
     expect(decodeSpy).toHaveBeenCalledWith(page.body, page.contentTypeHeader);
   });
 
@@ -944,6 +949,93 @@ describe("a finalization that did not commit", () => {
     await runRoutine("worker-1");
 
     expect(mocks.release).toHaveBeenCalledWith("worker-1", LEASE.token);
+  });
+});
+
+/**
+ * What a run records when AutoOps declined to fetch the page.
+ *
+ * **A failure of ours, and it is written down as one.** Nothing was asked of
+ * the site, so nothing about the site can be said; the row exists because the
+ * run started, and it says which of AutoOps' own rules stopped it. The
+ * alternative — leaving no row — would mean moving the run's creation after the
+ * fetch, and every network failure would stop being visible with it.
+ *
+ * The decision itself is `lib/website-throttle.ts`, and where the waiting
+ * happens is `lib/watcher/fetch.ts`. What this file fixes is the shape of the
+ * run that comes out of it.
+ */
+describe("a page AutoOps would not fetch again yet", () => {
+  const THROTTLED =
+    "This site was checked very recently, so AutoOps did not fetch it again yet.";
+
+  function throttled() {
+    return new WatcherError("throttled", THROTTLED);
+  }
+
+  it("records the run as failed, having created it first", async () => {
+    mocks.fetchWatchedPage.mockRejectedValue(throttled());
+
+    const run = await runRoutine("worker-1");
+
+    expect(mocks.create).toHaveBeenCalledTimes(1);
+    expect(mocks.create.mock.calls[0][0].data.status).toBe("running");
+    expect(run.status).toBe("failed");
+  });
+
+  it("stores the fixed sentence, word for word", async () => {
+    mocks.fetchWatchedPage.mockRejectedValue(throttled());
+
+    await runRoutine("worker-1");
+
+    expect(written().errorMessage).toBe(THROTTLED);
+    // Nothing about the site, the address, or anyone's account is in it.
+    expect(written().errorMessage).not.toContain(SOURCE.url);
+    expect(written().errorMessage).not.toContain("example.com");
+  });
+
+  it("leaves the output empty, as every failure does", async () => {
+    mocks.fetchWatchedPage.mockRejectedValue(throttled());
+
+    await runRoutine("worker-1");
+
+    expect(written().output).toBe("");
+  });
+
+  it("touches neither the baseline nor the model", async () => {
+    mocks.fetchWatchedPage.mockRejectedValue(throttled());
+
+    await runRoutine("worker-1");
+
+    expectNothingWritten();
+    expect(mocks.execute).not.toHaveBeenCalled();
+  });
+
+  it("gives the lease back", async () => {
+    mocks.fetchWatchedPage.mockRejectedValue(throttled());
+
+    await runRoutine("worker-1");
+
+    expect(mocks.release).toHaveBeenCalledWith("worker-1", LEASE.token);
+  });
+
+  /**
+   * A redirect's host is refused by the same rule and arrives here as the same
+   * error, so there is nothing for this layer to tell apart — which is the
+   * point: one sentence covers both, and neither names a host.
+   */
+  it("says the same thing whichever host in the chain was refused", async () => {
+    mocks.fetchWatchedPage.mockRejectedValue(throttled());
+
+    const first = await runRoutine("worker-1");
+    const firstMessage = written().errorMessage;
+
+    mocks.fetchWatchedPage.mockRejectedValue(throttled());
+    const second = await runRoutine("worker-1");
+
+    expect(first.status).toBe("failed");
+    expect(second.status).toBe("failed");
+    expect(written().errorMessage).toBe(firstMessage);
   });
 });
 

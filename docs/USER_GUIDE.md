@@ -573,6 +573,7 @@ Beyond the capability boundary in [section 2](#2-what-autoops-can-and-cannot-do)
 | **One run per Worker at a time** | A second attempt is refused while one is in progress |
 | **One manual run at a time** | Pressing Run while a Worker you started by hand is still going is refused, whichever Worker it is |
 | **Twenty manual runs an hour** | Per account, counted from the first run of the hour. A run that fails still counts. Scheduled runs are not counted against it |
+| **One visit to a site at a time** | AutoOps does not fetch the same website twice in quick succession, whoever asked. A run that arrives while the site was just checked waits briefly, and is recorded as failed if its turn does not come |
 | **Availability is not guaranteed** | It is a beta; runs may be missed |
 
 ---

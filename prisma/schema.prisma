@@ -318,3 +318,32 @@ model ManualRunSlot {
   /// One row per account and slot, and the key acquisition addresses it by.
   @@id([userId, slotNumber])
 }
+
+/// When AutoOps may next fetch a page from this host.
+///
+/// **One row per hostname, for the whole platform.** Every other guard here is
+/// an account's — how many drafts it may ask for, how many runs it may start —
+/// because what those protect is AutoOps and its bill. This one protects
+/// somebody else's website, and a site being fetched every second cannot tell
+/// which accounts the requests came from. So there is deliberately no `userId`:
+/// two accounts watching the same page share this row, and neither can spend
+/// the other's turn twice over.
+///
+/// **The host is the key, exactly as the URL parser normalised it.** No scheme
+/// (only http and https are watched at all), no port (only the standard ones
+/// are), no path, and no attempt to group `www.example.com` with
+/// `news.example.com` — telling which names belong to one owner needs the
+/// Public Suffix List, and guessing it wrong makes unrelated sites on a shared
+/// domain block each other.
+///
+/// **The value is a time, and that is the whole mechanism.** Taking a turn
+/// moves it forward; nothing is held, so nothing has to be given back and a
+/// process that dies mid-fetch leaves no lock behind. There is no TTL to
+/// choose, no owner token, and no cleanup beyond the row itself — which lives
+/// as long as the host is watched and is one row either way.
+model DomainThrottle {
+  /// The hostname, lowercased by `URL` and punycoded if it was not ASCII.
+  host          String   @id
+  /// The earliest instant a fetch of this host may begin.
+  nextAllowedAt DateTime
+}

@@ -33,6 +33,7 @@ import {
   WebsiteStateConflictError,
 } from "@/lib/website-snapshots";
 import { getWebsiteSource } from "@/lib/website-sources";
+import { acquireWebsiteDomainThrottle } from "@/lib/website-throttle";
 import {
   isRoutineKind,
   isRunStatus,
@@ -879,7 +880,14 @@ async function inspectWebsite(
   url: string,
 ): Promise<WebsiteInspection> {
   // Every address check, redirect check, size limit and timeout lives in here.
-  const page = await fetchWatchedPage(url);
+  //
+  // **The throttle is handed in rather than reached for.** `lib/watcher` knows
+  // no database, and keeping it that way is what lets every one of its rules be
+  // tested without one; where the spacing between fetches is remembered is this
+  // layer's business, not the fetch's.
+  const page = await fetchWatchedPage(url, {
+    throttle: acquireWebsiteDomainThrottle,
+  });
   // Bytes and the header that says what they mean — the fetch decodes neither.
   const decoded = decodeWebsiteContent(page.body, page.contentTypeHeader);
   const current = normalizeWebsiteContent(decoded.content, decoded.mediaType);

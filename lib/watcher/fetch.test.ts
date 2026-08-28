@@ -98,6 +98,245 @@ beforeEach(() => {
 /** A clock that does not move unless a test moves it. */
 const now = () => clock;
 
+/**
+ * A throttle that answers from a script, and remembers what it was asked.
+ *
+ * Every entry is one call: `true` lets the hop through, a number refuses it and
+ * asks for that many milliseconds. Anything past the end of the script allows,
+ * so a test only writes down the answers it cares about.
+ */
+function throttleOf(...answers: (true | number)[]) {
+  const script = [...answers];
+  const hosts: string[] = [];
+
+  const throttle = vi.fn(async (host: string) => {
+    hosts.push(host);
+    const answer = script.shift();
+    return answer === undefined || answer === true
+      ? ({ allowed: true } as const)
+      : ({ allowed: false, retryAfterMs: answer } as const);
+  });
+
+  return { throttle, hosts };
+}
+
+/** A sleep that moves the fake clock instead of waiting. */
+function fakeSleep() {
+  const waits: number[] = [];
+  const sleep = vi.fn(async (ms: number) => {
+    waits.push(ms);
+    clock += ms;
+  });
+  return { sleep, waits };
+}
+
+/**
+ * Spacing out how often one website is asked for a page.
+ *
+ * **The politeness is ours, and so is the waiting.** The module that remembers
+ * when a host was last fetched only answers questions — whether now is a turn,
+ * and how long until the next one. Deciding that waiting is worth it needs a
+ * budget, and this is the only layer that has one.
+ *
+ * **Every hop asks, including a redirect's.** From the site's point of view a
+ * request that arrived because something else pointed at it is still a request.
+ */
+describe("waiting for a host's turn", () => {
+  it("resolves and connects once the turn is granted", async () => {
+    const resolve = resolverWith();
+    const transport = transportOf(page);
+    const { throttle, hosts } = throttleOf(true);
+
+    await fetchWatchedPage("https://example.com/", {
+      resolve,
+      transport,
+      now,
+      throttle,
+    });
+
+    expect(hosts).toEqual(["example.com"]);
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks about the host alone — no scheme, port or path", async () => {
+    const { throttle, hosts } = throttleOf(true);
+
+    await fetchWatchedPage("https://EXAMPLE.com/news?q=1", {
+      resolve: resolverWith(),
+      transport: transportOf(page),
+      now,
+      throttle,
+    });
+
+    // Lowercased by `URL`, and nothing else carried along.
+    expect(hosts).toEqual(["example.com"]);
+  });
+
+  it("waits exactly as long as it was asked to, then goes ahead", async () => {
+    const { throttle } = throttleOf(4_000, true);
+    const { sleep, waits } = fakeSleep();
+    const transport = transportOf(page);
+
+    const result = await fetchWatchedPage("https://example.com/", {
+      resolve: resolverWith(),
+      transport,
+      now,
+      throttle,
+      sleep,
+    });
+
+    expect(waits).toEqual([4_000]);
+    expect(throttle).toHaveBeenCalledTimes(2);
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe(200);
+  });
+
+  it("gives up after one more attempt rather than waiting again", async () => {
+    const { throttle } = throttleOf(4_000, 4_000);
+    const { sleep, waits } = fakeSleep();
+    const resolve = resolverWith();
+    const transport = transportOf(page);
+
+    const kind = await kindOf(
+      fetchWatchedPage("https://example.com/", {
+        resolve,
+        transport,
+        now,
+        throttle,
+        sleep,
+      }),
+    );
+
+    expect(kind).toBe("throttled");
+    // One wait, two attempts, and nothing asked of the site at all.
+    expect(waits).toHaveLength(1);
+    expect(throttle).toHaveBeenCalledTimes(2);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it("never waits longer than the fetch has left", async () => {
+    const { throttle } = throttleOf(FETCH_BUDGET_MS * 2, FETCH_BUDGET_MS);
+    const { sleep, waits } = fakeSleep();
+
+    const kind = await kindOf(
+      fetchWatchedPage("https://example.com/", {
+        resolve: resolverWith(),
+        transport: transportOf(page),
+        now,
+        throttle,
+        sleep,
+      }),
+    );
+
+    // The wait is clamped to the budget, and running out that way is
+    // `throttled` rather than `timeout`: nothing was ever asked of the site.
+    expect(waits).toEqual([FETCH_BUDGET_MS]);
+    expect(kind).toBe("throttled");
+  });
+
+  /**
+   * **The wait comes out of the same twenty seconds a slow site would spend.**
+   * A tick works through workers one at a time, so a wait added outside the
+   * budget would lengthen every worker behind this one.
+   */
+  it("spends the fetch budget rather than adding to it", async () => {
+    const { throttle } = throttleOf(15_000, true);
+    const { sleep } = fakeSleep();
+    const transport = vi.fn(async (_target: URL, _addresses: string[], timeoutMs: number) => {
+      expect(timeoutMs).toBe(FETCH_BUDGET_MS - 15_000);
+      return page;
+    });
+
+    await fetchWatchedPage("https://example.com/", {
+      resolve: resolverWith(),
+      transport,
+      now,
+      throttle,
+      sleep,
+    });
+
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks separately for each host in a redirect chain", async () => {
+    const { throttle, hosts } = throttleOf(true, true);
+
+    await fetchWatchedPage("https://example.com/", {
+      resolve: resolverWith(),
+      transport: transportOf(redirectTo("https://other.example.org/"), page),
+      now,
+      throttle,
+    });
+
+    expect(hosts).toEqual(["example.com", "other.example.org"]);
+  });
+
+  it("waits for a redirect's host too", async () => {
+    const { throttle } = throttleOf(true, 3_000, true);
+    const { sleep, waits } = fakeSleep();
+    const transport = transportOf(redirectTo("https://other.example.org/"), page);
+
+    const result = await fetchWatchedPage("https://example.com/", {
+      resolve: resolverWith(),
+      transport,
+      now,
+      throttle,
+      sleep,
+    });
+
+    expect(waits).toEqual([3_000]);
+    expect(result.url).toBe("https://other.example.org/");
+  });
+
+  it("refuses a redirect's host the same way it refuses the first", async () => {
+    const { throttle } = throttleOf(true, 3_000, 3_000);
+    const { sleep } = fakeSleep();
+    const transport = transportOf(redirectTo("https://other.example.org/"));
+
+    const kind = await kindOf(
+      fetchWatchedPage("https://example.com/", {
+        resolve: resolverWith(),
+        transport,
+        now,
+        throttle,
+        sleep,
+      }),
+    );
+
+    expect(kind).toBe("throttled");
+    // The first hop happened; the second was never asked for.
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets an unrelated host through while another waits", async () => {
+    const { throttle, hosts } = throttleOf(true, true);
+
+    await fetchWatchedPage("https://other.example.org/", {
+      resolve: resolverWith(),
+      transport: transportOf(page),
+      now,
+      throttle,
+    });
+
+    expect(hosts).toEqual(["other.example.org"]);
+  });
+
+  /** Nothing in this module reaches a database, and nothing here waits for real. */
+  it("allows everything when no throttle is supplied", async () => {
+    const transport = transportOf(page);
+
+    const result = await fetchWatchedPage("https://example.com/", {
+      resolve: resolverWith(),
+      transport,
+      now,
+    });
+
+    expect(result.status).toBe(200);
+  });
+});
+
 describe("fetching a page", () => {
   it("returns what the transport read", async () => {
     const result = await fetchWatchedPage("https://example.com/", {

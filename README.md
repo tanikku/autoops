@@ -1576,6 +1576,50 @@ workers all day; what this stops is one account occupying an unbounded share of
 the platform, and — through the active limit — an unbounded number of scheduled
 runs nobody has to press a button for.
 
+### How often one website is asked
+
+Every other guard here is an account's — drafts an hour, one run at a time,
+twenty runs an hour, twenty workers. **This one is nobody's account's.** What it
+protects is somebody else's website, and a site being fetched every second
+cannot tell which accounts the requests came from; two people watching the same
+page are, from the site's side, one visitor.
+
+**Ten seconds between fetches of the same host, across the whole platform.** The
+key is the hostname exactly as the URL parser normalised it — lowercased, and
+punycoded if it was not ASCII. No scheme, no port and no path, and no attempt to
+group `www.example.com` with `news.example.com`: telling which names share an
+owner needs the Public Suffix List, and guessing it wrong makes unrelated sites
+on a shared domain wait for each other, which is worse than counting one site
+twice.
+
+**A turn is taken by moving a time forward.** `DomainThrottle` holds one row per
+host and one column that matters — when the next fetch may begin — and the write
+that takes a turn is the same conditional `UPDATE` the leases use. Nothing is
+held, so nothing has to be released: a process that dies mid-fetch leaves no
+lock behind, and there is no TTL to choose.
+
+**Manual and scheduled runs go through it alike, and so does every redirect
+hop.** The check sits in the fetch itself, before the name is even resolved, and
+a redirect arrives there as an ordinary hop — so the site at the end of a chain
+is spaced out exactly as the one at the start. From the site's point of view a
+request that arrived because something else pointed at it is still a request.
+
+**Waiting happens inside the twenty-second fetch budget**, never alongside it. A
+hop that finds the host busy waits as long as the throttle asked for — clamped
+by what is left of the budget — and tries exactly once more. That keeps the
+promise this layer makes unchanged: a fetch takes at most twenty seconds,
+whatever happens, which is what a tick working through workers one at a time
+relies on. **The database is never asked to wait**; `lib/website-throttle.ts`
+answers whether now is a turn and how long until the next one, and
+`lib/watcher/fetch.ts` decides whether waiting is worth it.
+
+**A hop that still cannot go ahead fails as `throttled`**, and the run is
+recorded the way every other failed fetch is: the row that was created when
+execution started is updated to `failed`, with a fixed sentence that names no
+host and no address. **The baseline is untouched** — nothing was fetched, so the
+change is still there to be found next time. A manual run's quota is not given
+back, for the same reason it is not given back when a page fails to load.
+
 ### Account Provisioning
 
 **Being signed in and having a row are different things**, and AutoOps keeps

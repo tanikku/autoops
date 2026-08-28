@@ -38,6 +38,16 @@ export type WatcherErrorKind =
   | "connect-failure"
   /** The whole call ran out of time, wherever it had got to. */
   | "timeout"
+  /**
+   * AutoOps had fetched this host very recently and would not do it again yet.
+   *
+   * **A decision of ours, not something the site did**, which is why the
+   * message stored for it says so. It sits among these kinds for the same
+   * reason `unsupported-port` and `blocked-address` do: they are all policies
+   * that stopped a fetch from happening, and what a caller needs to know is
+   * that no request was made.
+   */
+  | "throttled"
   /** The chain of redirects was longer than allowed, or went in a circle. */
   | "redirect-limit"
   /**

@@ -153,6 +153,11 @@
 | Worker quota の atomicity は **`User` 行を per-user の serialization point** にして得る。counter table は作らない | 個数条件は conditional `UPDATE` の WHERE に書けないため、既存3 guard の pattern が使えない。counter を別に持てば `Routine` と二重の真実になり、pause / delete / cascade でズレたときに自然回復しない。**行が数そのもの**なら、止めるのも消すのも次の count に自動で反映される |
 | quota lock の `tx.user.update({ data: { id: userId } })` を **`data: {}` に変えない** | Technical Spike の実測: `data: {}` では Prisma が `UPDATE` を発行せず `SELECT` になり、**ロックを取らずに素通りする**。自己代入は偶然ではなく locking contract。呼び出し側へ散らさず `lib/worker-quota.ts` に閉じ込める。**将来 `User.updatedAt` を足すなら、この lock が account を毎回打刻することになるので再評価する** |
 | Active quota は **`status === "active"` の行数**で数える。`frequency !== "manual"` を条件に足さない | scheduler が実際に拾うのは `active` かつ定期だが、それを quota の条件にすると「cadence を manual に変えただけで枠が空く」挙動になり、dashboard から読み取れない規則になる。**負荷の実体と、人が見て分かる規則は別**でよい |
+| Website の domain throttle は **`DomainThrottle`(host が PK / `nextAllowedAt` のみ)で global**。`RateLimitBucket` / `ManualRunSlot` と混ぜない | 守る対象が「AutoOps の請求」ではなく「他人のサイト」なので、per-user では user 数だけ掛け算される。`RateLimitBucket` は `userId` が NOT NULL で global 行を表現できず、`ManualRunSlot` は「進行中か」を問う lease で意味が違う。**時刻を前進させるだけなので解放も TTL も不要** |
+| throttle の key は **exact hostname**(URL parser の正規化済み)。eTLD+1 に集約しない。PSL 依存を足さない | `www` と `news` を別 host として数えるのは取りこぼす方向の誤り。PSL なしの近似は `co.jp` / `github.io` を誤り、**無関係なサイト同士が互いを待たせる**という悪い方向に失敗する |
+| throttle の待機は **`FETCH_BUDGET_MS`(20秒)の内側**。retry は **1回だけ**。2回目も拒否なら `WatcherErrorKind = "throttled"` | budget 外に出すと 1 worker の最悪が 140s → 180s になり、逐次 dispatch の tick 最悪値が Railway の 300s edge を超える(Spike で実算)。待った後は残り budget を**読み直して**hop へ渡す |
+| throttle 拒否は **RunHistory `failed`**。行を作らない案(create を fetch の後ろへ移す)は採らない | 移すと timeout / blocked-address / http-error など**全 fetch 失敗の行が消える**。Sprint 39 で `errorMessage` を分離した意味を失う。Snapshot は不変(既存「失敗は baseline を動かさない」を維持) |
+| `lib/watcher` に **Prisma を import しない**。throttle は `FetchDeps` で注入する | resolver / transport と同じ注入境界。DB を入れると watcher の全規則が DB なしでテストできなくなる |
 | `take` は **未採用**。ただし scheduler に置くことを永久に禁じたわけでもない | 本番 Routine 0件で行数の実害がなく、catch-up と組み合わせるとバックログが1 interval を超えた時点でスロットを静かに失う。tenant fairness の論点も未解決。**根拠が揃うまで入れない**、が理由のすべて |
 
 ## 現在地
