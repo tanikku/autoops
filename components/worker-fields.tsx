@@ -494,6 +494,13 @@ export function WorkerFields({
         <p className="text-xs text-muted-foreground">
           {t(language, statusDescriptionKeys[status])}
         </p>
+        {/* The account's active-worker limit is the one rule this control can
+            break, and the message belongs next to the choice that broke it. */}
+        {errors.status ? (
+          <p id="status-error" className="text-sm text-destructive">
+            {errors.status}
+          </p>
+        ) : null}
       </div>
     </>
   );

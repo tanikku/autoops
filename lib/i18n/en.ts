@@ -357,6 +357,19 @@ export const en = {
    * glued to one end of it: the two languages do not put it in the same spot,
    * and neither of them translates it.
    */
+  /**
+   * The account has as many workers as it may keep.
+   *
+   * **It says what to do rather than only what happened.** Nothing here can be
+   * waited out — unlike a rate limit, capacity comes back only when the owner
+   * frees some — so the sentence names the action that does it.
+   */
+  "worker.validation.totalLimitReached":
+    "You already have the maximum number of Workers ({limit}). Delete one to add another.",
+  /** The account has as many active workers as it may run at once. */
+  "worker.validation.activeLimitReached":
+    "You can have {limit} active Workers at a time. Pause one to activate another.",
+
   "worker.action.kindRequired":
     "Choose whether this worker runs a prompt or watches a page.",
   /** Missing and someone else's are deliberately the same answer. */

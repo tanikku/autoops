@@ -35,8 +35,18 @@ export const workerFieldLimits = {
 
 export type WorkerFieldName = keyof typeof workerFieldLimits;
 
-/** Field-level messages, keyed by field. Empty means the input is acceptable. */
-export type WorkerFieldErrors = Partial<Record<WorkerFieldName, string>>;
+/**
+ * Field-level messages, keyed by field. Empty means the input is acceptable.
+ *
+ * **`status` carries messages without being one of the fields above.** Those
+ * four are the ones with a length to count against (`workerFieldLimits`), and a
+ * dropdown has none; what it does have is a rule that can reject it — the
+ * account's active-worker limit — and the message for that belongs beside the
+ * control it is about rather than in a toast on its own.
+ */
+export type WorkerFieldErrors = Partial<
+  Record<WorkerFieldName | "status", string>
+>;
 
 /**
  * What each field is called inside a message about it.

@@ -2,9 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { notFound } from "next/navigation";
-import { prisma } from "@/lib/prisma";
+import { type DbClient, prisma } from "@/lib/prisma";
 import { getRoutineForEdit, updateRoutine } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
+import {
+  ACTIVE_WORKER_LIMIT,
+  claimWorkerActivation,
+} from "@/lib/worker-quota";
 import { t } from "@/lib/i18n";
 import { requireUserId } from "@/lib/session";
 import { getUserLanguage, getUserTimezone } from "@/lib/users";
@@ -200,37 +204,71 @@ export async function updateRoutineAction(
     ...scheduleUpdate,
   };
 
+  /**
+   * The worker's own writes, whichever transaction they belong to.
+   *
+   * **The address and the baseline still move together or not at all.** A
+   * baseline belongs to the page it was taken from: left behind on a worker now
+   * pointed somewhere else, the next run would compare two unrelated documents
+   * and hand the model the whole of one as a change. Writing them separately
+   * would make that state reachable whenever the second write failed — and it
+   * would look like an ordinary worker.
+   *
+   * Written once and called from either branch below, so that turning a worker
+   * on and moving its address cannot end up in two transactions.
+   */
+  const applyUpdate = async (tx: DbClient) => {
+    const routine = await updateRoutine(id, update, userId, tx);
+    if (!routine) {
+      throw new RoutineVanished();
+    }
+
+    if (urlChange !== null) {
+      if (!(await updateWebsiteSourceUrl(id, userId, urlChange.url, tx))) {
+        throw new RoutineVanished();
+      }
+
+      // Nothing to delete is the ordinary case for a worker that has not run
+      // yet, and it is a success: see `deleteWebsiteSnapshot`.
+      await deleteWebsiteSnapshot(urlChange.sourceId, tx);
+    }
+
+    return routine;
+  };
+
+  // **Only a transition asks the quota.** A worker that is already active is
+  // part of the account's active count rather than an addition to it, so
+  // editing its name must not be refused because the account is at its limit.
+  // Turning one on is the only edit that needs room — see `lib/worker-quota.ts`.
+  const activating = existing.status !== "active" && status === "active";
+
+  let quotaRejected = false;
   let saved;
   try {
-    if (urlChange === null) {
+    if (activating) {
+      // **The decision and the write commit together.** Checking in one
+      // transaction and updating in another would be deciding about a moment
+      // that has already passed: something else could take the last slot in
+      // between. The address change, when there is one, joins this transaction
+      // rather than opening a second.
+      saved = await prisma.$transaction(async (tx) => {
+        if ((await claimWorkerActivation(tx, userId)) !== null) {
+          quotaRejected = true;
+          return null;
+        }
+
+        return applyUpdate(tx);
+      });
+    } else if (urlChange === null) {
       // **Everything else is one write, including editing a website worker.**
       // A name, a cadence, or new instructions say nothing about the page being
       // watched, so nothing about the page is touched — which is what keeps a
       // worker's baseline from being spent on a typo in its description.
       saved = await updateRoutine(id, update, userId);
     } else {
-      // **The address and the baseline move together or not at all.** A
-      // baseline belongs to the page it was taken from: left behind on a worker
-      // now pointed somewhere else, the next run would compare two unrelated
-      // documents and hand the model the whole of one as a change. Writing them
-      // separately would make that state reachable whenever the second write
-      // failed — and it would look like an ordinary worker.
-      saved = await prisma.$transaction(async (tx) => {
-        const routine = await updateRoutine(id, update, userId, tx);
-        if (!routine) {
-          throw new RoutineVanished();
-        }
-
-        if (!(await updateWebsiteSourceUrl(id, userId, urlChange.url, tx))) {
-          throw new RoutineVanished();
-        }
-
-        // Nothing to delete is the ordinary case for a worker that has not run
-        // yet, and it is a success: see `deleteWebsiteSnapshot`.
-        await deleteWebsiteSnapshot(urlChange.sourceId, tx);
-
-        return routine;
-      });
+      // The address moved, so the worker and its baseline go together — see
+      // `applyUpdate` above for why that has to be one transaction.
+      saved = await prisma.$transaction(applyUpdate);
     }
   } catch (error) {
     if (error instanceof RoutineVanished) {
@@ -256,6 +294,24 @@ export async function updateRoutineAction(
   // outcome worse than either: the form clears, the toast says the change
   // landed, and it did not. `deleteWorkerAction` already checks its own
   // count for the same reason.
+  // **Not a failure, and nothing was written.** The account is at its active
+  // limit, which is something its owner can change; the message says so under
+  // the control that would change it.
+  if (quotaRejected) {
+    const errors: WorkerFieldErrors = {
+      status: t(language, "worker.validation.activeLimitReached", {
+        limit: ACTIVE_WORKER_LIMIT,
+      }),
+    };
+
+    return {
+      status: "error",
+      message: summarizeWorkerFormErrors(errors, language),
+      values: input,
+      errors,
+    };
+  }
+
   if (!saved) {
     return {
       status: "error",

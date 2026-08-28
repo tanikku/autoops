@@ -568,6 +568,8 @@ Beyond the capability boundary in [section 2](#2-what-autoops-can-and-cannot-do)
 | **Manual and scheduled runs look identical afterwards** | A result does not record which one started it |
 | **Five-minute granularity** | The soonest a scheduled run can start after its time |
 | **Text only** | No file upload, no images, no attachments |
+| **Twenty Workers per account** | Drafts, paused and active Workers all count. Delete one to make room |
+| **Ten active Workers per account** | Pause one to activate another. A Worker set to Active counts even if its schedule is Manual |
 | **One run per Worker at a time** | A second attempt is refused while one is in progress |
 | **One manual run at a time** | Pressing Run while a Worker you started by hand is still going is refused, whichever Worker it is. There is no limit on how many you may start over a day |
 | **Availability is not guaranteed** | It is a beta; runs may be missed |

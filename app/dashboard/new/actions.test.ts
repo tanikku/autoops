@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   createRoutine: vi.fn(),
   createWebsiteSource: vi.fn(),
   transaction: vi.fn(),
+  lockUser: vi.fn(),
+  countRoutines: vi.fn(),
   revalidatePath: vi.fn(),
   redirect: vi.fn(),
 }));
@@ -56,12 +58,30 @@ vi.mock("@/lib/prisma", () => ({
   prisma: { $transaction: mocks.transaction },
 }));
 
-const TX = { tag: "transaction-client" } as const;
+/**
+ * The client a transaction hands its callback.
+ *
+ * **It carries the two tables the quota reads**, so the quota itself runs for
+ * real here rather than being stood in for: what these fix is that the account
+ * is locked, then counted, then written to — in one transaction — and a mocked
+ * quota would fix none of it. The tag is still what the assertions match on to
+ * prove both writes were given the *same* client.
+ */
+const TX = {
+  tag: "transaction-client",
+  user: { update: mocks.lockUser },
+  routine: { count: mocks.countRoutines },
+} as const;
 
 const { createRoutineAction, generateWorkerDraftAction } = await import(
   "@/app/dashboard/new/actions"
 );
 const { ProviderError } = await import("@/lib/ai/provider");
+// The limits belong to the quota module; these read them rather than restating
+// them, so raising one does not leave these testing nothing.
+const { ACTIVE_WORKER_LIMIT, TOTAL_WORKER_LIMIT } = await import(
+  "@/lib/worker-quota"
+);
 const { InvalidWorkerDraftResponseError, MAX_WORKER_DRAFT_REQUEST_CHARS } =
   await import("@/lib/ai/worker-draft");
 
@@ -100,6 +120,9 @@ beforeEach(() => {
   mocks.transaction
     .mockReset()
     .mockImplementation((run: (tx: unknown) => Promise<unknown>) => run(TX));
+  mocks.lockUser.mockReset().mockResolvedValue({ id: "google-sub-1" });
+  // An account with room for another worker, unless a test says otherwise.
+  mocks.countRoutines.mockReset().mockResolvedValue(0);
   mocks.generate.mockReset();
   mocks.createWorkerDraftGenerator
     .mockReset()
@@ -122,6 +145,7 @@ describe("createRoutineAction", () => {
     expect(mocks.createRoutine).toHaveBeenCalledWith(
       expect.objectContaining({ name: "Daily digest", frequency: "daily" }),
       "google-sub-1",
+      TX,
     );
   });
 
@@ -443,9 +467,232 @@ describe("createRoutineAction — the kind itself", () => {
     expect(mocks.createRoutine).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "prompt" }),
       "google-sub-1",
+      TX,
     );
-    expect(mocks.transaction).not.toHaveBeenCalled();
+    // Every hire is a transaction now — the quota is decided inside the one
+    // that writes the row. What a prompt worker still has is no second write.
     expect(mocks.createWebsiteSource).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * How many workers an account may keep, and how many it may run.
+ *
+ * **The decision and the write are one transaction**, which is the only reason
+ * counting is safe to do at all: the account's own row is locked first, so a
+ * second hire arriving at the same moment waits and then counts this one. What
+ * these fix is that the sequence is that way round and that nothing is written
+ * when the answer is no — the exclusivity itself is PostgreSQL's, and is
+ * measured against a real database rather than asserted here.
+ */
+describe("createRoutineAction — the worker limits", () => {
+  it("hires the twentieth worker", async () => {
+    mocks.countRoutines.mockResolvedValue(TOTAL_WORKER_LIMIT - 1);
+
+    const result = await createRoutineAction(null, form({ status: "draft" }));
+
+    expect(result?.status).toBe("success");
+    expect(mocks.createRoutine).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses the twenty-first", async () => {
+    mocks.countRoutines.mockResolvedValue(TOTAL_WORKER_LIMIT);
+
+    const result = await createRoutineAction(null, form({ status: "draft" }));
+
+    expect(result?.status).toBe("error");
+    expect(mocks.createRoutine).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("writes neither half of a website worker when the account is full", async () => {
+    mocks.countRoutines.mockResolvedValue(TOTAL_WORKER_LIMIT);
+
+    await createRoutineAction(
+      null,
+      form({
+        kind: "website",
+        websiteUrl: "https://example.com/news",
+        status: "draft",
+      }),
+    );
+
+    expect(mocks.createRoutine).not.toHaveBeenCalled();
+    expect(mocks.createWebsiteSource).not.toHaveBeenCalled();
+  });
+
+  it("says how many there may be, and what frees one", async () => {
+    mocks.countRoutines.mockResolvedValue(TOTAL_WORKER_LIMIT);
+
+    const result = await createRoutineAction(
+      null,
+      form({ name: "Typed name", status: "draft" }),
+    );
+
+    expect(result?.message).toBe(
+      "You already have the maximum number of Workers (20). Delete one to add another.",
+    );
+    // Nothing about a full account belongs to one field.
+    expect(result?.errors).toBeUndefined();
+    expect(result?.values?.name).toBe("Typed name");
+  });
+
+  it("says it in Japanese for an account that reads Japanese", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    mocks.countRoutines.mockResolvedValue(TOTAL_WORKER_LIMIT);
+
+    const result = await createRoutineAction(null, form({ status: "draft" }));
+
+    expect(result?.message).toBe(
+      "Worker の数が上限（20）に達しています。追加するには既存の Worker を削除してください。",
+    );
+  });
+
+  it("hires the tenth active worker", async () => {
+    mocks.countRoutines
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(ACTIVE_WORKER_LIMIT - 1);
+
+    const result = await createRoutineAction(null, form({ status: "active" }));
+
+    expect(result?.status).toBe("success");
+    expect(mocks.createRoutine).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses the eleventh", async () => {
+    mocks.countRoutines
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(ACTIVE_WORKER_LIMIT);
+
+    const result = await createRoutineAction(null, form({ status: "active" }));
+
+    expect(result?.status).toBe("error");
+    expect(mocks.createRoutine).not.toHaveBeenCalled();
+  });
+
+  it("says so under the Status control, keeping what was typed", async () => {
+    mocks.countRoutines
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(ACTIVE_WORKER_LIMIT);
+
+    const result = await createRoutineAction(
+      null,
+      form({ name: "Typed name", status: "active" }),
+    );
+
+    expect(result?.errors?.status).toBe(
+      "You can have 10 active Workers at a time. Pause one to activate another.",
+    );
+    expect(result?.message).toBe(result?.errors?.status);
+    expect(result?.values?.name).toBe("Typed name");
+  });
+
+  it("says the active limit in Japanese too", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    mocks.countRoutines
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(ACTIVE_WORKER_LIMIT);
+
+    const result = await createRoutineAction(null, form({ status: "active" }));
+
+    expect(result?.errors?.status).toBe(
+      "同時に Active にできる Worker は 10 個までです。別の Worker を Active にするには、どれかを一時停止してください。",
+    );
+  });
+
+  it.each([["draft"], ["paused"]])(
+    "does not ask about the active limit for a %s worker",
+    async (status) => {
+      await createRoutineAction(null, form({ status }));
+
+      expect(mocks.countRoutines).toHaveBeenCalledTimes(1);
+      expect(mocks.countRoutines).toHaveBeenCalledWith({
+        where: { userId: "google-sub-1" },
+      });
+    },
+  );
+
+  /**
+   * **A manual worker spends an active slot too.** Nothing schedules it, and
+   * that is deliberately not the question the limit asks.
+   */
+  it("counts an active manual worker against the active limit", async () => {
+    mocks.countRoutines
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(ACTIVE_WORKER_LIMIT);
+
+    const result = await createRoutineAction(
+      null,
+      form({ status: "active", frequency: "manual" }),
+    );
+
+    expect(result?.status).toBe("error");
+    expect(result?.errors?.status).toBeDefined();
+  });
+
+  it("counts every worker the account has, of either kind", async () => {
+    await createRoutineAction(null, form({ status: "draft" }));
+
+    // No `kind` and no `status` in the total: a website worker and a draft are
+    // both workers the account keeps.
+    expect(mocks.countRoutines).toHaveBeenCalledWith({
+      where: { userId: "google-sub-1" },
+    });
+  });
+
+  it("locks the account, counts, then writes — in that order", async () => {
+    await createRoutineAction(null, form({ status: "active" }));
+
+    expect(mocks.lockUser).toHaveBeenCalledWith({
+      where: { id: "google-sub-1" },
+      data: { id: "google-sub-1" },
+    });
+    expect(mocks.lockUser.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.countRoutines.mock.invocationCallOrder[0],
+    );
+    expect(mocks.countRoutines.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.createRoutine.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("asks nothing of the database for a submission it rejects", async () => {
+    const result = await createRoutineAction(null, form({ name: "" }));
+
+    expect(result?.status).toBe("error");
+    expect(mocks.ensureUser).not.toHaveBeenCalled();
+    expect(mocks.lockUser).not.toHaveBeenCalled();
+    expect(mocks.countRoutines).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing of the quota when the account row could not be written", async () => {
+    mocks.ensureUser.mockRejectedValue(new Error("connection terminated"));
+
+    await expect(
+      createRoutineAction(null, form({ status: "draft" })),
+    ).rejects.toThrow();
+
+    expect(mocks.lockUser).not.toHaveBeenCalled();
+    expect(mocks.countRoutines).not.toHaveBeenCalled();
+  });
+
+  it("keeps a database failure a database failure", async () => {
+    mocks.countRoutines.mockRejectedValue(new Error("connection terminated"));
+
+    const result = await createRoutineAction(null, form({ status: "draft" }));
+
+    expect(result?.message).toBe("Could not create the worker.");
+    expect(result?.errors).toBeUndefined();
+    expect(console.error).toHaveBeenCalled();
+  });
+
+  it("still resolves the first slot against the owner's zone", async () => {
+    mocks.countRoutines.mockResolvedValue(0);
+
+    await createRoutineAction(null, form({ status: "active" }));
+
+    const [routine] = mocks.createRoutine.mock.calls[0];
+    expect(routine.nextRunAt).toBeInstanceOf(Date);
+    expect(mocks.getUserTimezone).toHaveBeenCalledWith("google-sub-1");
   });
 });
 

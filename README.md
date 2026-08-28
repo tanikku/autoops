@@ -1495,6 +1495,54 @@ The cost is that nothing writes the `User` row at sign-in — see
 That same choice is why the tenant key comes from `account.providerAccountId` —
 see [Tenant Identity](#tenant-identity) before touching anything in `auth.ts`.
 
+### How many workers an account may have
+
+**Twenty workers, ten of them active.** Draft, paused and active all count
+towards the first; both kinds do, and so does a `manual` worker that happens to
+be active — the limit is about the state somebody can see and change rather than
+about what the scheduler will do with it. What the scheduler actually picks up
+is narrower and unchanged: `active` *and* a cadence other than `manual`.
+
+**The worker rows are the count.** There is no counter column and no quota
+table, so pausing a worker or deleting one frees capacity by itself. Nothing has
+to be told, and there is no second number that can drift away from the first.
+
+That decision is what makes the rest of it interesting, because a count is not
+something a conditional `UPDATE` can be written against the way `claimRoutineSlot`
+and the leases are. Counting and then writing is a check-then-act, and under
+PostgreSQL's default READ COMMITTED two requests can both count nineteen and
+both insert.
+
+**So the account row is the serialization point.** Every operation that could
+raise either count runs in one transaction that starts by writing the account's
+own row — a self-assignment, `id` set to the value it already has — which holds
+that row until the transaction commits. A second request for the same account
+waits there and then counts what the first one wrote. Different accounts write
+different rows and never wait on each other.
+
+```
+lock the account row  →  count the account's workers  →  write  →  commit
+```
+
+**`data: {}` would not do this**, which is why `lib/worker-quota.ts` says so at
+the line rather than in a commit message: Prisma issues no `UPDATE` at all for an
+empty `data` and turns the call into a `SELECT`, taking no lock. Both behaviours
+were measured against local PostgreSQL rather than reasoned about. **`User`
+carries no `updatedAt` and no trigger, so nothing about the account changes —
+adding such a column later means re-examining this lock**, which would otherwise
+start stamping an account every time one of its workers is created.
+
+**Only the two paths that can raise a count ask.** Creating a worker asks about
+both limits; an edit asks about the active one only when it is turning a worker
+on — a worker that is already active is part of the count rather than an
+addition to it, so editing its name is never refused. Pausing and deleting ask
+nothing.
+
+**It bounds how many, not how often.** An account may delete and recreate
+workers all day; what this stops is one account occupying an unbounded share of
+the platform, and — through the active limit — an unbounded number of scheduled
+runs nobody has to press a button for.
+
 ### Account Provisioning
 
 **Being signed in and having a row are different things**, and AutoOps keeps

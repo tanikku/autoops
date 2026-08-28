@@ -14,6 +14,12 @@ import { prisma } from "@/lib/prisma";
 import { consumeAiDraftQuota } from "@/lib/rate-limit";
 import { createRoutine } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
+import {
+  ACTIVE_WORKER_LIMIT,
+  claimWorkerCreation,
+  TOTAL_WORKER_LIMIT,
+  type WorkerQuotaRejection,
+} from "@/lib/worker-quota";
 import { requireProvisionedUserId, requireUserId } from "@/lib/session";
 import { getUserLanguage, getUserTimezone } from "@/lib/users";
 import { isWatcherError } from "@/lib/watcher/errors";
@@ -53,6 +59,46 @@ import type { ActionResult, CreateRoutineInput } from "@/types";
 export type CreateRoutineState =
   | (ActionResult & { values?: WorkerFormInput; errors?: WorkerFieldErrors })
   | null;
+
+/**
+ * What a submission gets back when the account has no room for it.
+ *
+ * **The two limits are answered in different places on the form**, because
+ * they are about different things. Nothing about a full account belongs to one
+ * field, so the total limit is the form's own message; the active limit is
+ * about the Status the submission chose, and sits under that control where the
+ * change that would fix it is.
+ *
+ * The values go back either way: a rejected hire must not clear the form.
+ */
+function quotaRejection(
+  rejection: WorkerQuotaRejection,
+  language: string,
+  input: WorkerFormInput,
+): CreateRoutineState {
+  if (rejection === "total") {
+    return {
+      status: "error",
+      message: t(language, "worker.validation.totalLimitReached", {
+        limit: TOTAL_WORKER_LIMIT,
+      }),
+      values: input,
+    };
+  }
+
+  const errors: WorkerFieldErrors = {
+    status: t(language, "worker.validation.activeLimitReached", {
+      limit: ACTIVE_WORKER_LIMIT,
+    }),
+  };
+
+  return {
+    status: "error",
+    message: summarizeWorkerFormErrors(errors, language),
+    values: input,
+    errors,
+  };
+}
 
 export async function createRoutineAction(
   _prevState: CreateRoutineState,
@@ -173,9 +219,27 @@ export async function createRoutineAction(
     }),
   };
 
+  // **What the account is allowed, decided in the same transaction as the
+  // write.** Counting first and writing afterwards would be a check somebody
+  // else can invalidate in between; the quota takes the account's own row
+  // before it counts, so a second hire waits and then counts this one. See
+  // `lib/worker-quota.ts`.
+  let rejection: WorkerQuotaRejection | null = null;
+
   try {
     if (websiteUrl === null) {
-      await createRoutine(routine, provisionedUserId);
+      // **A transaction for one write, because it is not one write.** The lock,
+      // the counts and the insert have to commit or roll back together — a hire
+      // that failed after its slot was counted would have spent capacity on a
+      // worker that does not exist.
+      await prisma.$transaction(async (tx) => {
+        rejection = await claimWorkerCreation(tx, provisionedUserId, status);
+        if (rejection !== null) {
+          return;
+        }
+
+        await createRoutine(routine, provisionedUserId, tx);
+      });
     } else {
       // **Both rows or neither.** A website worker is the pair — a routine that
       // says it watches something and a source that says what. Written apart,
@@ -188,6 +252,11 @@ export async function createRoutineAction(
       // There is nothing to retry: a rollback leaves the account exactly as it
       // was, and the person is still on the form.
       await prisma.$transaction(async (tx) => {
+        rejection = await claimWorkerCreation(tx, provisionedUserId, status);
+        if (rejection !== null) {
+          return;
+        }
+
         const created = await createRoutine(routine, provisionedUserId, tx);
         await createWebsiteSource(created.id, websiteUrl, tx);
       });
@@ -199,6 +268,14 @@ export async function createRoutineAction(
       message: t(language, "worker.action.createFailed"),
       values: input,
     };
+  }
+
+  // **Not a failure, and not the database's fault.** The account is at a limit
+  // it can do something about, so nothing is logged and the answer says which
+  // limit and what frees it. Nothing was written: the transaction above
+  // returned before the insert.
+  if (rejection !== null) {
+    return quotaRejection(rejection, language, input);
   }
 
   revalidatePath("/dashboard");

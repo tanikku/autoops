@@ -148,6 +148,9 @@
 | Manual Run の per-user guard は **manual entry point だけ**に置く。`enqueueRoutine` / `runRoutine` の共通 path には入れない | scheduled は tick 側(`MAX_DISPATCHES_PER_TICK` / tick budget / 逐次 hand-off)で別に bounded されている。共通 path に入れれば、cron の実行が「所有者が手で何かを走らせていたから」という理由で落ちる。**スケジュールが人の操作に依存してはいけない** |
 | `MANUAL_RUN_SLOT_TTL_MS` は `EXECUTION_LEASE_MS` から**導出も共有もしない**(現在たまたま同じ15分) | 前者は「crash 後にアカウントを何分待たせるか」という product の判断、後者は「worker をいつまで実行中とみなすか」という platform の判断。片方を動かしたときにもう片方が黙って動くのは、`STUCK_THRESHOLD_MS` と `EXECUTION_LEASE_MS` を分けたのと同じ理由で避ける |
 | Manual Run guard は **concurrency であって rate ではない**。`RateLimitBucket` を semaphore に流用しない | `count` は「固定 window 内の回数」で、解放という概念を持たない。AI Draft では「失敗しても quota は返さない」と決めており、同じ列に「返す値」を同居させれば意味が二重になる。1本ずつ延々と回す利用が依然無制限であることは**既知の残課題**であって、この guard の欠陥ではない |
+| Worker quota の atomicity は **`User` 行を per-user の serialization point** にして得る。counter table は作らない | 個数条件は conditional `UPDATE` の WHERE に書けないため、既存3 guard の pattern が使えない。counter を別に持てば `Routine` と二重の真実になり、pause / delete / cascade でズレたときに自然回復しない。**行が数そのもの**なら、止めるのも消すのも次の count に自動で反映される |
+| quota lock の `tx.user.update({ data: { id: userId } })` を **`data: {}` に変えない** | Technical Spike の実測: `data: {}` では Prisma が `UPDATE` を発行せず `SELECT` になり、**ロックを取らずに素通りする**。自己代入は偶然ではなく locking contract。呼び出し側へ散らさず `lib/worker-quota.ts` に閉じ込める。**将来 `User.updatedAt` を足すなら、この lock が account を毎回打刻することになるので再評価する** |
+| Active quota は **`status === "active"` の行数**で数える。`frequency !== "manual"` を条件に足さない | scheduler が実際に拾うのは `active` かつ定期だが、それを quota の条件にすると「cadence を manual に変えただけで枠が空く」挙動になり、dashboard から読み取れない規則になる。**負荷の実体と、人が見て分かる規則は別**でよい |
 | `take` は **未採用**。ただし scheduler に置くことを永久に禁じたわけでもない | 本番 Routine 0件で行数の実害がなく、catch-up と組み合わせるとバックログが1 interval を超えた時点でスロットを静かに失う。tenant fairness の論点も未解決。**根拠が揃うまで入れない**、が理由のすべて |
 
 ## 現在地

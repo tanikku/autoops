@@ -228,6 +228,11 @@ export const ja: Record<TranslationKey, string> = {
     "https://example.com/news のような完全なアドレスを入力してください。",
   "worker.validation.summary": "{count} 件の入力を確認してください。",
 
+  "worker.validation.totalLimitReached":
+    "Worker の数が上限（{limit}）に達しています。追加するには既存の Worker を削除してください。",
+  "worker.validation.activeLimitReached":
+    "同時に Active にできる Worker は {limit} 個までです。別の Worker を Active にするには、どれかを一時停止してください。",
+
   "worker.action.kindRequired":
     "この Worker がプロンプトを実行するのか、ページを監視するのかを選んでください。",
   "worker.action.notFound": "Worker が見つかりません。",

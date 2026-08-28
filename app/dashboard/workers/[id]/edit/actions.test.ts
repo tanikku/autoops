@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   updateWebsiteSourceUrl: vi.fn(),
   deleteWebsiteSnapshot: vi.fn(),
   transaction: vi.fn(),
+  lockUser: vi.fn(),
+  countRoutines: vi.fn(),
   revalidatePath: vi.fn(),
   notFound: vi.fn(),
   redirect: vi.fn(),
@@ -52,11 +54,26 @@ vi.mock("@/lib/prisma", () => ({
   prisma: { $transaction: mocks.transaction },
 }));
 
-const TX = { tag: "transaction-client" } as const;
+/**
+ * The client a transaction hands its callback.
+ *
+ * **It carries the two tables the account quota reads**, so the quota runs for
+ * real rather than being stood in for: turning a worker on has to lock the
+ * account, count what is already active, and write — all in the transaction
+ * the marker identifies.
+ */
+const TX = {
+  tag: "transaction-client",
+  user: { update: mocks.lockUser },
+  routine: { count: mocks.countRoutines },
+} as const;
 
 const { updateRoutineAction } = await import(
   "@/app/dashboard/workers/[id]/edit/actions"
 );
+// The limit itself belongs to the quota module; these read it rather than
+// restating it, so raising it does not silently leave these testing nothing.
+const { ACTIVE_WORKER_LIMIT } = await import("@/lib/worker-quota");
 
 class RedirectSignal extends Error {}
 class NotFoundSignal extends Error {}
@@ -108,6 +125,9 @@ beforeEach(() => {
   mocks.transaction
     .mockReset()
     .mockImplementation((run: (tx: unknown) => Promise<unknown>) => run(TX));
+  mocks.lockUser.mockReset().mockResolvedValue({ id: "google-sub-1" });
+  // An account with room to turn another worker on, unless a test says so.
+  mocks.countRoutines.mockReset().mockResolvedValue(0);
   mocks.getUserTimezone.mockReset().mockResolvedValue("UTC");
   // English by default, so the assertions above stay about what was saved
   // rather than about what it was called.
@@ -120,6 +140,235 @@ beforeEach(() => {
     throw new RedirectSignal();
   });
   vi.spyOn(console, "error").mockImplementation(() => {});
+});
+
+/**
+ * Turning a worker on, when the account has only so many it may run at once.
+ *
+ * **Only the transition asks.** A worker that is already active is part of the
+ * count rather than an addition to it, so editing one must not be refused
+ * because the account is full — it is what the account is full *of*. What has
+ * to hold is that the answer and the write are the same transaction: a decision
+ * committed on its own is a decision about a moment that has passed.
+ *
+ * The limit itself is fixed in `lib/worker-quota.test.ts`; what these fix is
+ * which edits ask, and what an account at its limit is told.
+ */
+describe("updateRoutineAction — the active-worker limit", () => {
+  /** A worker that is on, and one the account has yet to turn on. */
+  const paused = () => stored({ status: "paused" });
+  const draft = () => stored({ status: "draft" });
+
+  it("turns a paused worker on when there is room", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+    mocks.countRoutines.mockResolvedValue(ACTIVE_WORKER_LIMIT - 1);
+
+    const result = await save(form({ status: "active", frequency: "manual" }));
+
+    expect(result?.status).toBe("success");
+    expect(mocks.updateRoutine).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to turn one on when the account is at its limit", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+    mocks.countRoutines.mockResolvedValue(ACTIVE_WORKER_LIMIT);
+
+    const result = await save(form({ status: "active", frequency: "manual" }));
+
+    expect(result?.status).toBe("error");
+    expect(mocks.updateRoutine).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("refuses a draft the same way", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(draft());
+    mocks.countRoutines.mockResolvedValue(ACTIVE_WORKER_LIMIT);
+
+    expect(
+      (await save(form({ status: "active", frequency: "manual" })))?.status,
+    ).toBe("error");
+    expect(mocks.updateRoutine).not.toHaveBeenCalled();
+  });
+
+  it("says so under the Status control, keeping what was typed", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+    mocks.countRoutines.mockResolvedValue(ACTIVE_WORKER_LIMIT);
+
+    const result = await save(
+      form({ name: "Renamed", status: "active", frequency: "manual" }),
+    );
+
+    expect(result?.errors?.status).toBe(
+      "You can have 10 active Workers at a time. Pause one to activate another.",
+    );
+    expect(result?.message).toBe(result?.errors?.status);
+    expect(result?.values?.name).toBe("Renamed");
+  });
+
+  it("says it in Japanese for an account that reads Japanese", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+    mocks.countRoutines.mockResolvedValue(ACTIVE_WORKER_LIMIT);
+
+    const result = await save(form({ status: "active", frequency: "manual" }));
+
+    expect(result?.errors?.status).toBe(
+      "同時に Active にできる Worker は 10 個までです。別の Worker を Active にするには、どれかを一時停止してください。",
+    );
+  });
+
+  it("counts only this account's active workers", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+
+    await save(form({ status: "active", frequency: "manual" }));
+
+    expect(mocks.countRoutines).toHaveBeenCalledWith({
+      where: { userId: "google-sub-1", status: "active" },
+    });
+  });
+
+  it("locks the account, counts, then writes — in that order", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+
+    await save(form({ status: "active", frequency: "manual" }));
+
+    expect(mocks.lockUser.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.countRoutines.mock.invocationCallOrder[0],
+    );
+    expect(mocks.countRoutines.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.updateRoutine.mock.invocationCallOrder[0],
+    );
+    // And all of it in the transaction the write belongs to.
+    expect(mocks.updateRoutine).toHaveBeenCalledWith(
+      "worker-1",
+      expect.anything(),
+      "google-sub-1",
+      TX,
+    );
+  });
+
+  it("asks nothing of the quota when editing a worker that is already on", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(stored({ status: "active" }));
+    mocks.countRoutines.mockResolvedValue(ACTIVE_WORKER_LIMIT);
+
+    const result = await save(
+      form({ name: "Renamed", status: "active", frequency: "manual" }),
+    );
+
+    expect(result?.status).toBe("success");
+    expect(mocks.lockUser).not.toHaveBeenCalled();
+    expect(mocks.countRoutines).not.toHaveBeenCalled();
+  });
+
+  it("lets a full account turn a worker off", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(stored({ status: "active" }));
+    mocks.countRoutines.mockResolvedValue(ACTIVE_WORKER_LIMIT);
+
+    const result = await save(form({ status: "paused", frequency: "manual" }));
+
+    expect(result?.status).toBe("success");
+    expect(mocks.countRoutines).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing when a paused worker stays paused", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+
+    await save(form({ status: "paused", frequency: "manual" }));
+
+    expect(mocks.countRoutines).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **A manual worker spends a slot too.** Nothing schedules it, and that is
+   * deliberately not the question: the limit is about the state somebody can
+   * see on the dashboard.
+   */
+  it("counts a manual worker being turned on", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+    mocks.countRoutines.mockResolvedValue(ACTIVE_WORKER_LIMIT);
+
+    expect(
+      (await save(form({ status: "active", frequency: "manual" })))?.status,
+    ).toBe("error");
+  });
+
+  it("moves the address and the baseline in the same transaction as the check", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(
+      stored({ status: "paused", kind: "website" }),
+    );
+    mocks.getWebsiteSource.mockResolvedValue({
+      id: "source-1",
+      url: "https://example.com/old",
+    });
+
+    const result = await save(
+      form({
+        status: "active",
+        frequency: "manual",
+        prompt: "Summarise what changed.",
+        websiteUrl: "https://example.com/new",
+      }),
+    );
+
+    expect(result?.status).toBe("success");
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.updateWebsiteSourceUrl).toHaveBeenCalledWith(
+      "worker-1",
+      "google-sub-1",
+      "https://example.com/new",
+      TX,
+    );
+    expect(mocks.deleteWebsiteSnapshot).toHaveBeenCalledWith("source-1", TX);
+  });
+
+  it("touches neither the address nor the baseline when the quota refuses", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(
+      stored({ status: "paused", kind: "website" }),
+    );
+    mocks.getWebsiteSource.mockResolvedValue({
+      id: "source-1",
+      url: "https://example.com/old",
+    });
+    mocks.countRoutines.mockResolvedValue(ACTIVE_WORKER_LIMIT);
+
+    await save(
+      form({
+        status: "active",
+        frequency: "manual",
+        prompt: "Summarise what changed.",
+        websiteUrl: "https://example.com/new",
+      }),
+    );
+
+    expect(mocks.updateWebsiteSourceUrl).not.toHaveBeenCalled();
+    expect(mocks.deleteWebsiteSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("keeps a database failure a database failure", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+    mocks.countRoutines.mockRejectedValue(new Error("connection terminated"));
+
+    const result = await save(form({ status: "active", frequency: "manual" }));
+
+    expect(result?.message).toBe("Could not save the worker.");
+    expect(result?.errors?.status).toBeUndefined();
+    expect(console.error).toHaveBeenCalled();
+  });
+
+  /**
+   * **Turning a worker on is not a schedule change**, so the pending slot it
+   * already had is left exactly where it was — including one in the past, which
+   * the next tick will pick up. That is the existing catch-up behaviour and the
+   * quota does not touch it.
+   */
+  it("still leaves the pending slot alone when only the status changes", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+
+    await save(form({ status: "active", frequency: "manual" }));
+
+    const [, update] = mocks.updateRoutine.mock.calls[0];
+    expect(update).not.toHaveProperty("nextRunAt");
+  });
 });
 
 describe("updateRoutineAction — the prompt contract", () => {
