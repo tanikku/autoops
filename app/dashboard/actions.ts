@@ -7,6 +7,7 @@ import {
   releaseManualRunSlot,
 } from "@/lib/manual-run-slot";
 import { enqueueRoutine } from "@/lib/queue";
+import { consumeManualRunQuota } from "@/lib/rate-limit";
 import { deleteRoutine, getRoutine } from "@/lib/routines";
 import { isRunPersistenceError } from "@/lib/runs";
 import { DEFAULT_LANGUAGE, t } from "@/lib/i18n";
@@ -137,6 +138,40 @@ export async function runRoutineAction(
 
   let run;
   try {
+    // **Inside the `try` whose `finally` gives the slot back**, and that
+    // placement is the whole of what keeps a refusal from costing fifteen
+    // minutes: everything from here on leaves through the release below,
+    // including the two returns in this block.
+    //
+    // **Counted when a run is started, not when a model is called.** A website
+    // worker that finds nothing changed asks no model and still spends one —
+    // what is bounded is the operation the account asked for. Nothing gives it
+    // back afterwards, whatever the run turns out to be.
+    let allowed: boolean;
+    try {
+      allowed = await consumeManualRunQuota(userId);
+    } catch (error) {
+      // **Fail closed.** Not knowing how much of the allowance is left is not
+      // the same as knowing there is some. The driver's own complaint stays in
+      // the log — it names tables and connections, and the person who pressed
+      // a button can do nothing with it — and what comes back names no cause,
+      // which is what `couldNotStart` is for.
+      console.error("[worker] manual run rate limit could not be read", error);
+      return {
+        status: "error",
+        message: t(language, "run.action.couldNotStart", {
+          name: routine.name,
+        }),
+      };
+    }
+
+    if (!allowed) {
+      // An ordinary answer rather than a failure, and a different one from
+      // "already running": that says a run of theirs is in progress, this says
+      // they have started as many as they may for now.
+      return { status: "error", message: t(language, "run.action.rateLimited") };
+    }
+
     run = await enqueueRoutine(routineId);
   } catch (error) {
     // Already running is not a failure — nothing was attempted, so there is

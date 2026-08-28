@@ -571,7 +571,8 @@ Beyond the capability boundary in [section 2](#2-what-autoops-can-and-cannot-do)
 | **Twenty Workers per account** | Drafts, paused and active Workers all count. Delete one to make room |
 | **Ten active Workers per account** | Pause one to activate another. A Worker set to Active counts even if its schedule is Manual |
 | **One run per Worker at a time** | A second attempt is refused while one is in progress |
-| **One manual run at a time** | Pressing Run while a Worker you started by hand is still going is refused, whichever Worker it is. There is no limit on how many you may start over a day |
+| **One manual run at a time** | Pressing Run while a Worker you started by hand is still going is refused, whichever Worker it is |
+| **Twenty manual runs an hour** | Per account, counted from the first run of the hour. A run that fails still counts. Scheduled runs are not counted against it |
 | **Availability is not guaranteed** | It is a beta; runs may be missed |
 
 ---

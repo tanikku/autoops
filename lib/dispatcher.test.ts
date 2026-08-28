@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   enqueueRoutine: vi.fn(),
   getUserTimezone: vi.fn(),
   acquireManualRunSlot: vi.fn(),
+  consumeManualRunQuota: vi.fn(),
   calls: [] as string[],
 }));
 
@@ -42,6 +43,12 @@ vi.mock("@/lib/users", () => ({ getUserTimezone: mocks.getUserTimezone }));
 // nothing here should make.
 vi.mock("@/lib/manual-run-slot", () => ({
   acquireManualRunSlot: mocks.acquireManualRunSlot,
+}));
+// Nor is the account's hourly allowance a collaborator of the dispatcher: a
+// scheduled run is not one somebody started, and counting it against them
+// would let a busy afternoon at the keyboard stop the schedule.
+vi.mock("@/lib/rate-limit", () => ({
+  consumeManualRunQuota: mocks.consumeManualRunQuota,
 }));
 
 const { dispatchDueWorkers, MAX_TICK_EXECUTION_MS } = await import(
@@ -67,6 +74,7 @@ function due(id: string, overrides: Partial<DueWorker> = {}): DueWorker {
 beforeEach(() => {
   mocks.calls.length = 0;
   mocks.acquireManualRunSlot.mockReset();
+  mocks.consumeManualRunQuota.mockReset();
   mocks.getDueWorkers.mockReset().mockResolvedValue([]);
   mocks.claimRoutineSlot.mockReset().mockResolvedValue(true);
   mocks.enqueueRoutine.mockReset().mockResolvedValue({ status: "completed" });
@@ -97,12 +105,13 @@ describe("dispatchDueWorkers", () => {
    * Asking here would mean a worker skipping its slot because its owner
    * happened to be running something else at the time.
    */
-  it("asks for no account slot, whatever it hands off", async () => {
+  it("asks for no account slot or allowance, whatever it hands off", async () => {
     mocks.getDueWorkers.mockResolvedValue([due("worker-1"), due("worker-2")]);
 
     await dispatchDueWorkers(NOW);
 
     expect(mocks.acquireManualRunSlot).not.toHaveBeenCalled();
+    expect(mocks.consumeManualRunQuota).not.toHaveBeenCalled();
   });
 
   it("does not hand off a worker whose slot it lost", async () => {

@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   enqueueRoutine: vi.fn(),
   acquireManualRunSlot: vi.fn(),
   releaseManualRunSlot: vi.fn(),
+  consumeManualRunQuota: vi.fn(),
   claimRoutineSlot: vi.fn(),
   revalidatePath: vi.fn(),
 }));
@@ -39,6 +40,12 @@ vi.mock("@/lib/queue", () => ({ enqueueRoutine: mocks.enqueueRoutine }));
 vi.mock("@/lib/manual-run-slot", () => ({
   acquireManualRunSlot: mocks.acquireManualRunSlot,
   releaseManualRunSlot: mocks.releaseManualRunSlot,
+}));
+// The allowance is a boundary of its own — what it does with the row it keeps
+// is fixed in `lib/rate-limit.test.ts`. What these need from it is the answer,
+// when it was asked for, and that it is asked exactly once.
+vi.mock("@/lib/rate-limit", () => ({
+  consumeManualRunQuota: mocks.consumeManualRunQuota,
 }));
 vi.mock("@/lib/routines", () => ({
   getRoutine: mocks.getRoutine,
@@ -76,6 +83,7 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ slotNumber: 0, token: "slot-token", expiresAt: NOW });
   mocks.releaseManualRunSlot.mockReset().mockResolvedValue("released");
+  mocks.consumeManualRunQuota.mockReset().mockResolvedValue(true);
   mocks.claimRoutineSlot.mockReset();
   mocks.revalidatePath.mockReset();
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -470,6 +478,252 @@ describe("runRoutineAction — a guard that will not answer", () => {
       message:
         "「Daily digest」を開始できませんでした。しばらくしてからもう一度お試しください。",
     });
+  });
+});
+
+/**
+ * How many runs an account may start by hand in an hour.
+ *
+ * **A different question from the slot**, and the two are answered in that
+ * order for a reason: the slot says whether a run of theirs is happening right
+ * now, and this says whether they have started too many lately. A second press
+ * while the first is still going is refused by the slot and costs nothing —
+ * only a run that is actually about to start spends one.
+ *
+ * **Nothing gives it back.** What is bounded is the operation the account asked
+ * for: a website worker that finds nothing changed asks no model and still
+ * spends one, because it still fetched somebody else's page.
+ */
+describe("runRoutineAction — how many runs an hour", () => {
+  it("starts the run when the account has room", async () => {
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.consumeManualRunQuota).toHaveBeenCalledTimes(1);
+    expect(mocks.consumeManualRunQuota).toHaveBeenCalledWith("user-1");
+    expect(mocks.enqueueRoutine).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks for the allowance after the slot and before anything runs", async () => {
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.acquireManualRunSlot.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.consumeManualRunQuota.mock.invocationCallOrder[0],
+    );
+    expect(mocks.consumeManualRunQuota.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.enqueueRoutine.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("starts nothing once the allowance is spent", async () => {
+    mocks.consumeManualRunQuota.mockResolvedValue(false);
+
+    expect(await runRoutineAction(null, form("worker-1"))).toEqual({
+      status: "error",
+      message: "Manual run limit reached. Try again later.",
+    });
+    expect(mocks.enqueueRoutine).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("logs nothing for a refusal, because nothing went wrong", async () => {
+    mocks.consumeManualRunQuota.mockResolvedValue(false);
+    vi.mocked(console.error).mockClear();
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **The slot goes back even though nothing ran.** A refusal that left it
+   * held would cost the account fifteen minutes for pressing a button once —
+   * which is why the allowance is asked for inside the `try` the release
+   * belongs to rather than before it.
+   */
+  it("gives the slot back when the allowance refuses", async () => {
+    mocks.consumeManualRunQuota.mockResolvedValue(false);
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.releaseManualRunSlot).toHaveBeenCalledWith(
+      "user-1",
+      0,
+      "slot-token",
+    );
+  });
+
+  it("says so in Japanese for an account that reads Japanese", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    mocks.consumeManualRunQuota.mockResolvedValue(false);
+
+    expect(await runRoutineAction(null, form("worker-1"))).toEqual({
+      status: "error",
+      message:
+        "手動実行の利用上限に達しました。しばらくしてからもう一度お試しください。",
+    });
+  });
+
+  it.each([["draft"], ["paused"], ["active"]])(
+    "counts a %s worker the same way",
+    async (status) => {
+      mocks.getRoutine.mockResolvedValue({
+        id: "worker-1",
+        name: "Daily digest",
+        status,
+      });
+
+      await runRoutineAction(null, form("worker-1"));
+
+      expect(mocks.consumeManualRunQuota).toHaveBeenCalledTimes(1);
+      expect(mocks.enqueueRoutine).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("spends exactly one on a run that finished", async () => {
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.consumeManualRunQuota).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives nothing back when the run failed", async () => {
+    mocks.enqueueRoutine.mockResolvedValue({ status: "failed" });
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.consumeManualRunQuota).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives nothing back when execution threw", async () => {
+    mocks.enqueueRoutine.mockRejectedValue(new Error("boom"));
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.consumeManualRunQuota).toHaveBeenCalledTimes(1);
+    expect(mocks.releaseManualRunSlot).toHaveBeenCalled();
+  });
+
+  it("gives nothing back when the outcome could not be recorded", async () => {
+    mocks.enqueueRoutine.mockRejectedValue(
+      new RunPersistenceError("completed", "run-1"),
+    );
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.consumeManualRunQuota).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives nothing back when the worker turned out to be busy", async () => {
+    mocks.enqueueRoutine.mockRejectedValue(
+      new ExecutionSuppressedError("worker-1"),
+    );
+
+    expect(await runRoutineAction(null, form("worker-1"))).toEqual({
+      status: "error",
+      message: '"Daily digest" is already running.',
+    });
+    expect(mocks.consumeManualRunQuota).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Where the allowance is *not* asked about.
+ *
+ * **Everything that answers before a run could start.** A press that was never
+ * going to run anything must not cost the account one of its twenty — most of
+ * all a second press while the first run is still going, which is the ordinary
+ * way somebody meets the slot.
+ */
+describe("runRoutineAction — what costs nothing", () => {
+  it("asks nothing when another run of theirs is in progress", async () => {
+    mocks.acquireManualRunSlot.mockResolvedValue(null);
+
+    expect(await runRoutineAction(null, form("worker-1"))).toEqual({
+      status: "error",
+      message:
+        "Another run of yours is still in progress. Wait for it to finish.",
+    });
+    expect(mocks.consumeManualRunQuota).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing when the slot itself could not be read", async () => {
+    mocks.acquireManualRunSlot.mockRejectedValue(new Error("connection lost"));
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.consumeManualRunQuota).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing for a form that named no worker", async () => {
+    await runRoutineAction(null, form(""));
+
+    expect(mocks.consumeManualRunQuota).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing when there is no session", async () => {
+    mocks.requireUserId.mockImplementation(() => {
+      throw new RedirectSignal("/");
+    });
+
+    await expect(
+      runRoutineAction(null, form("worker-1")),
+    ).rejects.toBeInstanceOf(RedirectSignal);
+    expect(mocks.consumeManualRunQuota).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing for a worker that is not the account's", async () => {
+    mocks.getRoutine.mockResolvedValue(null);
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.consumeManualRunQuota).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * An allowance that cannot be read is not an allowance that said yes.
+ */
+describe("runRoutineAction — an allowance that will not answer", () => {
+  function driverFailure() {
+    return new Error('connection terminated: relation "RateLimitBucket"');
+  }
+
+  it("starts nothing and says so without naming the database", async () => {
+    mocks.consumeManualRunQuota.mockRejectedValue(driverFailure());
+
+    const result = await runRoutineAction(null, form("worker-1"));
+
+    expect(result).toEqual({
+      status: "error",
+      message: '"Daily digest" could not be started. Try again in a moment.',
+    });
+    expect(mocks.enqueueRoutine).not.toHaveBeenCalled();
+  });
+
+  it("keeps the driver's own words out of what comes back, and logs them", async () => {
+    mocks.consumeManualRunQuota.mockRejectedValue(driverFailure());
+    vi.mocked(console.error).mockClear();
+
+    const result = await runRoutineAction(null, form("worker-1"));
+    const message = (result as { message: string }).message;
+
+    expect(message).not.toContain("RateLimitBucket");
+    expect(message).not.toContain("connection terminated");
+    expect(console.error).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(console.error).mock.calls[0][0]).toBe(
+      "[worker] manual run rate limit could not be read",
+    );
+  });
+
+  it("gives the slot back", async () => {
+    mocks.consumeManualRunQuota.mockRejectedValue(driverFailure());
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.releaseManualRunSlot).toHaveBeenCalledWith(
+      "user-1",
+      0,
+      "slot-token",
+    );
   });
 });
 

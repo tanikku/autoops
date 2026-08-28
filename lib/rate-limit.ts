@@ -5,27 +5,27 @@ import { prisma } from "@/lib/prisma";
 /**
  * How much of a rate-limited action an account may take, and in what span.
  *
- * **One allowance, for drafting a worker with AI.** This is not a metering,
- * billing or plan system, and the shape here is deliberately too small to
- * become one: there is a single scope, a single limit, and no way to ask how
- * much of it is left. What it is for is one thing — an account cannot spend an
- * unbounded amount of somebody else's money by holding down a button on a
- * form.
+ * **Two allowances, and the shape is deliberately too small to become a
+ * metering system.** Drafting a worker with AI is one; starting a worker by
+ * hand is the other. Each has its own constants and its own function, and
+ * neither is reachable through a general "spend some quota of any kind" API —
+ * there is no way for a caller to invent a scope or name a limit, which is what
+ * keeps this from growing into billing.
  *
- * **The counter lives in the database, and that is the whole design.** A limit
+ * **The counters live in the database, and that is the whole design.** A limit
  * kept in the process resets on every deploy and restart, and stops being one
- * limit at all the moment a second replica exists — both of which are ordinary
- * on the platform this runs on rather than hypothetical.
+ * limit at all the moment a second replica exists — both ordinary on the
+ * platform this runs on rather than hypothetical.
  *
- * **`consumeAiDraftQuota` is the only way in.** Nothing reads the count and
- * decides: the limit is a condition inside the write, so two requests arriving
- * together are separated by the database rather than by whichever of them read
- * first. See the note on that function for why every step is a conditional
- * `updateMany`.
+ * **Nothing reads a count and decides.** The limit is a condition inside the
+ * write, so two requests arriving together are separated by the database rather
+ * than by whichever of them read first. See `consumeFixedWindowQuota` for why
+ * every step is a conditional `updateMany`.
  *
- * **It bounds AI drafts, and only those.** Running a worker by hand is not
- * bounded by anything, here or elsewhere, and nothing in this module should be
- * read as saying otherwise.
+ * **These bound how often, not how many at once.** A single hand-started run at
+ * a time is `lib/manual-run-slot.ts`, which is a different question with a
+ * different answer: a slot is given back when the run ends, and a count here
+ * never is.
  */
 
 /** How many AI drafts one account may ask for inside a window. */
@@ -46,13 +46,38 @@ export const AI_DRAFT_LIMIT = 10;
 export const AI_DRAFT_WINDOW_MS = 60 * 60 * 1000;
 
 /**
- * Which allowance the rows above belong to.
+ * Which allowance the AI-draft rows belong to.
  *
  * A constant rather than a literal at the call site: the column is a plain
  * string, so a typo would silently give an account a second, empty allowance
  * instead of failing.
  */
 export const AI_DRAFT_SCOPE = "worker-draft";
+
+/**
+ * How many runs one account may start by hand inside a window.
+ *
+ * **Higher than the draft limit, and for a reason rather than by accident.**
+ * Running a worker is the product; asking AutoOps to write one is a
+ * convenience on the way to it. Someone building a worker tries it several
+ * times, and a limit that made that awkward would be bounding the wrong thing.
+ *
+ * What it bounds in the worst case is twenty model calls and twenty fetches of
+ * somebody else's website in an hour, per account.
+ */
+export const MANUAL_RUN_LIMIT = 20;
+
+/**
+ * How long a manual-run window lasts.
+ *
+ * **The same rule as the draft window and deliberately not the same constant.**
+ * They happen to be an hour apiece; they are two product decisions about two
+ * different actions, and one moving should not move the other.
+ */
+export const MANUAL_RUN_WINDOW_MS = 60 * 60 * 1000;
+
+/** Which allowance the hand-started-run rows belong to. */
+export const MANUAL_RUN_SCOPE = "manual-run";
 
 /** Prisma's code for a unique constraint that would have been broken. */
 const UNIQUE_VIOLATION = "P2002";
@@ -81,14 +106,16 @@ function isUniqueViolation(error: unknown): boolean {
  */
 async function takeFromLiveWindow(
   userId: string,
+  scope: string,
+  limit: number,
   floor: Date,
 ): Promise<boolean> {
   const { count } = await prisma.rateLimitBucket.updateMany({
     where: {
       userId,
-      scope: AI_DRAFT_SCOPE,
+      scope,
       windowStartedAt: { gte: floor },
-      count: { lt: AI_DRAFT_LIMIT },
+      count: { lt: limit },
     },
     data: { count: { increment: 1 } },
   });
@@ -97,7 +124,13 @@ async function takeFromLiveWindow(
 }
 
 /**
- * Spends one AI draft from this account's allowance.
+ * Spends one of an account's allowance, whichever allowance it is.
+ *
+ * **Internal, and it stays internal.** The two exported functions below name
+ * their own scope, limit and window; a caller that could pass its own would be
+ * able to invent an allowance nobody decided on, or spend one action's against
+ * another's. The generality here is in service of not writing this twice, not
+ * of making it configurable.
  *
  * **Four steps, each one a write with its own condition, and no read that a
  * decision is made from.** They are in this order because each one describes a
@@ -115,6 +148,9 @@ async function takeFromLiveWindow(
  * remaining race, a window expiring between steps, resolves on the caller's
  * next request rather than being chased here.
  *
+ * **Scopes are separate rows.** The unique key is the account *and* the scope,
+ * so spending one allowance cannot touch the other's count or move its window.
+ *
  * **A denial and a failure are not the same answer.** `false` means the
  * allowance is spent, which is an ordinary thing to tell somebody; a database
  * that would not answer throws, because the caller has to fail closed rather
@@ -122,24 +158,20 @@ async function takeFromLiveWindow(
  * `acquireExecutionLease` makes between `null` and a rejection.
  *
  * **Consuming is not reserving.** Whatever the caller does next may fail, and
- * nothing here gives the allowance back — the request was made, and the cost
- * it guards was already incurred by the time anyone knows how it went.
- *
- * `now` is the application's clock, exactly as it is in `acquireExecutionLease`
- * and for the same reason: reading the database's would mean raw SQL, and the
- * difference only shows up once more than one process is writing. Passing it
- * is also what makes the window boundary testable without moving the clock.
- *
- * @returns `true` when the request may go ahead, `false` when the allowance is
- *   spent. A database failure throws, because it is neither.
+ * nothing here gives the allowance back — the request was made, and the cost it
+ * guards was already incurred by the time anyone knows how it went. There is no
+ * refund, and deliberately no function that could perform one.
  */
-export async function consumeAiDraftQuota(
+async function consumeFixedWindowQuota(
   userId: string,
-  now: Date = new Date(),
+  scope: string,
+  limit: number,
+  windowMs: number,
+  now: Date,
 ): Promise<boolean> {
-  const floor = new Date(now.getTime() - AI_DRAFT_WINDOW_MS);
+  const floor = new Date(now.getTime() - windowMs);
 
-  if (await takeFromLiveWindow(userId, floor)) {
+  if (await takeFromLiveWindow(userId, scope, limit, floor)) {
     return true;
   }
 
@@ -150,7 +182,7 @@ export async function consumeAiDraftQuota(
   const rolled = await prisma.rateLimitBucket.updateMany({
     where: {
       userId,
-      scope: AI_DRAFT_SCOPE,
+      scope,
       windowStartedAt: { lt: floor },
     },
     data: { windowStartedAt: now, count: 1 },
@@ -161,7 +193,7 @@ export async function consumeAiDraftQuota(
   }
 
   const existing = await prisma.rateLimitBucket.findUnique({
-    where: { userId_scope: { userId, scope: AI_DRAFT_SCOPE } },
+    where: { userId_scope: { userId, scope } },
   });
 
   if (!existing) {
@@ -169,7 +201,7 @@ export async function consumeAiDraftQuota(
       await prisma.rateLimitBucket.create({
         data: {
           userId,
-          scope: AI_DRAFT_SCOPE,
+          scope,
           windowStartedAt: now,
           count: 1,
         },
@@ -187,5 +219,58 @@ export async function consumeAiDraftQuota(
     }
   }
 
-  return takeFromLiveWindow(userId, floor);
+  return takeFromLiveWindow(userId, scope, limit, floor);
+}
+
+/**
+ * Spends one AI draft from this account's allowance.
+ *
+ * `now` is the application's clock, exactly as it is in `acquireExecutionLease`
+ * and for the same reason: reading the database's would mean raw SQL, and the
+ * difference only shows up once more than one process is writing. Passing it is
+ * also what makes the window boundary testable without moving the clock.
+ *
+ * @returns `true` when the request may go ahead, `false` when the allowance is
+ *   spent. A database failure throws, because it is neither.
+ */
+export async function consumeAiDraftQuota(
+  userId: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  return consumeFixedWindowQuota(
+    userId,
+    AI_DRAFT_SCOPE,
+    AI_DRAFT_LIMIT,
+    AI_DRAFT_WINDOW_MS,
+    now,
+  );
+}
+
+/**
+ * Spends one hand-started run from this account's allowance.
+ *
+ * **Only the manual path calls this.** A scheduled run is bounded by the tick
+ * it belongs to — five workers at most, worked through one at a time, on the
+ * tick's own budget — and refusing one because its owner pressed Run twenty
+ * times would make the schedule depend on what somebody happened to be doing.
+ *
+ * **Counted when a run is started, not when a model is called.** A website
+ * worker whose page has not changed asks no model and still spends one: what is
+ * bounded is the operation the account asked for, which fetched somebody else's
+ * page whatever came of it.
+ *
+ * @returns `true` when the run may go ahead, `false` when the allowance is
+ *   spent. A database failure throws, because it is neither.
+ */
+export async function consumeManualRunQuota(
+  userId: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  return consumeFixedWindowQuota(
+    userId,
+    MANUAL_RUN_SCOPE,
+    MANUAL_RUN_LIMIT,
+    MANUAL_RUN_WINDOW_MS,
+    now,
+  );
 }

@@ -414,6 +414,15 @@ export const en = {
    * which would be untrue: nothing ran, nothing was billed, and there is no
    * result page to look at.
    */
+  /**
+   * The account has started as many runs by hand as it may in an hour.
+   *
+   * **Not `userBusy`.** That one means a run of theirs is happening right now
+   * and will finish; this one means waiting is the only thing that helps, and
+   * for longer. The two lead somewhere different, so they are two sentences.
+   */
+  "run.action.rateLimited":
+    "Manual run limit reached. Try again later.",
   "run.action.couldNotStart":
     "\"{name}\" could not be started. Try again in a moment.",
   "run.action.outcomeNotRecorded":

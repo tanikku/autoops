@@ -655,10 +655,43 @@ about how long somebody should wait after a crash, and is deliberately neither
 derived from nor shared with `EXECUTION_LEASE_MS`, which happens to be the same
 fifteen minutes and answers a different question.
 
-**It is a concurrency guard and not a rate limit.** One run at a time, over and
-over, is unbounded work and is still allowed; counting requests over a window is
-what `RateLimitBucket` does for AI drafts, and the two are kept apart
-deliberately.
+**It is a concurrency guard and not a rate limit**, and the two sit side by
+side rather than in one mechanism — see [Twenty manual runs an
+hour](#twenty-manual-runs-an-hour).
+
+#### Twenty manual runs an hour
+
+One run at a time is not a bound on how much work an account can ask for: a run
+that finishes can be followed immediately by the next. **So a second guard
+counts them** — twenty hand-started runs per account, in a fixed hour measured
+from the run that opened it, exactly as AI drafting is counted and in the same
+table.
+
+**It is the same `RateLimitBucket`, under a different scope.** The row is keyed
+by account *and* scope, so `manual-run` and `worker-draft` are separate rows with
+separate windows: spending one cannot move the other, and neither knows the
+other exists. That is what the table was for — a scope is a constant here rather
+than a migration.
+
+**Counted when a run is started, not when a model is called.** A website worker
+that finds nothing changed asks no model and still spends one, because it still
+fetched somebody else's page. What is bounded is the operation the account asked
+for.
+
+**Asked for after the slot and before execution**, which is what makes a second
+press while a run is going free: that one is refused by the slot, having cost
+nothing. The allowance is checked inside the same `try` whose cleanup gives the
+slot back, so a refusal — or a database that will not answer — releases the slot
+rather than leaving it held for fifteen minutes.
+
+**Spent on the way in, and never given back.** A run that fails, a page that
+could not be fetched, an outcome that could not be written down: all of them
+still cost one. There is no refund and deliberately no function that could
+perform one.
+
+**Scheduled runs are not counted.** A tick takes five workers at most and works
+through them one at a time; refusing one because its owner had been pressing Run
+would make the schedule depend on what somebody happened to be doing.
 
 **The lease lasts fifteen minutes and nothing renews it.** That is comfortably
 longer than the ten a single request is allowed, with the rest covering what

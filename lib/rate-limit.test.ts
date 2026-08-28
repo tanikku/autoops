@@ -27,12 +27,17 @@ vi.mock("@/lib/prisma", () => ({
   prisma: { rateLimitBucket: { updateMany, findUnique, create } },
 }));
 
+const rateLimit = await import("@/lib/rate-limit");
 const {
   AI_DRAFT_LIMIT,
   AI_DRAFT_SCOPE,
   AI_DRAFT_WINDOW_MS,
   consumeAiDraftQuota,
-} = await import("@/lib/rate-limit");
+  consumeManualRunQuota,
+  MANUAL_RUN_LIMIT,
+  MANUAL_RUN_SCOPE,
+  MANUAL_RUN_WINDOW_MS,
+} = rateLimit;
 
 const NOW = new Date("2026-08-28T12:00:00.000Z");
 const USER = "google-sub-1";
@@ -257,5 +262,194 @@ describe("consumeAiDraftQuota — the scope", () => {
       where: { userId_scope: { userId: USER, scope: "worker-draft" } },
     });
     expect(create.mock.calls[0][0].data.scope).toBe("worker-draft");
+  });
+});
+
+describe("the two allowances", () => {
+  it("keeps drafting and running apart", () => {
+    expect(MANUAL_RUN_LIMIT).toBe(20);
+    expect(MANUAL_RUN_WINDOW_MS).toBe(3_600_000);
+    expect(MANUAL_RUN_SCOPE).toBe("manual-run");
+    expect(AI_DRAFT_SCOPE).toBe("worker-draft");
+    expect(MANUAL_RUN_SCOPE).not.toBe(AI_DRAFT_SCOPE);
+  });
+
+  /**
+   * **There is no "spend some quota" API, and that is the design.** A caller
+   * that could name its own scope or its own limit could invent an allowance
+   * nobody decided on, or spend one action's against another's. What is
+   * exported is one function per action, each naming its own constants.
+   */
+  it("exposes only the two named allowances", () => {
+    const exported = Object.keys(rateLimit).filter((name) =>
+      name.startsWith("consume"),
+    );
+
+    expect(exported.sort()).toEqual([
+      "consumeAiDraftQuota",
+      "consumeManualRunQuota",
+    ]);
+    expect(consumeManualRunQuota.length).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("consumeManualRunQuota — a live window", () => {
+  it("allows the twentieth run of the hour", async () => {
+    updateMany.mockResolvedValue({ count: 1 });
+
+    expect(await consumeManualRunQuota(USER, NOW)).toBe(true);
+    expect(updateCall(1).where).toMatchObject({
+      userId: USER,
+      scope: MANUAL_RUN_SCOPE,
+      count: { lt: MANUAL_RUN_LIMIT },
+    });
+    expect(updateCall(1).data).toEqual({ count: { increment: 1 } });
+  });
+
+  it("refuses the twenty-first", async () => {
+    updateMany.mockResolvedValue({ count: 0 });
+    findUnique.mockResolvedValue({ id: "bucket-1" });
+
+    expect(await consumeManualRunQuota(USER, NOW)).toBe(false);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("reads nothing before writing", async () => {
+    updateMany.mockResolvedValue({ count: 1 });
+
+    await consumeManualRunQuota(USER, NOW);
+
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("consumeManualRunQuota — the window boundary", () => {
+  it("counts a window that began exactly an hour ago as the current one", async () => {
+    updateMany.mockResolvedValue({ count: 1 });
+
+    await consumeManualRunQuota(USER, NOW);
+
+    const exactlyAnHourAgo = new Date(NOW.getTime() - MANUAL_RUN_WINDOW_MS);
+    expect(matchesLiveWindow(updateCall(1).where, exactlyAnHourAgo)).toBe(true);
+  });
+
+  it("starts a new window on the first run past the hour", async () => {
+    updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    expect(await consumeManualRunQuota(USER, NOW)).toBe(true);
+
+    const justPast = new Date(NOW.getTime() - MANUAL_RUN_WINDOW_MS - 1);
+    expect(matchesLiveWindow(updateCall(1).where, justPast)).toBe(false);
+    expect(matchesExpiredWindow(updateCall(2).where, justPast)).toBe(true);
+    expect(updateCall(2).data).toEqual({ windowStartedAt: NOW, count: 1 });
+  });
+});
+
+describe("consumeManualRunQuota — an account with no row yet", () => {
+  it("opens a window with one run counted against it", async () => {
+    updateMany.mockResolvedValue({ count: 0 });
+    findUnique.mockResolvedValue(null);
+    create.mockResolvedValue({ id: "bucket-1" });
+
+    expect(await consumeManualRunQuota(USER, NOW)).toBe(true);
+    expect(create).toHaveBeenCalledWith({
+      data: {
+        userId: USER,
+        scope: MANUAL_RUN_SCOPE,
+        windowStartedAt: NOW,
+        count: 1,
+      },
+    });
+  });
+
+  it("takes the row somebody else created first", async () => {
+    updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+    findUnique.mockResolvedValue(null);
+    create.mockRejectedValue(uniqueViolation());
+
+    expect(await consumeManualRunQuota(USER, NOW)).toBe(true);
+    expect(updateMany).toHaveBeenCalledTimes(3);
+  });
+
+  it("denies the loser of that race when the winner filled the window", async () => {
+    updateMany.mockResolvedValue({ count: 0 });
+    findUnique.mockResolvedValue(null);
+    create.mockRejectedValue(uniqueViolation());
+
+    expect(await consumeManualRunQuota(USER, NOW)).toBe(false);
+    expect(updateMany).toHaveBeenCalledTimes(3);
+  });
+
+  it("throws a create failure that is not the unique constraint", async () => {
+    updateMany.mockResolvedValue({ count: 0 });
+    findUnique.mockResolvedValue(null);
+    create.mockRejectedValue(
+      Object.assign(new Error("foreign key violated"), { code: "P2003" }),
+    );
+
+    await expect(consumeManualRunQuota(USER, NOW)).rejects.toThrow(
+      "foreign key violated",
+    );
+  });
+
+  it("throws rather than denying when the write fails", async () => {
+    updateMany.mockRejectedValue(new Error("connection terminated"));
+
+    await expect(consumeManualRunQuota(USER, NOW)).rejects.toThrow(
+      "connection terminated",
+    );
+  });
+});
+
+/**
+ * **One account, two allowances, and nothing in common but the table.** The
+ * unique key is the account *and* the scope, so a run and a draft address
+ * different rows; what these fix is that neither function ever names the
+ * other's scope.
+ */
+describe("the scopes do not meet", () => {
+  it("spends a run against the manual-run row only", async () => {
+    updateMany.mockResolvedValue({ count: 0 });
+    findUnique.mockResolvedValue(null);
+    create.mockResolvedValue({ id: "bucket-1" });
+
+    await consumeManualRunQuota(USER, NOW);
+
+    for (const [argument] of updateMany.mock.calls) {
+      expect(argument.where.scope).toBe("manual-run");
+    }
+    expect(findUnique).toHaveBeenCalledWith({
+      where: { userId_scope: { userId: USER, scope: "manual-run" } },
+    });
+    expect(create.mock.calls[0][0].data.scope).toBe("manual-run");
+  });
+
+  it("spends a draft against the worker-draft row only", async () => {
+    updateMany.mockResolvedValue({ count: 0 });
+    findUnique.mockResolvedValue(null);
+    create.mockResolvedValue({ id: "bucket-1" });
+
+    await consumeAiDraftQuota(USER, NOW);
+
+    for (const [argument] of updateMany.mock.calls) {
+      expect(argument.where.scope).toBe("worker-draft");
+    }
+    expect(create.mock.calls[0][0].data.scope).toBe("worker-draft");
+  });
+
+  it("asks each about its own limit", async () => {
+    updateMany.mockResolvedValue({ count: 1 });
+
+    await consumeAiDraftQuota(USER, NOW);
+    await consumeManualRunQuota(USER, NOW);
+
+    expect(updateCall(1).where.count).toEqual({ lt: AI_DRAFT_LIMIT });
+    expect(updateCall(2).where.count).toEqual({ lt: MANUAL_RUN_LIMIT });
+    expect(AI_DRAFT_LIMIT).not.toBe(MANUAL_RUN_LIMIT);
   });
 });
