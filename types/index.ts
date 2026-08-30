@@ -187,6 +187,15 @@ export type RecentRun = {
   /** Shown inline, truncated by the layout rather than by the query. */
   output: string;
   routineName: string;
+  /**
+   * What the worker is, or null when this version cannot read the stored value.
+   *
+   * **Carried for the output's sake rather than the row's.** Two of the
+   * sentences `output` can hold are AutoOps' own and are shown in the account's
+   * language; the rest is what a model wrote and is left alone. Telling them
+   * apart needs to know that a website worker produced it.
+   */
+  routineKind: RoutineKind | null;
 };
 
 /**

@@ -32,6 +32,10 @@ import {
   markWebsiteSnapshotCheckedIfCurrent,
   WebsiteStateConflictError,
 } from "@/lib/website-snapshots";
+import {
+  WEBSITE_BASELINE_OUTPUT,
+  WEBSITE_UNCHANGED_OUTPUT,
+} from "@/lib/run-display";
 import { getWebsiteSource } from "@/lib/website-sources";
 import { acquireWebsiteDomainThrottle } from "@/lib/website-throttle";
 import {
@@ -195,7 +199,12 @@ export async function listRecentRuns(
       status: true,
       startedAt: true,
       output: true,
-      routine: { select: { name: true } },
+      // **The kind comes along because the output cannot be read without it.**
+      // Two of the sentences this column holds are AutoOps' own and are shown
+      // in the account's language; every other value in it is the worker's
+      // product and is not. Only a website worker writes the first kind — see
+      // `lib/run-display.ts`.
+      routine: { select: { name: true, kind: true } },
     },
   });
 
@@ -205,6 +214,9 @@ export async function listRecentRuns(
     startedAt: record.startedAt,
     output: record.output,
     routineName: record.routine.name,
+    // Narrowed here as everywhere else: a stored kind this version cannot read
+    // is null rather than a guess, and null is not `website`.
+    routineKind: isRoutineKind(record.routine.kind) ? record.routine.kind : null,
   }));
 }
 
@@ -602,9 +614,14 @@ async function executePrompt(
  * paths, so the row has to say something for itself. They are fixed sentences
  * rather than composed ones so that two runs of the same worker in the same
  * state are identical.
+ *
+ * **Imported rather than spelled out here**, because a screen has to recognise
+ * exactly these two strings to show them in the account's language
+ * (`lib/run-display.ts`). Two copies of a sentence would not fail anything —
+ * the write would keep working and the recognition would quietly stop.
  */
-const BASELINE_NOT_ESTABLISHED = "Website baseline is not established yet.";
-const CONTENT_UNCHANGED = "Website content has not changed.";
+const BASELINE_NOT_ESTABLISHED = WEBSITE_BASELINE_OUTPUT;
+const CONTENT_UNCHANGED = WEBSITE_UNCHANGED_OUTPUT;
 
 /**
  * Why a change could not be dealt with.

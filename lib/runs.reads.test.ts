@@ -107,7 +107,11 @@ describe("the dashboard's activity list", () => {
       status: true,
       startedAt: true,
       output: true,
-      routine: { select: { name: true } },
+      // The kind comes with the name because the output cannot be read
+      // without it: two of the sentences that column holds are AutoOps' own
+      // and are shown in the account's language, and only a website worker
+      // writes them.
+      routine: { select: { name: true, kind: true } },
     });
   });
 

@@ -1016,6 +1016,16 @@ screen that showed it checked. The reason is a diagnostic in whatever wording
 the failure arrived with, so it belongs on one execution's page rather than in
 a list; the activity feed shows output alone.
 
+**Two sentences in `output` are AutoOps' own**, and they are the only ones: a
+website worker's first check and one that found nothing have no model answer to
+record, so the run says so for itself. They are stored in English and
+**translated when shown**, which is why a run from before an account changed its
+language still reads in the current one. Recognising them is exact — the worker
+must be a `website` worker and the stored text must match one of the two word
+for word — because everything else in that column is what a model wrote, and
+that is the account's material rather than ours to reword. See
+`lib/run-display.ts`.
+
 **Every stored `DateTime` is UTC**, which is what makes them comparable and
 what the scheduler relies on. A timezone changes how they are read, never what
 is stored.

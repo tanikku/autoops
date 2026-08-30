@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { RunHistoryEntry, Routine } from "@/types";
+import type { RecentRun, Routine } from "@/types";
 
 /**
  * What the dashboard says, in each language.
@@ -58,16 +58,18 @@ const HEALTH = {
   stuck: false,
 };
 
-const RUN: RunHistoryEntry = {
+/**
+ * A prompt worker's row, carrying — deliberately — a sentence that a website
+ * worker would have had translated. What keeps it in English is the kind: a
+ * prompt worker's output is the account's material, whatever it happens to say.
+ */
+const RUN: RecentRun = {
   id: "run-1",
-  routineId: "worker-1",
-  userId: "user-1",
   status: "completed",
   startedAt: NOW,
-  finishedAt: NOW,
   output: "Website baseline is not established yet.",
-  errorMessage: null,
   routineName: "宝塚市 パブリック・コメント",
+  routineKind: "prompt",
 };
 
 const OVERVIEW = {
@@ -96,7 +98,7 @@ const overview = (language: string) =>
 
 const activity = (
   language: string,
-  runs: RunHistoryEntry[] = [RUN],
+  runs: RecentRun[] = [RUN],
   now: Date = NOW,
 ) =>
   renderToStaticMarkup(
@@ -307,6 +309,33 @@ describe("the activity list", () => {
     }
   });
 
+  /**
+   * **The two sentences a website worker writes about itself are ours.** They
+   * live in the same column as what a model produces, and the kind is what
+   * tells them apart — which is why the row carries it.
+   */
+  it.each([
+    ["a first check", "Website baseline is not established yet.", "サイトの初回状態を記録しました。"],
+    ["a check that found nothing", "Website content has not changed.", "サイトの内容に変更はありませんでした。"],
+  ])("reads %s in the account's language", (_label, stored, japanese) => {
+    const runs = [{ ...RUN, output: stored, routineKind: "website" as const }];
+
+    expect(activity("en", runs)).toContain(stored);
+
+    const ja = activity("ja", runs);
+    expect(ja).toContain(japanese);
+    expect(ja).not.toContain(stored);
+  });
+
+  it("still shows a website worker's AI answer as it was written", () => {
+    const summary = "The consultation deadline moved.";
+    const runs = [{ ...RUN, output: summary, routineKind: "website" as const }];
+
+    for (const language of ["en", "ja"]) {
+      expect(activity(language, runs)).toContain(summary);
+    }
+  });
+
   it("says there is nothing yet, in each language", () => {
     expect(activity("en", [])).toContain("No activity yet");
     expect(activity("ja", [])).toContain("実行履歴はまだありません");
@@ -338,11 +367,10 @@ describe("a language this version does not know", () => {
  */
 describe("a run that has been running too long", () => {
   const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
-  const running = (startedAt: Date): RunHistoryEntry => ({
+  const running = (startedAt: Date): RecentRun => ({
     ...RUN,
     status: "running",
     startedAt,
-    finishedAt: null,
     output: "",
   });
 

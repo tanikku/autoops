@@ -171,6 +171,32 @@ describe("run detail — a website run", () => {
     expect(labelled(await render()).Output).toBe(output);
   });
 
+  /**
+   * The same reading the activity list makes, on the page that shows one run:
+   * AutoOps' own two sentences are read in the account's language, and a
+   * model's answer is shown exactly as it was written.
+   */
+  it.each([
+    ["a first check", "Website baseline is not established yet.", "サイトの初回状態を記録しました。"],
+    ["a check that found nothing", "Website content has not changed.", "サイトの内容に変更はありませんでした。"],
+  ])("reads %s in Japanese for an account that reads Japanese", async (_label, stored, japanese) => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    mocks.getRun.mockResolvedValue(website({ output: stored }));
+
+    expect(Object.values(labelled(await render()))).toContain(japanese);
+  });
+
+  it("shows an AI answer as it was written, whatever the language", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    mocks.getRun.mockResolvedValue(
+      website({ output: "The price moved to £12." }),
+    );
+
+    expect(Object.values(labelled(await render()))).toContain(
+      "The price moved to £12.",
+    );
+  });
+
   it("shows the error of a failed check", async () => {
     mocks.getRun.mockResolvedValue(
       website({ status: "failed", output: "", errorMessage: "Fetch failed." }),

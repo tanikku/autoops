@@ -394,6 +394,19 @@ export const en = {
    * failed are stored on the execution and shown there, in the words they
    * arrived in.
    */
+  /**
+   * The two sentences a website worker's own runs record when there was
+   * nothing for a model to say.
+   *
+   * **Stored in English and translated when shown.** They sit in
+   * `RunHistory.output` beside what models write, which is the account's
+   * material and is never touched — see `lib/run-display.ts` for the two
+   * conditions that keep the two apart. The English here is word for word what
+   * is stored, so an English reader sees no difference at all.
+   */
+  "run.system.websiteBaseline": "Website baseline is not established yet.",
+  "run.system.websiteUnchanged": "Website content has not changed.",
+
   "run.action.noWorkerSelected": "No worker selected.",
   "run.action.alreadyRunning": "\"{name}\" is already running.",
   /**

@@ -6,6 +6,7 @@ import { DashboardNav } from "@/components/dashboard-nav";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDateTimeWithSeconds } from "@/lib/datetime";
+import { formatRunOutputForDisplay } from "@/lib/run-display";
 import { isRunStuck } from "@/lib/health";
 import { t, type TranslationKey } from "@/lib/i18n";
 import { promptVariables, renderPrompt } from "@/lib/prompt";
@@ -211,7 +212,17 @@ export default async function RunDetailPage({
             value={run.errorMessage ?? ""}
           />
         ) : (
-          <Block label={t(language, "run.detail.output")} value={run.output} />
+          <Block
+            label={t(language, "run.detail.output")}
+            /* The same reading as the activity list makes: AutoOps' own two
+               sentences are shown in the account's language, and a model's
+               answer is shown as it was written. */
+            value={formatRunOutputForDisplay(
+              run.output,
+              run.routineKind,
+              language,
+            )}
+          />
         )}
       </main>
     </div>

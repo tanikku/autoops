@@ -3,6 +3,7 @@ import { TriangleAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatDateTimeWithSeconds } from "@/lib/datetime";
+import { formatRunOutputForDisplay } from "@/lib/run-display";
 import { isRunStuck } from "@/lib/health";
 import { t, type TranslationKey } from "@/lib/i18n";
 import type { RecentRun, RunStatus } from "@/types";
@@ -66,7 +67,15 @@ export function RunHistoryList({
               <p className="truncate font-medium">{run.routineName}</p>
               <p className="text-xs text-muted-foreground">
                 {formatDateTimeWithSeconds(run.startedAt, timezone)}
-                {run.output ? ` — ${run.output}` : null}
+                {/* **Two of the sentences this column holds are ours.** A
+                    website worker that found nothing to report still records
+                    something, and that something is interface copy that
+                    happens to be stored — it reads in the account's language.
+                    Everything else here is what a model wrote, and is shown
+                    exactly as it was produced. */}
+                {run.output
+                  ? ` — ${formatRunOutputForDisplay(run.output, run.routineKind, language)}`
+                  : null}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">

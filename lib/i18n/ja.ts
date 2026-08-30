@@ -245,6 +245,9 @@ export const ja: Record<TranslationKey, string> = {
   "worker.action.deleteFailed": "Worker を削除できませんでした。",
   "worker.action.deleted": "Worker を削除しました。",
 
+  "run.system.websiteBaseline": "サイトの初回状態を記録しました。",
+  "run.system.websiteUnchanged": "サイトの内容に変更はありませんでした。",
+
   "run.action.noWorkerSelected": "Worker が選択されていません。",
   "run.action.alreadyRunning": "「{name}」は実行中です。",
   "run.action.userBusy":

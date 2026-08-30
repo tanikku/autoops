@@ -158,6 +158,7 @@
 | throttle の待機は **`FETCH_BUDGET_MS`(20秒)の内側**。retry は **1回だけ**。2回目も拒否なら `WatcherErrorKind = "throttled"` | budget 外に出すと 1 worker の最悪が 140s → 180s になり、逐次 dispatch の tick 最悪値が Railway の 300s edge を超える(Spike で実算)。待った後は残り budget を**読み直して**hop へ渡す |
 | throttle 拒否は **RunHistory `failed`**。行を作らない案(create を fetch の後ろへ移す)は採らない | 移すと timeout / blocked-address / http-error など**全 fetch 失敗の行が消える**。Sprint 39 で `errorMessage` を分離した意味を失う。Snapshot は不変(既存「失敗は baseline を動かさない」を維持) |
 | `lib/watcher` に **Prisma を import しない**。throttle は `FetchDeps` で注入する | resolver / transport と同じ注入境界。DB を入れると watcher の全規則が DB なしでテストできなくなる |
+| `RunHistory.output` のうち **AutoOps 自身が書いた2文だけ**を表示時に i18n する。保存値は英語のまま変えない | `output` には「モデルの生成物」と「AutoOps の報告」が同居している。前者は利用者の素材で翻訳禁止、後者は画面の言葉。**判定は `routine.kind === "website"` かつ完全一致の2条件**で、前方一致・部分一致・正規表現は使わない — prompt worker は同じ文を意図的に出力できるため。保存時に訳す案は language 変更に追随できないので不採用。`errorMessage` は補間つき `WatcherError` が多く、一部だけ訳すと不揃いになるため**今回は対象外** |
 | `take` は **未採用**。ただし scheduler に置くことを永久に禁じたわけでもない | 本番 Routine 0件で行数の実害がなく、catch-up と組み合わせるとバックログが1 interval を超えた時点でスロットを静かに失う。tenant fairness の論点も未解決。**根拠が揃うまで入れない**、が理由のすべて |
 
 ## 現在地

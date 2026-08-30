@@ -467,6 +467,12 @@ Clicking an Activity row opens **Execution**, which shows:
 shows exactly what the model was asked, including whether you left a
 `(paste … here)` line in by mistake.
 
+**AutoOps writes its own messages in the language you chose; what a Worker
+produced is shown as it was written.** When a website check finds nothing new,
+the line you see is AutoOps speaking and follows your Language setting — even
+for runs from before you changed it. Anything a model wrote is left exactly as
+it came back, whichever language that is.
+
 ---
 
 ## 18. Understanding Health
