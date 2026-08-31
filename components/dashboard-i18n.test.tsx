@@ -46,6 +46,7 @@ const WORKER: Routine = {
   runAtWeekday: null,
   runAtDay: null,
   nextRunAt: NOW,
+  emailNotificationsEnabled: false,
   createdAt: NOW,
   updatedAt: NOW,
 };

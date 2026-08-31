@@ -210,6 +210,10 @@ export async function createRoutineAction(
     runAtMinutes,
     runAtWeekday,
     runAtDay,
+    // Taken from the form as submitted. **It decides whether to send, not
+    // where**: the recipient is this account, read from its own row when a run
+    // finishes, and nothing in the submission can name anybody.
+    emailNotificationsEnabled: input.emailNotificationsEnabled,
     nextRunAt: calculateNextRunAt({
       frequency,
       runAtMinutes,

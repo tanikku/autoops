@@ -76,6 +76,8 @@ export type WorkerFieldValues = {
   runAtWeekday?: number | null;
   /** 1 to 31, or null for no particular day. */
   runAtDay?: number | null;
+  /** Whether the owner asked to be emailed. Absent reads as off. */
+  emailNotificationsEnabled?: boolean;
 };
 
 /**
@@ -475,6 +477,41 @@ export function WorkerFields({
           </p>
         </div>
       ) : null}
+
+      {/* **After the schedule and before the status**, which is the order the
+          worker is read in: what it does, when it does it, whether to be told
+          about it, and then whether it is on at all.
+
+          **The description depends on the kind, because the event does.** A
+          website worker emails when the page moves — not on every check — and a
+          prompt worker emails when its run finishes; one sentence for both
+          would be vague about the half that matters. The failure line is shared
+          and does not mention the one failure that is not notified, which is a
+          decision about AutoOps' own politeness rather than anything set
+          here. */}
+      <div className="grid gap-2">
+        <div className="flex items-center gap-2">
+          <input
+            id="emailNotificationsEnabled"
+            name="emailNotificationsEnabled"
+            type="checkbox"
+            defaultChecked={values.emailNotificationsEnabled ?? false}
+            className="size-4 rounded border-input accent-primary"
+          />
+          <Label htmlFor="emailNotificationsEnabled">
+            {t(language, "worker.field.emailNotifications")}
+          </Label>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {t(
+            language,
+            website
+              ? "worker.field.emailNotificationsWebsite"
+              : "worker.field.emailNotificationsPrompt",
+          )}{" "}
+          {t(language, "worker.field.emailNotificationsFailure")}
+        </p>
+      </div>
 
       <div className="grid gap-2">
         <Label htmlFor="status">{t(language, "common.statusLabel")}</Label>

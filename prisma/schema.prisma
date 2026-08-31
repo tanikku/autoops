@@ -76,6 +76,20 @@ model Routine {
   /// pending slot already falls on.
   runAtDay            Int?
   nextRunAt           DateTime?
+  /// Whether AutoOps emails the owner about this worker's runs.
+  ///
+  /// **Per worker, and off unless somebody turned it on.** The default is what
+  /// makes this additive: every worker that existed before notifications did
+  /// keeps behaving exactly as it did, and Postgres fills the column in without
+  /// a backfill.
+  ///
+  /// **It says whether to send, not where.** There is no address here — the
+  /// recipient is the owner of the routine, read from `User.email` at the
+  /// moment a run finishes, so a worker cannot carry a destination of its own.
+  // Left unaligned with the block above on purpose: this name is longer than
+  // the column those share, and re-padding twenty untouched lines to fit it
+  // would put unrelated churn in the same diff.
+  emailNotificationsEnabled Boolean @default(false)
   /// Who currently holds the right to execute this worker, as an opaque token
   /// minted per acquisition. Null means nobody does.
   ///

@@ -134,7 +134,7 @@ gaps where facts are missing.
 
 **Important limitation** — AutoOps has **no access to your mailbox** and cannot
 send anything. Consider what you paste in: it is stored with the Worker and
-sent to Anthropic. See [Privacy](./USER_GUIDE.md#24-privacy).
+sent to Anthropic. See [Privacy](./USER_GUIDE.md#25-privacy).
 
 ---
 

@@ -133,6 +133,12 @@ export const ja: Record<TranslationKey, string> = {
   /** 「3rd」は英語の規則なので、日本語は素の数字を受け取る。 */
   "worker.field.monthDayOption": "{day}日",
   "worker.field.monthDayNote": "月末を超える日は、その月の最終日に実行されます。",
+  "worker.field.emailNotifications": "メール通知",
+  "worker.field.emailNotificationsWebsite":
+    "このページの変更を検出したときにメールで通知します。",
+  "worker.field.emailNotificationsPrompt":
+    "この Worker の実行が完了したときにメールで通知します。",
+  "worker.field.emailNotificationsFailure": "実行に失敗した場合も通知します。",
   "worker.field.runAt": "実行時刻",
   "worker.field.timezoneNote":
     "時刻はアカウントのタイムゾーン({timezone})で扱われます。空欄にすると、保存したときの時刻に実行されます。",
@@ -247,6 +253,21 @@ export const ja: Record<TranslationKey, string> = {
 
   "run.system.websiteBaseline": "サイトの初回状態を記録しました。",
   "run.system.websiteUnchanged": "サイトの内容に変更はありませんでした。",
+
+  /**
+   * 括弧は日本語の引用記号。`{name}` は利用者が入力した名前がそのまま入り、
+   * 本文に載る AI の要約や出力も翻訳しない。訳すのは AutoOps 自身の文言だけ。
+   */
+  "notify.email.changedSubject": "[AutoOps]「{name}」で変更を検出しました",
+  "notify.email.completedSubject": "[AutoOps]「{name}」が完了しました",
+  "notify.email.failedSubject": "[AutoOps]「{name}」の実行に失敗しました",
+  "notify.email.worker": "Worker: {name}",
+  "notify.email.detectedAt": "検出日時: {time}",
+  "notify.email.executedAt": "実行日時: {time}",
+  "notify.email.failedBody":
+    "実行に失敗しました。詳しい内容は AutoOps で確認してください。",
+  "notify.email.truncated": "続きは AutoOps で確認できます。",
+  "notify.email.viewRun": "この実行の詳細は AutoOps で確認できます:",
 
   "run.action.noWorkerSelected": "Worker が選択されていません。",
   "run.action.alreadyRunning": "「{name}」は実行中です。",

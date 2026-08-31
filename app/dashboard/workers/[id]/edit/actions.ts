@@ -201,6 +201,10 @@ export async function updateRoutineAction(
     runAtMinutes,
     runAtWeekday,
     runAtDay,
+    // **Written on every save, in both directions.** A checkbox that is not
+    // ticked submits nothing, so leaving the field out of the update when it
+    // reads false would make turning notifications off impossible.
+    emailNotificationsEnabled: input.emailNotificationsEnabled,
     ...scheduleUpdate,
   };
 

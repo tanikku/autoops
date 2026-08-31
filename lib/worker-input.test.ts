@@ -32,6 +32,7 @@ function input(overrides?: Partial<WorkerFormInput>): WorkerFormInput {
     runAtMinutes: null,
     runAtWeekday: null,
     runAtDay: null,
+    emailNotificationsEnabled: false,
     ...overrides,
   };
 }
@@ -324,6 +325,67 @@ describe("readWorkerForm — kind", () => {
 });
 
 /**
+ * The one setting that reaches outside AutoOps, as a form carries it.
+ *
+ * **A checkbox submits nothing when it is not ticked**, so "absent" has to mean
+ * off — and it has to mean off identically on both forms, because an edit that
+ * read an omitted field as "leave it alone" would make turning notifications
+ * back off impossible.
+ *
+ * **What is read is whether to send and never where.** There is no address in
+ * `WorkerFormInput` and nothing here puts one there: the recipient is looked up
+ * from the worker's owner when a run finishes.
+ */
+describe("readWorkerForm — email notifications", () => {
+  function form(fields: Record<string, string> = {}) {
+    const data = new FormData();
+    data.set("name", "Daily digest");
+    for (const [key, value] of Object.entries(fields)) {
+      data.set(key, value);
+    }
+    return data;
+  }
+
+  it("is off when the form does not mention it", () => {
+    expect(readWorkerForm(form()).emailNotificationsEnabled).toBe(false);
+  });
+
+  it.each(["on", "true", "1", "TRUE"])("is on when the value is %s", (value) => {
+    expect(
+      readWorkerForm(form({ emailNotificationsEnabled: value }))
+        .emailNotificationsEnabled,
+    ).toBe(true);
+  });
+
+  it.each([
+    ["blank", ""],
+    ["off", "off"],
+    ["false", "false"],
+    ["something nobody chose", "yes-please"],
+  ])("is off when the value is %s", (_label, value) => {
+    expect(
+      readWorkerForm(form({ emailNotificationsEnabled: value }))
+        .emailNotificationsEnabled,
+    ).toBe(false);
+  });
+
+  it("takes no recipient from the submission, whatever it carries", () => {
+    const parsed = readWorkerForm(
+      form({
+        emailNotificationsEnabled: "on",
+        email: "attacker@example.test",
+        to: "attacker@example.test",
+        notificationEmail: "attacker@example.test",
+        recipient: "attacker@example.test",
+      }),
+    );
+
+    expect(parsed.emailNotificationsEnabled).toBe(true);
+    expect(JSON.stringify(parsed)).not.toContain("attacker@example.test");
+  });
+});
+
+/**
  * The rules that only exist because a worker can watch a page.
  *
  * Two things are being held apart here. A website worker is asked for more than
@@ -494,6 +556,7 @@ describe("in Japanese", () => {
     runAtMinutes: null,
     runAtWeekday: null,
     runAtDay: null,
+    emailNotificationsEnabled: false,
   };
 
   const draft = { status: "draft" as const, frequency: "manual" as const };
@@ -588,6 +651,7 @@ describe("what the language does not change", () => {
     runAtMinutes: null,
     runAtWeekday: null,
     runAtDay: null,
+    emailNotificationsEnabled: false,
   };
 
   it.each([

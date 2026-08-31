@@ -64,6 +64,14 @@ export type Routine = {
    */
   runAtDay: number | null;
   nextRunAt: Date | null;
+  /**
+   * Whether finishing a run of this worker emails its owner.
+   *
+   * **A switch, not a destination.** There is no address anywhere on a worker:
+   * who is written to is whoever owns it, read at the moment there is something
+   * to say. Off unless somebody turned it on.
+   */
+  emailNotificationsEnabled: boolean;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -88,6 +96,12 @@ export type RoutineInput = {
   runAtWeekday: number | null;
   runAtDay: number | null;
   nextRunAt: Date | null;
+  /**
+   * **Editable, unlike `kind`.** Turning notifications on or off changes
+   * nothing else about the worker — no other row, no schedule, no baseline —
+   * so it belongs to the fields a save may carry.
+   */
+  emailNotificationsEnabled: boolean;
 };
 
 /**

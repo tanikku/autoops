@@ -93,6 +93,7 @@ function stored(overrides?: Record<string, unknown>) {
     runAtWeekday: null,
     runAtDay: null,
     nextRunAt: null,
+    emailNotificationsEnabled: false,
     createdAt: new Date("2026-08-01T00:00:00.000Z"),
     updatedAt: new Date("2026-08-01T00:00:00.000Z"),
     ...overrides,
@@ -140,6 +141,55 @@ beforeEach(() => {
     throw new RedirectSignal();
   });
   vi.spyOn(console, "error").mockImplementation(() => {});
+});
+
+/**
+ * Turning email notifications on and off.
+ *
+ * **The column is written on every save, in both directions.** A checkbox that
+ * is not ticked submits nothing, so an action that only wrote the field when it
+ * arrived would be able to turn notifications on and never off again — the
+ * worker would keep emailing and the form would keep showing the box unticked.
+ */
+describe("updateRoutineAction — email notifications", () => {
+  it("turns them on when the box was ticked", async () => {
+    const result = await save(
+      form({ status: "draft", frequency: "manual", emailNotificationsEnabled: "on" }),
+    );
+
+    expect(result?.status).toBe("success");
+    expect(mocks.updateRoutine).toHaveBeenCalledWith(
+      "worker-1",
+      expect.objectContaining({ emailNotificationsEnabled: true }),
+      "google-sub-1",
+    );
+  });
+
+  it("turns them off when the box was not ticked", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(
+      stored({ emailNotificationsEnabled: true }),
+    );
+
+    const result = await save(form({ status: "draft", frequency: "manual" }));
+
+    expect(result?.status).toBe("success");
+    expect(mocks.updateRoutine).toHaveBeenCalledWith(
+      "worker-1",
+      expect.objectContaining({ emailNotificationsEnabled: false }),
+      "google-sub-1",
+    );
+  });
+
+  /** A rejected save must not quietly untick what the person had just ticked. */
+  it("carries the setting back with a rejected submission", async () => {
+    const result = await save(
+      form({ name: "", emailNotificationsEnabled: "on" }),
+    );
+
+    expect(result?.status).toBe("error");
+    expect(result?.values?.emailNotificationsEnabled).toBe(true);
+    expect(mocks.updateRoutine).not.toHaveBeenCalled();
+  });
 });
 
 /**

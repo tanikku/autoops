@@ -91,6 +91,18 @@ export default function PrivacyPage() {
           </p>
         </Section>
 
+        <Section title="Email notifications">
+          <p>
+            Email notifications are off unless you turn them on, and you turn
+            them on for one worker at a time. While one is on, AutoOps sends a
+            message to the address on your account — never to any other — when
+            that worker&rsquo;s run finishes or fails. Sending goes through
+            Resend, which receives your address, the worker&rsquo;s name, and up
+            to two thousand characters of what the run produced. A message about
+            a failed run carries no detail of the failure.
+          </p>
+        </Section>
+
         <Section title="Where it is stored">
           <p>
             In a PostgreSQL database hosted on Railway, which also hosts the

@@ -58,6 +58,7 @@ export function toRoutine(record: RoutineRecord): Routine {
     runAtWeekday: record.runAtWeekday,
     runAtDay: record.runAtDay,
     nextRunAt: record.nextRunAt,
+    emailNotificationsEnabled: record.emailNotificationsEnabled,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   };

@@ -192,6 +192,28 @@ export const en = {
   "worker.field.monthDayOption": "{ordinal}",
   "worker.field.monthDayNote":
     "Days past the end of a month run on the last day instead.",
+  /**
+   * The one setting on this form that reaches outside AutoOps.
+   *
+   * **What it says depends on the kind, because what it does depends on the
+   * kind.** A website worker emails when the page it watches moves — not when
+   * it is checked, which is most of the time — and a prompt worker emails when
+   * its run finishes. One sentence covering both would have to be vague about
+   * the half that matters.
+   *
+   * The failure line is shared, because failure means the same thing for
+   * either. It does not mention the one failure that is not notified — a fetch
+   * AutoOps declined to make because it had asked that site a moment ago — as
+   * that is a decision of ours about our own politeness rather than anything
+   * the owner set or can act on.
+   */
+  "worker.field.emailNotifications": "Email notifications",
+  "worker.field.emailNotificationsWebsite":
+    "Email me when this page changes.",
+  "worker.field.emailNotificationsPrompt":
+    "Email me when this worker finishes.",
+  "worker.field.emailNotificationsFailure":
+    "You will also be notified if the run fails.",
   "worker.field.runAt": "Run at",
   "worker.field.timezoneNote":
     "Times use your account timezone: {timezone}. Leave empty to run at whatever time the worker was saved.",
@@ -406,6 +428,30 @@ export const en = {
    */
   "run.system.websiteBaseline": "Website baseline is not established yet.",
   "run.system.websiteUnchanged": "Website content has not changed.",
+
+  /**
+   * What an email about a finished run says, and the whole of what is
+   * translated in one.
+   *
+   * **The labels are AutoOps talking; everything they introduce is not.**
+   * `{name}` is the worker's name as it was typed, and the body carries a
+   * model's summary or a prompt worker's output exactly as it was stored —
+   * setting the interface to Japanese does not translate somebody's work, in an
+   * inbox any more than on a screen.
+   *
+   * **The failure line says nothing about the failure**, deliberately. The
+   * stored reason is a diagnostic in whatever wording it arrived with, and the
+   * link goes to the page that shows it.
+   */
+  "notify.email.changedSubject": "[AutoOps] \"{name}\" detected a change",
+  "notify.email.completedSubject": "[AutoOps] \"{name}\" completed",
+  "notify.email.failedSubject": "[AutoOps] \"{name}\" failed",
+  "notify.email.worker": "Worker: {name}",
+  "notify.email.detectedAt": "Detected at: {time}",
+  "notify.email.executedAt": "Executed at: {time}",
+  "notify.email.failedBody": "The run failed. Open AutoOps for details.",
+  "notify.email.truncated": "The rest is available in AutoOps.",
+  "notify.email.viewRun": "View this run in AutoOps:",
 
   "run.action.noWorkerSelected": "No worker selected.",
   "run.action.alreadyRunning": "\"{name}\" is already running.",

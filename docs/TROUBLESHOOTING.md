@@ -264,9 +264,17 @@ before its next scheduled slot. Use **Run** if you need it sooner.
 
 ### Nothing told me the run failed
 
-There are no notifications of any kind — no email, no alert, nothing. Failures
-are visible in **Activity** and in each Worker's **Health**, and only there.
-You have to look.
+**Check whether that Worker has Email notifications turned on.** It is off
+unless somebody turned it on, and it is set per Worker — see
+[Email notifications](./USER_GUIDE.md#23-email-notifications). With it off,
+failures are visible in **Activity** and in each Worker's **Health** and only
+there, and you have to look.
+
+With it on and still nothing arriving, the message may not have been delivered.
+**AutoOps does not retry and does not send it later**, and a delivery that
+failed changes nothing about the run: the result is in Activity exactly as it
+was recorded. Ask whoever operates the deployment to check the log for
+`[notify] could not send`.
 
 ### Rendered Prompt looks different from my prompt
 
@@ -361,6 +369,35 @@ It would not. Sessions are self-contained tokens with no server-side store, so
 an already-issued session stays valid until it expires.
 
 **The allowlist controls who can sign in next, not who is signed in now.**
+
+### An owner says their email notifications are not arriving
+
+Look for this line, one per message that was not sent:
+
+```
+[notify] could not send run=<id> worker=<id> reason=<...>
+```
+
+| `reason` | What it means |
+| --- | --- |
+| `not-configured` | `RESEND_API_KEY` or `EMAIL_FROM` is not set on the web service |
+| `link-unavailable` | `AUTH_URL` is unset or is not an address a link can be built from |
+| `recipient-unknown` | The owner's row or address could not be read |
+| `timeout` / `network` | The provider did not answer |
+| `rejected` | The provider answered and refused it — check the sending domain is verified |
+| `unreadable` | A success whose body was not what the API documents |
+
+**No line at all means nothing was attempted.** Either the Worker does not have
+notifications on, or the run was one that does not send: a website check that
+found nothing, a first check, or a fetch AutoOps declined because it had asked
+that host a moment ago.
+
+**Nothing here changes a run.** A message that could not be sent leaves the
+run's status, its result and its schedule exactly as they were, and there is no
+retry — the owner still has the result in the app.
+
+**The line names two ids and a reason and nothing else.** No address, no key,
+no provider response, and nothing the Worker produced.
 
 ### There is no admin view
 

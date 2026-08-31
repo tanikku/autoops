@@ -53,6 +53,49 @@ export async function getUserLanguage(userId: string): Promise<Language> {
 }
 
 /**
+ * Who a notification about this account's work goes to, and how it should read.
+ *
+ * **The only way an address is decided.** It is read from the owner's row at
+ * the moment there is something to say, through the id the routine carries —
+ * never from a form, and never from the session of whoever happened to start
+ * the run. A hand-started run and a scheduled one therefore reach the same
+ * inbox, which is the only answer that stays true when nobody is signed in.
+ *
+ * **`email` is `NOT NULL` and unique, so a row without one should not exist.**
+ * A missing row is the state that does: nothing writes one until a write path
+ * provisions it (`requireProvisionedUserId`), and a worker cannot exist without
+ * its owner's row — but a row deleted between a run finishing and this being
+ * asked is still reachable. Null is the answer for both, and the caller treats
+ * it as a delivery that could not happen rather than as a run that went wrong.
+ *
+ * **Reading must not be what creates the row**, which is why there is no
+ * fallback address and no upsert here. The zone and the language do fall back,
+ * the same as their own readers do: an account whose stored language this
+ * version cannot read still has an address worth writing to.
+ */
+export async function getNotificationRecipient(
+  userId: string,
+): Promise<{ email: string; language: Language; timezone: string } | null> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { email: true, language: true, timezone: true },
+  });
+
+  if (!user || user.email.trim() === "") {
+    return null;
+  }
+
+  return {
+    email: user.email,
+    language: isSupportedLanguage(user.language) ? user.language : DEFAULT_LANGUAGE,
+    // **The zone comes from the same row and the same read.** Every timestamp
+    // this account is shown elsewhere is in it, and an email disagreeing with
+    // the page it links to would be two answers to one question.
+    timezone: user.timezone,
+  };
+}
+
+/**
  * Changes the language AutoOps speaks to this user in.
  *
  * Touches that column and nothing else, for the same reason `setUserTimezone`

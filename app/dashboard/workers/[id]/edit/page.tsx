@@ -77,6 +77,7 @@ export default async function EditWorkerPage({
             runAt: minutesToTimeValue(worker.runAtMinutes),
             runAtWeekday: worker.runAtWeekday,
             runAtDay: worker.runAtDay,
+            emailNotificationsEnabled: worker.emailNotificationsEnabled,
           }}
           timezone={timezone}
           language={language}

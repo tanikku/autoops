@@ -91,10 +91,33 @@ export type WorkerFormInput = {
   runAtWeekday: number | null;
   /** 1 to 31, or null when no day was given. */
   runAtDay: number | null;
+  /**
+   * Whether the owner asked to be emailed about this worker's runs.
+   *
+   * **Not nullable, unlike the two enums above.** A checkbox that is not ticked
+   * submits nothing at all, so "absent" is what "off" looks like on the wire —
+   * there is no third state for a fallback to resolve, and inventing one would
+   * make an omitted field mean something different on each form.
+   */
+  emailNotificationsEnabled: boolean;
 };
 
 function text(formData: FormData, field: string): string {
   return String(formData.get(field) ?? "").trim();
+}
+
+/**
+ * Reads a checkbox, which submits a value only when it is ticked.
+ *
+ * **A closed list of the affirmatives rather than "anything not empty".** A
+ * browser sends `on` for a checkbox with no value of its own, and the other two
+ * are what a scripted submission or a test would plausibly send; everything
+ * else — including a value nobody here chose — reads as off, which is the
+ * setting that sends no mail.
+ */
+function checkbox(formData: FormData, field: string): boolean {
+  const raw = text(formData, field).toLowerCase();
+  return raw === "on" || raw === "true" || raw === "1";
 }
 
 const TIME_PATTERN = /^(\d{1,2}):(\d{2})$/;
@@ -198,6 +221,11 @@ export function readWorkerForm(formData: FormData): WorkerFormInput {
     runAtMinutes: timeOfDay(formData, "runAt"),
     runAtWeekday: weekday(formData, "runAtWeekday"),
     runAtDay: wholeNumberInRange(formData, "runAtDay", 1, 31),
+    // **What is read here is whether to send, and never where.** The recipient
+    // is the worker's owner, looked up from the database when a run finishes —
+    // there is no address field on either form, and adding one to the
+    // submission would change nothing.
+    emailNotificationsEnabled: checkbox(formData, "emailNotificationsEnabled"),
   };
 }
 

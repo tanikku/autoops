@@ -42,6 +42,8 @@ describe("the dictionaries", () => {
     expect(identical).toEqual([
       // The product's own noun, on the execution page.
       "run.detail.worker",
+      // The same noun, labelling the same thing in an email.
+      "notify.email.worker",
       // A language's own name for itself.
       "settings.language.english",
     ]);

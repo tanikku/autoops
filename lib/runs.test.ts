@@ -108,7 +108,13 @@ describe("runRoutine — which kind is being run", () => {
 
     expect(mocks.findUniqueOrThrow).toHaveBeenCalledWith({
       where: { id: "worker-1" },
-      select: { userId: true, prompt: true, kind: true },
+      select: {
+        userId: true,
+        name: true,
+        prompt: true,
+        kind: true,
+        emailNotificationsEnabled: true,
+      },
     });
   });
 

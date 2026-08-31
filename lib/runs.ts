@@ -7,6 +7,10 @@ import {
   ExecutionSuppressedError,
   releaseExecutionLease,
 } from "@/lib/execution-lease";
+import {
+  notifyRunOutcome,
+  type RunNotificationKind,
+} from "@/lib/notify/run-notification";
 import { type DbClient, prisma } from "@/lib/prisma";
 import { promptVariables, renderPrompt } from "@/lib/prompt";
 import {
@@ -15,7 +19,7 @@ import {
 } from "@/lib/watcher/change";
 import { buildWebsiteChangeContext } from "@/lib/watcher/change-context";
 import { decodeWebsiteContent } from "@/lib/watcher/decode";
-import { isWatcherError } from "@/lib/watcher/errors";
+import { isWatcherError, type WatcherErrorKind } from "@/lib/watcher/errors";
 import { fetchWatchedPage } from "@/lib/watcher/fetch";
 import { normalizeWebsiteContent } from "@/lib/watcher/normalize";
 import {
@@ -436,6 +440,59 @@ export async function latestExecutionFailureAt(): Promise<Date | null> {
 }
 
 /**
+ * A finished run, and whether it is worth telling its owner about.
+ *
+ * **Internal, and it exists so that the decision is made where the facts
+ * are.** Whether a website run found a change is `WebsiteChangeState`'s answer
+ * and is gone by the time the run row is returned; whether a fetch was refused
+ * by AutoOps' own politeness is a `WatcherErrorKind` and is gone the moment the
+ * failure is recorded. Reading either back out of `output` would mean deciding
+ * a notification from a string a model could also have written.
+ *
+ * `null` means there is nothing to send — a first check, a page that had not
+ * moved, a fetch this platform declined to make — rather than a send that was
+ * suppressed.
+ *
+ * **`runRoutine` still returns a `RunHistory`.** This shape does not leave the
+ * module, so the queue contract, the dispatcher and the manual run action are
+ * all untouched.
+ */
+type ExecutionOutcome = {
+  run: RunHistory;
+  notification: RunNotificationKind | null;
+};
+
+/**
+ * The one fetch failure that is AutoOps refusing rather than a site failing.
+ *
+ * Typed as a `WatcherErrorKind` so that renaming the kind is a compile error
+ * here rather than a notification policy that silently stops applying.
+ */
+const THROTTLED: WatcherErrorKind = "throttled";
+
+/**
+ * What a website run is worth saying, once it has finished.
+ *
+ * **A change that was dealt with, or a failure — and nothing else.** A first
+ * check and a page that had not moved are successful runs with nothing to
+ * report: an email about either would arrive on every cadence for as long as
+ * the page sat still, which is the opposite of what watching a page is for.
+ *
+ * Read from the run's `status` and the comparison's own state, never from what
+ * was written into `output`.
+ */
+function websiteNotification(
+  run: RunHistory,
+  change: WebsiteChangeState,
+): RunNotificationKind | null {
+  if (run.status === "failed") {
+    return "failed";
+  }
+
+  return change.state === "changed" ? "website-changed" : null;
+}
+
+/**
  * Executes a routine.
  *
  * **How long this takes is the provider's business, not this function's.**
@@ -471,6 +528,10 @@ export async function latestExecutionFailureAt(): Promise<Date | null> {
  * lasts a fixed span and nothing renews it, so a run that outlives its own
  * lease can overlap with the one that takes over. What holds regardless is
  * that the older run cannot release the newer one's claim.
+ *
+ * **What it may also do is tell the worker's owner**, once the outcome is
+ * recorded and the lease is back. That send cannot fail this function — see
+ * `lib/notify/run-notification.ts`.
  */
 export async function runRoutine(routineId: string): Promise<RunHistory> {
   // Read before taking the lease, so a worker that has been deleted still
@@ -482,9 +543,22 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
   // is the value the column holds, not the value a reader would be shown: the
   // conversion answers `prompt` for anything it cannot read, and running on
   // that answer is the one thing this must not do.
+  //
+  // **The name and the notification flag are read here rather than after the
+  // run.** Both belong to the worker as it was when the run started, which is
+  // the worker the message would be about; asking again afterwards would let a
+  // setting changed mid-run decide something about a run it did not apply to.
+  // Reading them costs nothing extra — this query already happens — and a
+  // worker with notifications off never reaches the owner's row at all.
   const routine = await prisma.routine.findUniqueOrThrow({
     where: { id: routineId },
-    select: { userId: true, prompt: true, kind: true },
+    select: {
+      userId: true,
+      name: true,
+      prompt: true,
+      kind: true,
+      emailNotificationsEnabled: true,
+    },
   });
 
   // **Before the lease, before the row, before anything leaves the process.**
@@ -501,12 +575,14 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
     throw new ExecutionSuppressedError(routineId);
   }
 
+  let outcome: ExecutionOutcome;
   try {
     // Both kinds share the lease, the run row, and the release below. What
     // differs is only what happens between them.
-    return routine.kind === "website"
-      ? await executeWebsite(routineId, routine.userId, routine.prompt)
-      : await executePrompt(routineId, routine.userId, routine.prompt);
+    outcome =
+      routine.kind === "website"
+        ? await executeWebsite(routineId, routine.userId, routine.prompt)
+        : await executePrompt(routineId, routine.userId, routine.prompt);
   } finally {
     // Every path out of the execution above comes through here — the result,
     // the failure, and the writes that record either. **The release cannot
@@ -514,6 +590,32 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
     // it was cleaning up after. A lease left behind lapses on its own.
     await releaseExecutionLease(routineId, lease.token);
   }
+
+  // **After the lease, and after the outcome is in the database.** Both halves
+  // of that order are deliberate. A run whose outcome could not be written
+  // leaves through the `try` above as a `RunPersistenceError` and never reaches
+  // this line, so nothing announces a run that has no page to link to; and
+  // sending outside the lease means a message that takes a moment does not make
+  // the worker look busy for that moment.
+  //
+  // **Nothing here can change the run.** `notifyRunOutcome` returns a promise
+  // that always resolves, whatever the provider did.
+  if (routine.emailNotificationsEnabled && outcome.notification !== null) {
+    await notifyRunOutcome({
+      runId: outcome.run.id,
+      routineId,
+      userId: routine.userId,
+      workerName: routine.name,
+      kind: outcome.notification,
+      // Set by whichever write recorded the outcome. The fallback is for the
+      // shape rather than for a case that happens: a run that reaches here has
+      // been finished by `recordSuccess` or `recordFailure`, and both write it.
+      finishedAt: outcome.run.finishedAt ?? new Date(),
+      output: outcome.run.output,
+    });
+  }
+
+  return outcome.run;
 }
 
 /**
@@ -561,7 +663,7 @@ async function executePrompt(
   routineId: string,
   userId: string,
   routinePrompt: string,
-): Promise<RunHistory> {
+): Promise<ExecutionOutcome> {
   // **Outside everything below**, because a run that has no row has not
   // started. The dispatcher counts a worker it could not start as `failed`,
   // and this is one of the ways that happens — it is not the same event as a
@@ -600,10 +702,21 @@ async function executePrompt(
       error,
     );
 
-    return recordFailure(run.id, providerFailureMessage(error));
+    return {
+      run: await recordFailure(run.id, providerFailureMessage(error)),
+      notification: "failed",
+    };
   }
 
-  return recordSuccess(run.id, output);
+  // **Every completed prompt run is worth telling somebody about, including
+  // one that produced nothing.** A prompt worker exists to answer, so the
+  // answer arriving is the event — there is no equivalent of a page that had
+  // not moved, and judging an answer by its length would be AutoOps deciding
+  // whether a model's reply was worth reading.
+  return {
+    run: await recordSuccess(run.id, output),
+    notification: "prompt-completed",
+  };
 }
 
 /**
@@ -674,7 +787,7 @@ async function executeWebsite(
   routineId: string,
   userId: string,
   routinePrompt: string,
-): Promise<RunHistory> {
+): Promise<ExecutionOutcome> {
   // A row first, for the same reason a prompt worker gets one: an attempt that
   // reached execution is an attempt, however it turns out. One run, one row.
   const run = await prisma.runHistory.create({
@@ -692,7 +805,10 @@ async function executeWebsite(
       // address configured has nothing to do, and doing something else instead
       // would answer a question nobody asked.
       console.error("[worker] website run has no source configured", routineId);
-      return recordFailure(run.id, NO_WEBSITE_CONFIGURED);
+      return {
+        run: await recordFailure(run.id, NO_WEBSITE_CONFIGURED),
+        notification: "failed",
+      };
     }
 
     inspection = await inspectWebsite(source.id, source.url);
@@ -709,12 +825,29 @@ async function executeWebsite(
 
     // Nothing got as far as comparing, so nothing about the stored state is
     // touched — not even the time it was last looked at.
-    return recordFailure(run.id, watcherFailureMessage(error));
+    const failed = await recordFailure(run.id, watcherFailureMessage(error));
+
+    // **The one failure nobody is emailed about.** A throttled fetch is AutoOps
+    // declining to ask a site for a page it asked for a moment ago — our own
+    // politeness, not the site's failure and not anything the owner can act on.
+    // **Only the notification is excluded**: the run is still `failed`, still
+    // carries its reason, and is still what `latestExecutionFailureAt` reads.
+    return {
+      run: failed,
+      notification:
+        isWatcherError(error) && error.kind === THROTTLED ? null : "failed",
+    };
   }
 
-  return inspection.change.state === "changed"
-    ? processWebsiteChange(routineId, run.id, routinePrompt, inspection)
-    : finalizeWebsiteRun(routineId, run.id, inspection);
+  const finished =
+    inspection.change.state === "changed"
+      ? await processWebsiteChange(routineId, run.id, routinePrompt, inspection)
+      : await finalizeWebsiteRun(routineId, run.id, inspection);
+
+  return {
+    run: finished,
+    notification: websiteNotification(finished, inspection.change),
+  };
 }
 
 /**

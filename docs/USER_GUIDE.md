@@ -24,8 +24,9 @@ Everything you need to use AutoOps during the Closed Beta.
 - [20. Pausing a Worker](#20-pausing-a-worker)
 - [21. Deleting a Worker](#21-deleting-a-worker)
 - [22. What happens when execution fails](#22-what-happens-when-execution-fails)
-- [23. Current Closed Beta limitations](#23-current-closed-beta-limitations)
-- [24. Privacy](#24-privacy)
+- [23. Email notifications](#23-email-notifications)
+- [24. Current Closed Beta limitations](#24-current-closed-beta-limitations)
+- [25. Privacy](#25-privacy)
 
 ---
 
@@ -547,8 +548,10 @@ A failed run is recorded, not lost:
 **Nothing is retried.** A failed scheduled run does not run again immediately —
 the Worker comes round at its next slot. If you want it sooner, press **Run**.
 
-**Nothing notifies you.** There is no email, no message, and no alert. You find
-out by looking at Activity or at a Worker's Health.
+**You are told only if you asked to be.** Turn on **Email notifications** for a
+Worker and a failed run emails you — see
+[section 23](#23-email-notifications). With it off, you find out by looking at
+Activity or at a Worker's Health.
 
 **A failed run does not shift the schedule.** The next run stays where it was
 going to be.
@@ -558,7 +561,48 @@ It is written for diagnosis rather than for reading comfortably.
 
 ---
 
-## 23. Current Closed Beta limitations
+## 23. Email notifications
+
+**Off unless you turn it on, and you turn it on for one Worker at a time.**
+There is an **Email notifications** checkbox when you create a Worker and when
+you edit one. Tick it, save, and AutoOps emails you about that Worker's runs.
+
+**Messages go to the address on your account** — the one you signed in with.
+There is nowhere to type a different address, and there is no way to add a
+second recipient.
+
+**Not every run sends one:**
+
+| What happened | Email |
+| --- | --- |
+| A Worker watching a page finds it changed | **Yes** — with what the AI made of the change |
+| The page had not changed | No |
+| The first check, which records what the page looks like now | No |
+| A Worker that runs a prompt finishes | **Yes** — with what it produced |
+| A run fails | **Yes** |
+
+**A page that has not changed sends nothing on purpose.** A Worker checking a
+page every day would otherwise email you every day to say nothing happened.
+
+**A failure email says the run failed and links to it.** The reason is on the
+result page in the app rather than in the message.
+
+**Long results are cut short.** A message carries the first part of what the
+run produced and says the rest is in AutoOps. The full result is always on the
+result page.
+
+**A message that cannot be delivered does not affect the run.** If sending
+fails for any reason, the run keeps its result exactly as it was recorded —
+nothing is lost from AutoOps, and the result page is still there. **Nothing is
+sent twice and nothing is retried**, so a message that never arrives is not
+resent later.
+
+**Emails come in the language your account is set to**, but what a Worker
+produced is never translated — it arrives exactly as it was stored.
+
+---
+
+## 24. Current Closed Beta limitations
 
 Beyond the capability boundary in [section 2](#2-what-autoops-can-and-cannot-do):
 
@@ -566,7 +610,8 @@ Beyond the capability boundary in [section 2](#2-what-autoops-can-and-cannot-do)
 | --- | --- |
 | **Invite only** | Sign-in is limited to invited addresses |
 | **Ten AI drafts an hour** | Asking AutoOps to write a Worker for you is limited to ten requests an hour per account |
-| **No notifications** | Failures are visible in the app; nothing is sent to you |
+| **Email notifications only** | Email is the only thing AutoOps sends anywhere, it is off unless you turn it on per Worker, and it goes to your account's address. There is no Slack, no chat, no phone notification, no webhook, and no daily summary |
+| **Nothing is sent twice** | A message is attempted once. If it cannot be delivered, it is not retried and not sent later — the result is still in AutoOps |
 | **No retry** | A failed run waits for its next slot |
 | **Each run list shows the newest twenty** | Activity shows an account's, a Worker's page shows that Worker's. No paging, no filtering, no search — older runs are kept, and nothing lists them |
 | **Runs are kept indefinitely** | Nothing expires. Deleting a Worker deletes its runs |
@@ -584,7 +629,7 @@ Beyond the capability boundary in [section 2](#2-what-autoops-can-and-cannot-do)
 
 ---
 
-## 24. Privacy
+## 25. Privacy
 
 What AutoOps stores, where it goes, and what it does not do is at
 the **`/privacy`** page in the app — reachable from the **Privacy** link in the
@@ -592,7 +637,9 @@ footer of the front page.
 
 The short version: your prompts are stored, they are sent to Anthropic to be
 run, results are kept until you delete the Worker, and there is no automatic
-expiry.
+expiry. If you turn [email notifications](#23-email-notifications) on for a
+Worker, your address and part of what that Worker produced also go to the
+service that sends the message.
 
 ---
 

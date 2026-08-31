@@ -150,6 +150,34 @@ describe("createRoutineAction", () => {
   });
 
   /**
+   * **Off unless the box was ticked**, which is what a checkbox that submits
+   * nothing looks like from here — and what keeps a worker hired before
+   * notifications existed behaving as it did.
+   */
+  it("hires a worker with notifications off when the form did not ask", async () => {
+    await createRoutineAction(null, form());
+
+    expect(mocks.createRoutine).toHaveBeenCalledWith(
+      expect.objectContaining({ emailNotificationsEnabled: false }),
+      "google-sub-1",
+      TX,
+    );
+  });
+
+  it("hires a worker with notifications on when the box was ticked", async () => {
+    await createRoutineAction(
+      null,
+      form({ emailNotificationsEnabled: "on" }),
+    );
+
+    expect(mocks.createRoutine).toHaveBeenCalledWith(
+      expect.objectContaining({ emailNotificationsEnabled: true }),
+      "google-sub-1",
+      TX,
+    );
+  });
+
+  /**
    * The order the schedule depends on. A first slot calculated before the
    * zone was read would land nine hours out for a Tokyo account, and nothing
    * downstream would ever say so.

@@ -37,7 +37,7 @@
   `lib/worker-input.ts` / `lib/prompt.ts` / `lib/ai/claude-provider.ts` /
   `lib/beta-access.ts` / `lib/rate-limit.ts` / cron route / **server action 5つ
   すべて**(run / create / edit / timezone / delete)。
-  **Test Files 55 / Tests 1647**(Node v24.16.0 のローカル実測。CI は Node 22)。
+  **Test Files 62 / Tests 1930**(Node v24.16.0 のローカル実測。CI は Node 22)。
 - **テストが1つも無いもの**を把握しておくこと: 全 component、
   `lib/schedule-label.ts`、**`auth.ts` 本体**(admission の判定ロジックは
   `lib/beta-access.ts` へ分離してテスト済みだが、callback の結線自体は未テスト)。
@@ -159,6 +159,19 @@
 | throttle 拒否は **RunHistory `failed`**。行を作らない案(create を fetch の後ろへ移す)は採らない | 移すと timeout / blocked-address / http-error など**全 fetch 失敗の行が消える**。Sprint 39 で `errorMessage` を分離した意味を失う。Snapshot は不変(既存「失敗は baseline を動かさない」を維持) |
 | `lib/watcher` に **Prisma を import しない**。throttle は `FetchDeps` で注入する | resolver / transport と同じ注入境界。DB を入れると watcher の全規則が DB なしでテストできなくなる |
 | `RunHistory.output` のうち **AutoOps 自身が書いた2文だけ**を表示時に i18n する。保存値は英語のまま変えない | `output` には「モデルの生成物」と「AutoOps の報告」が同居している。前者は利用者の素材で翻訳禁止、後者は画面の言葉。**判定は `routine.kind === "website"` かつ完全一致の2条件**で、前方一致・部分一致・正規表現は使わない — prompt worker は同じ文を意図的に出力できるため。保存時に訳す案は language 変更に追随できないので不採用。`errorMessage` は補間つき `WatcherError` が多く、一部だけ訳すと不揃いになるため**今回は対象外** |
+| **通知するかどうかは semantic state から決める。`RunHistory.output` の文字列を見て判定しない** | `output` には「モデルの生成物」と「AutoOps の報告」が同居しており、prompt worker は AutoOps の2文と同じ文字列を意図的に出力できる。判定に使うのは `WebsiteChangeState`(`initial`/`unchanged`/`changed`)、`RunHistory.status`、`WatcherErrorKind` の3つだけ。どれも run が終わる時点で消えるので、内部の `ExecutionOutcome` に **`RunNotificationKind \| null` を1つ足して**運ぶ。**`runRoutine` の戻り値は `RunHistory` のまま** — queue 契約も dispatcher も手動実行 action も無変更 |
+| Website の `initial` と `unchanged` は**通知しない**。`throttled` の failure も**通知しない** | 前2つは「報告することが何もない成功」で、通知すればページが動かない限り毎 cadence 届く。`throttled` は他人のサイトの障害ではなく **AutoOps 自身の politeness** で、所有者に打つ手がない。**除外するのは通知だけ** — run は `failed` のままで `errorMessage` も持ち、`latestExecutionFailureAt` の対象でもある。`RunHistory` の failed semantics と `last_failed_at` semantics は**変更していない** |
+| 通知先は **`Routine.userId` → `User.email` の鎖だけ**。FormData からも session からも取らない | 宛先がフォームに現れないなら、注入も誤配も表現できない。session を使うと scheduled 実行(誰もサインインしていない)と手動実行で宛先が変わりうる。**worker にアドレス列は無い** |
+| 順序は **execution → final RunHistory persistence → email**。`RunPersistenceError` は通知0 | 逆順だと「メールは届いたが Run Detail が存在しない」に到達できる。リンク先が無いメールは、その人自身のアカウントについて嘘を伝えることになる |
+| **メール送信の失敗は Run を一切変えない。** ログ1行だけ | 変えるものが1つでもあれば、通知は observability ではなく policy になる。status / errorMessage / Snapshot / `nextRunAt` / lease のどれも触らない。ログは固定 prefix `[notify] could not send` と run id / routine id / **closed set の reason** のみ。**アドレス・API キー・provider の応答・output・ページ内容は出さない** |
+| **Resend SDK を依存に追加しない。** Node の `fetch` で JSON を1回 POST する | 送信は「JSON 1個を POST する」だけで、SDK を入れれば retry / timeout / エラー整形の方針がもう1組できる。そのどれもここが自分で決めなければならないもの。**JSON API なので件名の header injection は構造的に存在しない** — 件名から control character を除くのは「壊れて見える件名」を防ぐためで、防御ではない。**誇張しないこと** |
+| `EMAIL_SEND_TIMEOUT_MS`(5秒)は **AI の timeout から導出しない** | あちらは run の結果そのものを待つ時間、こちらは既にある結果についての連絡。根拠は待たせる相手の側 — 手動実行は HTTP レスポンスを開けたまま待たせ、tick は最大5件 × 5秒 = 25秒で `MAX_TICK_EXECUTION_MS`(240秒)の約1/10 |
+| **retry 0 / `NotificationDelivery` table なし / `notificationSentAt` なし / provider idempotency なし** | 二重送信を防いでいるのは「1回しか試さない」こと。既存の claim / lease / manual slot が「1 run = 1 通」を成立させている。retry queue を入れる日に `RunHistory.id` を idempotency key の候補として設計し直す |
+| メールは **lease を解放した後**に送る | 送信に数秒かかる間、worker が実行中に見えてはいけない。`RunPersistenceError` は `finally` の前で抜けるので、その経路は通知に到達しない |
+| 通知設定は **`Routine` の Boolean 1列**。`notifyOnSuccess` / `notifyOnFailure` に分けない | 分ければ組み合わせが4通りになり、UI も文言も4通り説明することになる。**MVP が答える問いは「この worker について知らせるか」の1つだけ** |
+| `RESEND_API_KEY` / `EMAIL_FROM` は **送信のたびに読む** | `ANTHROPIC_API_KEY` と `BETA_ALLOWED_EMAILS` が起動時1回なのは、起動時に**何かを作る**から(client / parse 済みリスト)。ここは何も作らないので、早く読んだ値の置き場所が無い。変数を足した deployment が再起動で送り始める |
+| edit は `emailNotificationsEnabled` を**毎回書く** | checkbox は OFF のとき何も送信しない。届いた時だけ書く実装にすると、**ON にはできても OFF に戻せない** |
+| 通知の宛先 helper は `email` / `language` に加えて **`timezone` も読む** | 同じ行・同じクエリで、追加の read は0。他の全ての時刻表示がその zone なので、リンク先の Run Detail と食い違うメールを送ることになるのを避ける。**Focused Design Investigation の記述からの意図的な逸脱**で、報告済み |
 | `take` は **未採用**。ただし scheduler に置くことを永久に禁じたわけでもない | 本番 Routine 0件で行数の実害がなく、catch-up と組み合わせるとバックログが1 interval を超えた時点でスロットを静かに失う。tenant fairness の論点も未解決。**根拠が揃うまで入れない**、が理由のすべて |
 
 ## 現在地
@@ -168,7 +181,8 @@
 
 **現在地点: Sprint 45 まで正式 CLOSED。Sprint 46 Day 1 の Backlog 再評価では
 「実装しない」(Option 0)を選び、Closed Beta Observation Phase に入っている。**
-Test Files 55 / Tests 1647(ローカル実測)。
+Test Files 62 / Tests 1930(ローカル実測)。**この節の残りは Sprint 46 時点の
+記述のまま古い** — 以降のスプリントは下の各節と git log を正とすること。
 
 **Observation Phase は継続中で、Documentation Sprint はその上で走っている。**
 Documentation Sprint の成果物(`docs/` 3点、README の導線と Backlog、
@@ -858,6 +872,62 @@ TROUBLESHOOTING には運営者向けの節があり、Healthchecks は infrastr
 heartbeat、`last_failed_at` は**読みに行く観測であって通知ではない**ことを
 そこに明記してある。README は導線の追加と Backlog の追記だけで、
 **Architecture / Roadmap / 履歴の構成は変更していない。**
+
+### Email Notification MVP — worker ごとの opt-in メール通知
+
+**AutoOps が外へ何かを送るのは、これが初めて。** 判断の中身は上の「決定済み」に
+13行入れた。ここには、そこに収まらない事実だけ書く。
+
+- **schema は `Routine` に Boolean 1列 (`emailNotificationsEnabled`)、migration 1本。**
+  `RunHistory` / `User` / `RateLimitBucket` / `ManualRunSlot` / `DomainThrottle` は
+  **無変更**。通知用の table も、送信済みを記録する列も**作っていない**。
+- **通知の判定表**(これが policy のすべて):
+
+  | | website | prompt |
+  |---|---|---|
+  | initial(初回 baseline) | **送らない** | — |
+  | unchanged | **送らない** | — |
+  | changed | **送る** | — |
+  | completed | — | **送る**(output が空でも) |
+  | failed | **送る** | **送る** |
+  | `WatcherErrorKind === "throttled"` | **送らない** | — |
+  | `RunPersistenceError` | **送らない** | **送らない** |
+  | `emailNotificationsEnabled === false` | **送らない** | **送らない** |
+
+- **境界は2枚。** `lib/notify/email.ts` が provider(Resend REST / `fetch` /
+  timeout / 分類)、`lib/notify/run-notification.ts` が構成と best-effort 送信。
+  後者は**絶対に throw しない** — 呼び元の `runRoutine` は、そこに到達した時点で
+  outcome の記録が終わっている。
+- **failure の分類語彙は3層で別々のまま。** `ProviderErrorKind`(モデル)、
+  `WatcherErrorKind`(fetch)、`EmailDeliveryFailure`(送信)。混ぜない。
+  ログに出る `reason=` は `EmailDeliveryFailure` + `recipient-unknown` /
+  `link-unavailable` / `unknown` の3つ。
+- **本文に `RunHistory.errorMessage` を入れない。** あの列は「届いた文言そのまま」で、
+  provider の生の言葉が入りうる。失敗メールは固定文 + Run Detail へのリンクだけ。
+- **リンクは `AUTH_URL` から `URL` API で作る。** 文字列連結だと `//dashboard` が
+  作れてしまう。`AUTH_URL` が無い / http(s) でないなら **delivery failure** であって
+  run failure ではない。
+- **本文の切り詰めは 2,000 文字**(`MAX_NOTIFIED_OUTPUT_CHARS`)。超えたら定型文を足す。
+  **AI の出力と worker 名は翻訳しない** — 訳すのは AutoOps 自身の文言(9キー)だけ。
+- **翻訳の parity 検査に1行足した。** `notify.email.worker` は en/ja で同一文字列
+  (`Worker: {name}`)なので、`lib/i18n/index.test.ts` の「同一を許すキー」一覧に
+  明示的に加えてある。**黙って同一になったのではない。**
+- **`/privacy` に1節足した。** 送信は新しい外部データフロー(宛先アドレスと出力の
+  一部が送信サービスへ渡る)で、書かなければあのページの記述が不完全になる。
+  **`app/privacy/page.tsx` の「すべての文が実装を説明する」という前提を守るための修正**
+  であって、feature の一部ではない。
+- **`.env.example` に `EMAIL_FROM` / `RESEND_API_KEY` を追記した**(BOM と CRLF、
+  末尾改行なしを保存)。README が「`.env.example` は AutoOps が読む変数をすべて挙げる」
+  と書いているため。
+
+**未確認(重要):**
+
+- **本番でメールを1通も送っていない。** Resend アカウント・API キー・ドメイン
+  verify・Railway env はいずれも**未設定**で、実装では行わない(手動 setup)。
+  したがって「Resend の API が実際にこの形の request を受け付ける」ことは
+  **実測していない** — 確認したのは、request の形・timeout・分類・不送信条件が
+  テストで固定されていることだけ。
+- **失敗経路も本番未観測。** `rejected` / `unreadable` は unit test のみ。
 
 ### 未確認 — 別途扱う
 

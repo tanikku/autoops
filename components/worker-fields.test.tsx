@@ -350,3 +350,73 @@ describe("what the Japanese note about changing an address says", () => {
     expect(prompt).not.toContain("比較の基準");
   });
 });
+
+/**
+ * The one control on this form that reaches outside AutoOps.
+ *
+ * **What it says depends on the kind, because the event does.** A website
+ * worker emails when the page moves — not on every check — and a prompt worker
+ * emails when its run finishes; the shared failure line is what makes the
+ * checkbox mean the same thing about a failure either way.
+ *
+ * **It is a checkbox, so it submits nothing when it is not ticked**, which is
+ * what "off by default" looks like on the wire — see `readWorkerForm`.
+ */
+describe("the email notification setting", () => {
+  it("is offered on both kinds, unticked unless the worker asked for it", () => {
+    const prompt = render({ values: {} });
+    const website = render({ kind: "website", values: {} });
+
+    for (const html of [prompt, website]) {
+      expect(html).toContain('name="emailNotificationsEnabled"');
+      expect(html).toContain('type="checkbox"');
+      expect(html).toContain("Email notifications");
+      expect(html).not.toContain("checked");
+    }
+  });
+
+  it("is ticked for a worker that has it on", () => {
+    const html = render({ values: { emailNotificationsEnabled: true } });
+
+    expect(html).toContain("checked");
+  });
+
+  it("says what a website worker sends about", () => {
+    const html = render({ kind: "website", values: {} });
+
+    expect(html).toContain("Email me when this page changes.");
+    expect(html).toContain("You will also be notified if the run fails.");
+    expect(html).not.toContain("Email me when this worker finishes.");
+  });
+
+  it("says what a prompt worker sends about", () => {
+    const html = render({ values: {} });
+
+    expect(html).toContain("Email me when this worker finishes.");
+    expect(html).toContain("You will also be notified if the run fails.");
+    expect(html).not.toContain("Email me when this page changes.");
+  });
+
+  it("says both in Japanese", () => {
+    const website = render({ language: "ja", kind: "website", values: {} });
+    const prompt = render({ language: "ja", values: {} });
+
+    expect(website).toContain("メール通知");
+    expect(website).toContain(
+      "このページの変更を検出したときにメールで通知します。",
+    );
+    expect(prompt).toContain(
+      "この Worker の実行が完了したときにメールで通知します。",
+    );
+    expect(prompt).toContain("実行に失敗した場合も通知します。");
+  });
+
+  /** There is no address on this form, and adding one would change nothing. */
+  it("asks for no recipient", () => {
+    const html = render({ values: {} });
+
+    expect(html).not.toContain('name="email"');
+    expect(html).not.toContain('name="notificationEmail"');
+    expect(html).not.toContain('type="email"');
+  });
+});

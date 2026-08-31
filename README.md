@@ -344,6 +344,87 @@ One consequence is worth knowing: a component that unmounts on success — a car
 that deletes itself — cannot raise its toast from an effect, because the effect
 never runs. Those call sites raise it from the action's result directly.
 
+### Email Notifications
+
+**A toast reaches somebody who is looking at AutoOps. This is for the runs
+nobody is looking at.** A worker can be set to email its owner when one of its
+runs finishes, which is the only thing AutoOps sends anywhere.
+
+**It is off unless somebody turned it on, per worker.** The switch is one
+column, `Routine.emailNotificationsEnabled`, and a checkbox on the hire and edit
+forms. Every worker that existed before it did keeps behaving exactly as it did.
+
+**Not every finished run is worth a message:**
+
+| | Website worker | Prompt worker |
+| --- | --- | --- |
+| First check, which establishes a baseline | **No** | — |
+| The page had not changed | **No** | — |
+| The page changed and was summarised | **Yes** | — |
+| The run completed | — | **Yes**, even with an empty answer |
+| The run failed | **Yes** | **Yes** |
+| AutoOps declined to fetch the page | **No** | — |
+
+The two quiet website outcomes are successful runs with nothing to report; an
+email about either would arrive every cadence for as long as the page sat
+still. The last row is the one exception on the failure side, and it is ours
+rather than the site's: a fetch refused because AutoOps asked that host a
+moment ago is [politeness](#how-often-one-website-is-asked), not something the
+owner can act on. **Only the notification is excluded** — the run is still
+`failed`, still carries its reason, and is still what the tick's
+`last_failed_at` reads.
+
+**What decides it is never the stored text.** A website run's answer comes from
+the comparison's own state and the run's status, and a throttled fetch from the
+`WatcherErrorKind` that stopped it. Two of the sentences `RunHistory.output` can
+hold are AutoOps' own, and a model could write either of them.
+
+**The recipient is the owner and cannot be anything else.** There is no address
+on a worker, none in the form, and none in the submission: when a run finishes,
+the owner's `User` row is read through the routine and the message goes to
+`User.email`, in that account's language and its timezone. A hand-started run
+and a scheduled one therefore reach the same inbox, which is the only answer
+that stays true when nobody is signed in.
+
+**The order is execution, then the outcome in the database, then the email.** A
+run whose outcome could not be written leaves as a `RunPersistenceError` and
+sends nothing — a message arriving for a run with no page to link to would be
+telling somebody something false about their own account.
+
+**A send that fails changes nothing.** Not the run's status, not the reason a
+failed run recorded, not the snapshot, not `nextRunAt`, and not the execution
+lease — which is already released by the time anything is sent. Every failure
+ends as one log line naming the run, the worker and a reason from a closed set:
+
+```
+[notify] could not send run=<id> worker=<id> reason=<not-configured|timeout|network|rejected|unreadable|recipient-unknown|link-unavailable|unknown>
+```
+
+**Nothing else is logged**, and nothing else may be: not the address, not the
+key, not the provider's answer, not the output, and not a line of the watched
+page.
+
+**One run, at most one attempt.** There is no retry, no queue, no delivery
+table, and no `notificationSentAt` — the guard against a message arriving twice
+is that only one is ever tried, which the existing claim, lease and slot make
+enough. Nothing bounds email separately either: what bounds it is what bounds
+runs, since a message is only ever sent because a run finished.
+
+**Plain text, through Resend's HTTP API, with no SDK.** The provider boundary
+is `lib/notify/email.ts` and it is the only thing that knows which provider
+this is; what leaves it is a delivery or an `EmailDeliveryError` naming one of
+five reasons. The subject may carry the worker's name and is stripped of
+control characters first — not as a defence, since a JSON body has no header to
+inject into, but because a subject line with a newline in it reads as broken.
+The body carries at most two thousand characters of what the run produced and
+says where the rest is; a failure's body says only that the run failed and
+links to the page, because the stored reason is a diagnostic in whatever
+wording it arrived with.
+
+Sending needs `RESEND_API_KEY` and `EMAIL_FROM`, and the link needs `AUTH_URL`
+— see [Setup](#setup). **A deployment missing any of them still runs workers
+normally**; it logs `not-configured` or `link-unavailable` and sends nothing.
+
 ### Form Architecture
 
 Hiring a worker and editing one are the same form with different defaults. That
@@ -979,6 +1060,12 @@ User ──┬── Routine ──── RunHistory
 | **RunHistory** | One execution | `userId` denormalised from the routine |
 | **RateLimitBucket** | How much of a rate-limited action an account has used | One row per account and scope, rewritten in place — see [AI drafting is bounded](#ai-drafting-is-bounded) |
 
+`Routine.emailNotificationsEnabled` is a `Boolean` defaulting to `false`, and it
+is the whole of what notifications added to the schema: **there is no delivery
+table, no sent-at column, and no address anywhere**. Who a message goes to is
+the owner of the routine, read from `User.email` when a run finishes — see
+[Email Notifications](#email-notifications).
+
 The columns that carry a schedule:
 
 | Column | Type | Meaning |
@@ -1105,6 +1192,8 @@ cp .env.example .env
 | `BETA_ALLOWED_EMAILS` | Yes | Comma-separated addresses allowed to sign in. **Unset means nobody can** — see below |
 | `AUTH_URL` | **In production** | The deployed origin, e.g. `https://autoops.example.com`. Leave it unset locally — see below |
 | `ANTHROPIC_API_KEY` | No | Real AI execution. Without it, a stand-in provider answers |
+| `RESEND_API_KEY` | No | Sends [email notifications](#email-notifications). Without it, nothing is sent and a line is logged |
+| `EMAIL_FROM` | No | The sender those are from, e.g. `AutoOps <notifications@example.com>`. Needed alongside the key; either one missing sends nothing |
 
 `.env` is gitignored; `.env.example` is committed and holds no real values.
 
@@ -1737,6 +1826,7 @@ For production, add the same path on your deployed origin.
 | Sprint 43 | A worker AutoOps runs on its own must have a prompt; template variables stop answering for inherited names; an edit that matched no row stops reporting success | Completed |
 | Sprint 44 | A delete that the database refused stops escaping the action, and every tick says when execution last failed | Completed |
 | Sprint 45 | Sign-in limited to an invited list, and a privacy notice describing what AutoOps actually keeps | Completed |
+| Email Notification MVP | A worker can email its owner when a watched page changes, when a run finishes, or when one fails | Completed |
 
 ## Backlog
 
@@ -1925,14 +2015,20 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
   wrong — no run has failed in production, which is why the kinds below are
   still unrecorded.
 
-- **Nothing tells anyone that an execution failed — it has to be looked at.**
-  The tick writes [when execution last
+- **Nothing tells the operator that an execution failed — it has to be looked
+  at.** The tick writes [when execution last
   failed](#knowing-whether-the-runs-inside-it-worked) on every pass, so the
   question is answerable from the cron log. **That is a thing to read, not a
-  thing that arrives**: there is no email, no webhook, no chat message, and no
-  alert of any kind. Building one means deciding how many failures are too
-  many, and with no failure ever recorded in production there is nothing to set
-  that against — the observation exists partly so that evidence can accumulate
+  thing that arrives**: there is no webhook, no chat message, and no alert of
+  any kind. Building one means deciding how many failures are too many, and
+  with no failure ever recorded in production there is nothing to set that
+  against — the observation exists partly so that evidence can accumulate.
+
+  **What does arrive is per worker and per owner**, not per platform: an owner
+  who turned [email notifications](#email-notifications) on for a worker hears
+  about that worker's failures. Nothing aggregates, thresholds or routes
+  anywhere, and an account that turned nothing on hears nothing — so the
+  operator's question is still the log's to answer
 
 - **The observation has no index behind it.** `RunHistory` is indexed on
   `routineId` and `userId`, so asking for the newest failed row scans rather
