@@ -72,7 +72,7 @@ export type FetchDeps = {
 
 /** What a run records when a fetch gave way to another one of ours. */
 const THROTTLED_MESSAGE =
-  "This site was checked very recently, so AutoOps did not fetch it again yet.";
+  "This site was checked very recently, so Koqentra did not fetch it again yet.";
 
 const allowAll: DomainThrottle = async () => ({ allowed: true });
 

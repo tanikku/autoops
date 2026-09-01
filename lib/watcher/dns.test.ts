@@ -43,7 +43,7 @@ async function kindOf(
   return "resolved";
 }
 
-describe("resolving a name AutoOps may connect to", () => {
+describe("resolving a name Koqentra may connect to", () => {
   it("returns the addresses when every one of them is public", async () => {
     const addresses = ["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"];
 
@@ -60,7 +60,7 @@ describe("resolving a name AutoOps may connect to", () => {
   });
 });
 
-describe("resolving a name AutoOps refuses", () => {
+describe("resolving a name Koqentra refuses", () => {
   it("refuses a name that resolves to loopback", async () => {
     expect(await kindOf("localhost", resolverFor(["127.0.0.1"]))).toBe(
       "blocked-address",

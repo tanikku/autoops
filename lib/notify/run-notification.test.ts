@@ -174,7 +174,7 @@ describe("what a website change says", () => {
   it("names the worker in the subject, in English", async () => {
     await notifyRunOutcome(notification());
 
-    expect(sent().subject).toBe('[AutoOps] "Careers page" detected a change');
+    expect(sent().subject).toBe('[Koqentra] "Careers page" detected a change');
   });
 
   it("names the worker in the subject, in Japanese", async () => {
@@ -182,14 +182,14 @@ describe("what a website change says", () => {
 
     await notifyRunOutcome(notification());
 
-    expect(sent().subject).toBe("[AutoOps]「Careers page」で変更を検出しました");
+    expect(sent().subject).toBe("[Koqentra]「Careers page」で変更を検出しました");
   });
 
   it("carries the worker, the time it was detected, the summary and the link", async () => {
     await notifyRunOutcome(notification());
 
     const text = sent().text;
-    expect(text).toContain("AutoOps");
+    expect(text).toContain("Koqentra");
     expect(text).toContain("Worker: Careers page");
     expect(text).toContain("Detected at: 2026-08-31 09:50 Asia/Tokyo");
     expect(text).toContain("Two roles were added.");
@@ -201,7 +201,7 @@ describe("what a finished prompt worker says", () => {
   it("says it completed, in English", async () => {
     await notifyRunOutcome(notification({ kind: "prompt-completed" }));
 
-    expect(sent().subject).toBe('[AutoOps] "Careers page" completed');
+    expect(sent().subject).toBe('[Koqentra] "Careers page" completed');
     expect(sent().text).toContain("Executed at: 2026-08-31 09:50 Asia/Tokyo");
   });
 
@@ -210,7 +210,7 @@ describe("what a finished prompt worker says", () => {
 
     await notifyRunOutcome(notification({ kind: "prompt-completed" }));
 
-    expect(sent().subject).toBe("[AutoOps]「Careers page」が完了しました");
+    expect(sent().subject).toBe("[Koqentra]「Careers page」が完了しました");
     expect(sent().text).toContain("実行日時: 2026-08-31 09:50 Asia/Tokyo");
   });
 
@@ -227,8 +227,8 @@ describe("what a failure says", () => {
   it("says the run failed and points at the page, in English", async () => {
     await notifyRunOutcome(notification({ kind: "failed", output: "" }));
 
-    expect(sent().subject).toBe('[AutoOps] "Careers page" failed');
-    expect(sent().text).toContain("The run failed. Open AutoOps for details.");
+    expect(sent().subject).toBe('[Koqentra] "Careers page" failed');
+    expect(sent().text).toContain("The run failed. Open Koqentra for details.");
   });
 
   it("says the run failed and points at the page, in Japanese", async () => {
@@ -236,9 +236,9 @@ describe("what a failure says", () => {
 
     await notifyRunOutcome(notification({ kind: "failed", output: "" }));
 
-    expect(sent().subject).toBe("[AutoOps]「Careers page」の実行に失敗しました");
+    expect(sent().subject).toBe("[Koqentra]「Careers page」の実行に失敗しました");
     expect(sent().text).toContain(
-      "実行に失敗しました。詳しい内容は AutoOps で確認してください。",
+      "実行に失敗しました。詳しい内容は Koqentra で確認してください。",
     );
   });
 
@@ -283,7 +283,7 @@ describe("the account's own material", () => {
     await notifyRunOutcome(notification({ output }));
 
     expect(sent().text).toContain(output);
-    expect(sent().text).not.toContain("The rest is available in AutoOps.");
+    expect(sent().text).not.toContain("The rest is available in Koqentra.");
   });
 
   it("cuts an output that does not fit and says where the rest is", async () => {
@@ -293,7 +293,7 @@ describe("the account's own material", () => {
 
     expect(sent().text).toContain("b".repeat(MAX_NOTIFIED_OUTPUT_CHARS));
     expect(sent().text).not.toContain("b".repeat(MAX_NOTIFIED_OUTPUT_CHARS + 1));
-    expect(sent().text).toContain("The rest is available in AutoOps.");
+    expect(sent().text).toContain("The rest is available in Koqentra.");
   });
 });
 
@@ -310,7 +310,7 @@ describe("the subject line", () => {
     expect(sent().subject).not.toContain("\n");
     expect(sent().subject).not.toContain("\r");
     expect(sent().subject).toBe(
-      '[AutoOps] "Careers Bcc: someone@example.test" detected a change',
+      '[Koqentra] "Careers Bcc: someone@example.test" detected a change',
     );
   });
 

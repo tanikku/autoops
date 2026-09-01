@@ -16,7 +16,7 @@ import { getUserLanguage, getUserTimezone } from "@/lib/users";
 import type { RunStatus } from "@/types";
 
 export const metadata: Metadata = {
-  title: "Execution — AutoOps",
+  title: "Execution — Koqentra",
   description: "Details of a single worker execution.",
 };
 
@@ -214,7 +214,7 @@ export default async function RunDetailPage({
         ) : (
           <Block
             label={t(language, "run.detail.output")}
-            /* The same reading as the activity list makes: AutoOps' own two
+            /* The same reading as the activity list makes: Koqentra' own two
                sentences are shown in the account's language, and a model's
                answer is shown as it was written. */
             value={formatRunOutputForDisplay(

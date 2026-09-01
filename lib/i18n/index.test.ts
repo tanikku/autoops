@@ -172,10 +172,10 @@ describe("what is never translated", () => {
     expect(ja["overview.total"]).toContain("Worker");
   });
 
-  it("keeps AutoOps as AutoOps in Japanese", () => {
+  it("keeps Koqentra as Koqentra in Japanese", () => {
     for (const key of keys) {
-      if (en[key].includes("AutoOps")) {
-        expect(ja[key]).toContain("AutoOps");
+      if (en[key].includes("Koqentra")) {
+        expect(ja[key]).toContain("Koqentra");
       }
     }
   });

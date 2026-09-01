@@ -1,10 +1,10 @@
-# AutoOps
+# Koqentra
 
 A modern AI workflow automation platform.
 
-**Using AutoOps rather than working on it?** Start here:
+**Using Koqentra rather than working on it?** Start here:
 
-- **[User Guide](./docs/USER_GUIDE.md)** — what AutoOps does, what it cannot do,
+- **[User Guide](./docs/USER_GUIDE.md)** — what Koqentra does, what it cannot do,
   and how to run a Worker.
 - **[Use Cases](./docs/USE_CASES.md)** — Worker setups with copy-paste prompts.
 - **[Troubleshooting](./docs/TROUBLESHOOTING.md)** — symptoms and causes, plus a
@@ -22,7 +22,7 @@ should be a worker instead.
 
 ## Architecture
 
-AutoOps is a **multi-tenant** application. Every signed-in Google account is a
+Koqentra is a **multi-tenant** application. Every signed-in Google account is a
 tenant, and data is scoped to its owner:
 
 - A **Worker** belongs to a User.
@@ -349,9 +349,9 @@ never runs. Those call sites raise it from the action's result directly.
 
 ### Email Notifications
 
-**A toast reaches somebody who is looking at AutoOps. This is for the runs
+**A toast reaches somebody who is looking at Koqentra. This is for the runs
 nobody is looking at.** A worker can be set to email its owner when one of its
-runs finishes, which is the only thing AutoOps sends anywhere.
+runs finishes, which is the only thing Koqentra sends anywhere.
 
 **It is off unless somebody turned it on, per worker.** The switch is one
 column, `Routine.emailNotificationsEnabled`, and a checkbox on the hire and edit
@@ -366,12 +366,12 @@ forms. Every worker that existed before it did keeps behaving exactly as it did.
 | The page changed and was summarised | **Yes** | — |
 | The run completed | — | **Yes**, even with an empty answer |
 | The run failed | **Yes** | **Yes** |
-| AutoOps declined to fetch the page | **No** | — |
+| Koqentra declined to fetch the page | **No** | — |
 
 The two quiet website outcomes are successful runs with nothing to report; an
 email about either would arrive every cadence for as long as the page sat
 still. The last row is the one exception on the failure side, and it is ours
-rather than the site's: a fetch refused because AutoOps asked that host a
+rather than the site's: a fetch refused because Koqentra asked that host a
 moment ago is [politeness](#how-often-one-website-is-asked), not something the
 owner can act on. **Only the notification is excluded** — the run is still
 `failed`, still carries its reason, and is still what the tick's
@@ -380,7 +380,7 @@ owner can act on. **Only the notification is excluded** — the run is still
 **What decides it is never the stored text.** A website run's answer comes from
 the comparison's own state and the run's status, and a throttled fetch from the
 `WatcherErrorKind` that stopped it. Two of the sentences `RunHistory.output` can
-hold are AutoOps' own, and a model could write either of them.
+hold are Koqentra' own, and a model could write either of them.
 
 **The recipient is the owner and cannot be anything else.** There is no address
 on a worker, none in the form, and none in the submission: when a run finishes,
@@ -428,6 +428,16 @@ Sending needs `RESEND_API_KEY` and `EMAIL_FROM`, and the link needs `AUTH_URL`
 — see [Setup](#setup). **A deployment missing any of them still runs workers
 normally**; it logs `not-configured` or `link-unavailable` and sends nothing.
 
+**All three website outcomes have been through this in production**, over
+2026-09-01 to 2026-09-02: a first check established a baseline and sent nothing,
+a changed page was summarised by the model and arrived as an email in the
+owner's inbox, and a re-run against the unchanged page sent nothing. What that
+does not establish is how a send behaves when it goes wrong — no delivery has
+failed in production, so `rejected`, `unreadable` and `timeout` are still
+covered by tests alone. A prompt worker's completion email has not been sent in
+production either; it takes the same decision and the same code, which is not
+the same as having been observed.
+
 ### Form Architecture
 
 Hiring a worker and editing one are the same form with different defaults. That
@@ -456,10 +466,10 @@ form sent, and asking about the submitted value would let a submission that
 simply omits the field through — landing on an existing `active` worker and
 leaving it active. Both are pure, so nothing is read or written to decide them.
 
-#### A worker AutoOps runs on its own has to have something to run
+#### A worker Koqentra runs on its own has to have something to run
 
 Only the name is always required. Description may be blank, and so may Prompt —
-except on the one combination that AutoOps dispatches without anyone present:
+except on the one combination that Koqentra dispatches without anyone present:
 
 | Status | Frequency | Blank prompt |
 | --- | --- | --- |
@@ -604,7 +614,7 @@ the range column would end the usable part of the scan and `status` would
 filter nothing.
 
 **It is indexed because the query is system-wide.** Every other read in
-AutoOps is scoped to one account, so it touches one tenant's rows; this one
+Koqentra is scoped to one account, so it touches one tenant's rows; this one
 runs across all of them on every tick. Without the index its cost grows with
 the number of workers on the platform rather than with the number that are
 actually due.
@@ -627,7 +637,7 @@ as `failed` — so nothing propagates back to the dispatcher, and the next slot
 is set either way. The failure is not lost: it is in the run history and in the
 [health summary](#worker-health), and the worker can be run again by hand.
 
-That is a decision, not an oversight. **AutoOps executes work based on the
+That is a decision, not an oversight. **Koqentra executes work based on the
 current execution time.** Replaying a missed slot later would not reproduce the
 original context: a prompt's `{{today}}` resolves when the run happens, so
 retrying yesterday's slot today produces today's work with yesterday's name on
@@ -1058,7 +1068,7 @@ User ──┬── Routine ──── RunHistory
 
 | Model | Purpose | Key points |
 | --- | --- | --- |
-| **User** | What AutoOps keeps for an account, not the account itself | `id` is the provider account id, not a generated key. Written lazily — see [Account Provisioning](#account-provisioning) |
+| **User** | What Koqentra keeps for an account, not the account itself | `id` is the provider account id, not a generated key. Written lazily — see [Account Provisioning](#account-provisioning) |
 | **Routine** | A worker | Four columns define the schedule; `nextRunAt` is what it resolves to |
 | **RunHistory** | One execution | `userId` denormalised from the routine |
 | **RateLimitBucket** | How much of a rate-limited action an account has used | One row per account and scope, rewritten in place — see [AI drafting is bounded](#ai-drafting-is-bounded) |
@@ -1106,7 +1116,7 @@ screen that showed it checked. The reason is a diagnostic in whatever wording
 the failure arrived with, so it belongs on one execution's page rather than in
 a list; the activity feed shows output alone.
 
-**Two sentences in `output` are AutoOps' own**, and they are the only ones: a
+**Two sentences in `output` are Koqentra' own**, and they are the only ones: a
 website worker's first check and one that found nothing have no model answer to
 record, so the run says so for itself. They are stored in English and
 **translated when shown**, which is why a run from before an account changed its
@@ -1178,7 +1188,7 @@ serving broken chunks. Stop the dev server first; if it already happened,
 
 ## Setup
 
-`.env.example` lists every variable AutoOps reads. Copy it to `.env`, then fill
+`.env.example` lists every variable Koqentra reads. Copy it to `.env`, then fill
 in the values:
 
 ```bash
@@ -1193,16 +1203,16 @@ cp .env.example .env
 | `AUTH_GOOGLE_SECRET` | Yes | Google OAuth client secret |
 | `CRON_SECRET` | Yes | Bearer token for `POST /api/cron/run`. Unset means every request is rejected |
 | `BETA_ALLOWED_EMAILS` | Yes | Comma-separated addresses allowed to sign in. **Unset means nobody can** — see below |
-| `AUTH_URL` | **In production** | The deployed origin, e.g. `https://autoops.example.com`. Leave it unset locally — see below |
+| `AUTH_URL` | **In production** | The deployed origin, e.g. `https://koqentra.example.com`. Leave it unset locally — see below |
 | `ANTHROPIC_API_KEY` | No | Real AI execution. Without it, a stand-in provider answers |
 | `RESEND_API_KEY` | No | Sends [email notifications](#email-notifications). Without it, nothing is sent and a line is logged |
-| `EMAIL_FROM` | No | The sender those are from, e.g. `AutoOps <notifications@example.com>`. Needed alongside the key; either one missing sends nothing |
+| `EMAIL_FROM` | No | The sender those are from, e.g. `Koqentra <notifications@example.com>`. Needed alongside the key; either one missing sends nothing |
 
 `.env` is gitignored; `.env.example` is committed and holds no real values.
 
 ### `BETA_ALLOWED_EMAILS` refuses everyone until you set it
 
-**It is not optional, and "unset" is not "unrestricted".** AutoOps is
+**It is not optional, and "unset" is not "unrestricted".** Koqentra is
 invite-only while it is in Closed Beta, and the list is what decides who is
 invited. An unset, empty, or whitespace-only value parses to an empty list, and
 an empty list turns every sign-in away — **including yours, locally**. That is
@@ -1258,7 +1268,7 @@ the canonical URL to build OAuth callbacks from when it sits behind a proxy.
 `AUTH_TRUST_HOST=true` satisfies the same check but says less.
 
 When `ANTHROPIC_API_KEY` is set, workers run against the Claude API. Without it,
-AutoOps falls back to a stand-in provider that returns a fixed response. **That
+Koqentra falls back to a stand-in provider that returns a fixed response. **That
 fallback exists so the app is usable without a key**: the whole pipeline —
 scheduling, claiming, dispatch, run history — can be exercised locally, and
 against a live model only when you want to be.
@@ -1286,7 +1296,7 @@ The only signal is a line logged once per process when the fallback is chosen:
 seeing it in production means every scheduled worker is producing a fixed
 string.
 
-**How long a request may take, and how often it is retried, are AutoOps'
+**How long a request may take, and how often it is retried, are Koqentra'
 decisions rather than the SDK's.** `lib/ai/claude-provider.ts` passes both: ten
 minutes per request, and **no retries**. Neither value changes what the SDK
 would have done on its own by much — it defaults to the same ten minutes for
@@ -1317,7 +1327,7 @@ nobody read.
 
 ### AI drafting is bounded
 
-**Ten drafts an hour, per account.** Asking AutoOps to write a worker from a
+**Ten drafts an hour, per account.** Asking Koqentra to write a worker from a
 sentence is the one place a signed-in person can spend model time without a
 worker existing yet, and nothing else stood between a held-down button and the
 bill. The limit is the account's, not the browser's: a form that has disabled
@@ -1350,7 +1360,7 @@ and no request is made. The driver's own complaint goes to the log and never to
 the screen.
 
 **This bounds AI drafting and nothing else.** Running a worker by hand is
-bounded by nothing here or anywhere else, so a sentence saying AutoOps rate
+bounded by nothing here or anywhere else, so a sentence saying Koqentra rate
 limits its AI usage in general would be false.
 
 ### What kind of failure it was
@@ -1514,7 +1524,7 @@ Deciding what to do about a slow tick is a decision for whoever reads the line.
 #### Knowing the tick happened at all
 
 A tick that fails says so: the HTTP status carries it. **A tick that never runs
-says nothing**, and nothing inside AutoOps can notice its own absence — no
+says nothing**, and nothing inside Koqentra can notice its own absence — no
 request arrives, and a dashboard with nothing due looks the same either way.
 
 That is what a **dead man's switch** covers, and it is the one piece of
@@ -1523,7 +1533,7 @@ monitoring that cannot live inside the deployment it watches. A check on
 and allows a further **15** before it alerts, so silence is reported roughly
 twenty minutes after the last tick that worked.
 
-The cron service sends it, and only once AutoOps has answered:
+The cron service sends it, and only once Koqentra has answered:
 
 ```
 A && (B || true)
@@ -1609,7 +1619,7 @@ decide the outcome it was supposed to be watching.
 The dashboard is behind Google sign-in (**Auth.js v5**, JWT sessions, **no
 database adapter**). All three `AUTH_*` variables are required to sign in.
 
-**Being able to sign in is not the same as being allowed to.** While AutoOps is
+**Being able to sign in is not the same as being allowed to.** While Koqentra is
 in Closed Beta, a `signIn` callback checks the address Google returned against
 [`BETA_ALLOWED_EMAILS`](#beta_allowed_emails-refuses-everyone-until-you-set-it)
 and refuses anyone not on it. The check is a pure function in
@@ -1724,7 +1734,7 @@ back, for the same reason it is not given back when a page fails to load.
 
 ### Account Provisioning
 
-**Being signed in and having a row are different things**, and AutoOps keeps
+**Being signed in and having a row are different things**, and Koqentra keeps
 them apart. The identity comes from the token. The row is application data: it
 holds the account's timezone, and it is what a worker's foreign key points at.
 Nothing creates it until something needs it, and signing in is not that.
@@ -1741,7 +1751,7 @@ falls back to UTC — so provisioning on the way in would put a write behind
 every page view and buy nothing.
 
 **Writes that need the row use the second**, and today those are creating a
-worker, saving a timezone, and asking AutoOps to draft a worker — that last one
+worker, saving a timezone, and asking Koqentra to draft a worker — that last one
 writes no worker, but it does spend an allowance whose row points at the
 account. Deleting, editing or running a worker does not:
 each acts on a `Routine`, whose existence already proves the row is there. That
@@ -1826,9 +1836,9 @@ For production, add the same path on your deployed origin.
 | Sprint 40 | The first real execution in production, and tests for the provider boundary and the cron API | Completed |
 | Sprint 41 | A dead man's switch on the cron service, so a tick that stops happening is noticed | Completed |
 | Sprint 42 | An explicit provisioning boundary, so an account can change its settings before it owns a worker | Completed |
-| Sprint 43 | A worker AutoOps runs on its own must have a prompt; template variables stop answering for inherited names; an edit that matched no row stops reporting success | Completed |
+| Sprint 43 | A worker Koqentra runs on its own must have a prompt; template variables stop answering for inherited names; an edit that matched no row stops reporting success | Completed |
 | Sprint 44 | A delete that the database refused stops escaping the action, and every tick says when execution last failed | Completed |
-| Sprint 45 | Sign-in limited to an invited list, and a privacy notice describing what AutoOps actually keeps | Completed |
+| Sprint 45 | Sign-in limited to an invited list, and a privacy notice describing what Koqentra actually keeps | Completed |
 | Email Notification MVP | A worker can email its owner when a watched page changes, when a run finishes, or when one fails | Completed |
 
 ## Backlog
@@ -1922,7 +1932,7 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
   three prompt examples keep the rule: each carries the place its material is
   written into, and none of them names a source outside the prompt.
 
-  **What did not change is what a prompt worker can reach.** Nothing in AutoOps
+  **What did not change is what a prompt worker can reach.** Nothing in Koqentra
   searches, and a website worker fetches the one address it was given rather
   than going and finding anything. The scheduled examples in
   [Use Cases](./docs/USE_CASES.md) still work because the model generates the
@@ -1938,7 +1948,7 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
   undecided, and nothing here should be read as narrowing them to any one of
   these.
 
-- **AutoOps does not check whether model output is true.** A response the
+- **Koqentra does not check whether model output is true.** A response the
   provider returned normally is recorded as `completed`, and that says the call
   succeeded — not that what came back is correct. Output that is wrong, or
   invented from nothing, is stored the same way as output that is right; a
@@ -1998,7 +2008,7 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
 
 **Operational**
 
-- **Deployment.** Resolved in Sprint 28 — AutoOps now runs on Railway (Web
+- **Deployment.** Resolved in Sprint 28 — Koqentra now runs on Railway (Web
   Service, PostgreSQL, Cron Service), verified end to end:
 
   | Decision | Resolution |

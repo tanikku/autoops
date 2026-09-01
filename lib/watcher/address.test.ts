@@ -12,7 +12,7 @@ import { isPublicUnicastAddress } from "@/lib/watcher/address";
  * Nothing here touches the network — classifying an address is arithmetic.
  */
 
-describe("addresses AutoOps refuses to connect to", () => {
+describe("addresses Koqentra refuses to connect to", () => {
   const refused: [string, string][] = [
     ["127.0.0.1", "loopback"],
     ["127.9.9.9", "the rest of loopback, which is a /8 and not one address"],
@@ -48,7 +48,7 @@ describe("addresses AutoOps refuses to connect to", () => {
   });
 });
 
-describe("addresses AutoOps will connect to", () => {
+describe("addresses Koqentra will connect to", () => {
   const allowed: [string, string][] = [
     ["93.184.216.34", "an ordinary public IPv4 address"],
     ["8.8.8.8", "another"],

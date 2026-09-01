@@ -385,7 +385,7 @@ export function readWorkerDraftToolResult(
     return {
       status: "unsupported",
       reason:
-        reason === "" ? "AutoOps cannot do this kind of work yet." : reason,
+        reason === "" ? "Koqentra cannot do this kind of work yet." : reason,
     };
   }
 
@@ -407,7 +407,7 @@ export function readWorkerDraftToolResult(
     return {
       status: "needs_input",
       field: "websiteUrl",
-      message: "Add the address of the page you want AutoOps to watch.",
+      message: "Add the address of the page you want Koqentra to watch.",
     };
   }
 

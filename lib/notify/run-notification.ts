@@ -259,7 +259,7 @@ function body(
   const time = formatDateTime(notification.finishedAt, timezone);
 
   const lines = [
-    "AutoOps",
+    "Koqentra",
     "",
     t(language, "notify.email.worker", { name: notification.workerName }),
     t(

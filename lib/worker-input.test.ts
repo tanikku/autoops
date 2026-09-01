@@ -513,7 +513,7 @@ describe("validateWorkerFormForKind — prompt workers", () => {
     expect(errors).toEqual({});
   });
 
-  it("still refuses a blank prompt when AutoOps would run it unattended", () => {
+  it("still refuses a blank prompt when Koqentra would run it unattended", () => {
     const errors = validateWorkerFormForKind(
       input({ kind: "prompt", prompt: "" }),
       context({ status: "active", frequency: "daily" }),

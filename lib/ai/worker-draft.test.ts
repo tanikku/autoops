@@ -269,7 +269,7 @@ describe("which page a website worker watches", () => {
     expect(readWebsite({}, [])).toEqual({
       status: "needs_input",
       field: "websiteUrl",
-      message: "Add the address of the page you want AutoOps to watch.",
+      message: "Add the address of the page you want Koqentra to watch.",
     });
   });
 
@@ -300,15 +300,15 @@ describe("which page a website worker watches", () => {
   });
 });
 
-describe("a request AutoOps cannot do", () => {
+describe("a request Koqentra cannot do", () => {
   it("carries the model's reason back", () => {
     expect(
       readWorkerDraftToolResult(
         workerDraftToolNames.unsupported,
-        { reason: "AutoOps cannot read email." },
+        { reason: "Koqentra cannot read email." },
         [],
       ),
-    ).toEqual({ status: "unsupported", reason: "AutoOps cannot read email." });
+    ).toEqual({ status: "unsupported", reason: "Koqentra cannot read email." });
   });
 
   it("still answers when the model gave no reason", () => {
@@ -325,7 +325,7 @@ describe("a request AutoOps cannot do", () => {
   it("is never a worker", () => {
     const result = readWorkerDraftToolResult(
       workerDraftToolNames.unsupported,
-      { reason: "AutoOps cannot read email." },
+      { reason: "Koqentra cannot read email." },
       [],
     );
 

@@ -965,9 +965,9 @@ describe("a finalization that did not commit", () => {
  * happens is `lib/watcher/fetch.ts`. What this file fixes is the shape of the
  * run that comes out of it.
  */
-describe("a page AutoOps would not fetch again yet", () => {
+describe("a page Koqentra would not fetch again yet", () => {
   const THROTTLED =
-    "This site was checked very recently, so AutoOps did not fetch it again yet.";
+    "This site was checked very recently, so Koqentra did not fetch it again yet.";
 
   function throttled() {
     return new WatcherError("throttled", THROTTLED);
@@ -1041,7 +1041,7 @@ describe("a page AutoOps would not fetch again yet", () => {
 
 describe("a pipeline that could not finish", () => {
   it.each([
-    ["the address was refused", "blocked-address", "somewhere AutoOps will not go"],
+    ["the address was refused", "blocked-address", "somewhere Koqentra will not go"],
     ["the page was too large", "response-too-large", "larger than allowed"],
     ["the encoding was unreadable", "invalid-encoding", "not valid utf-8"],
     ["the charset was unsupported", "unsupported-charset", "not decoded here"],

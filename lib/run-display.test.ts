@@ -18,7 +18,7 @@ import {
  * both languages; only the reading changes.
  */
 
-describe("the sentences AutoOps writes for itself", () => {
+describe("the sentences Koqentra writes for itself", () => {
   it("are exactly what a website run records", () => {
     expect(WEBSITE_BASELINE_OUTPUT).toBe(
       "Website baseline is not established yet.",

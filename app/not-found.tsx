@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
 export const metadata: Metadata = {
-  title: "Not Found — AutoOps",
+  title: "Not Found — Koqentra",
 };
 
 /**
@@ -23,7 +23,7 @@ export default function NotFound() {
     <div className="flex flex-1 flex-col bg-background">
       <header className="mx-auto flex w-full max-w-6xl items-center px-6 py-6 sm:px-10">
         <Link href="/" className="text-lg font-semibold tracking-tight">
-          AutoOps
+          Koqentra
         </Link>
       </header>
 

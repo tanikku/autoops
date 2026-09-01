@@ -22,7 +22,7 @@ import { getWebsiteSource } from "@/lib/website-sources";
 import type { RoutineFrequency, RoutineKind, RoutineStatus } from "@/types";
 
 export const metadata: Metadata = {
-  title: "Worker — AutoOps",
+  title: "Worker — Koqentra",
   description: "A worker and its schedule.",
 };
 

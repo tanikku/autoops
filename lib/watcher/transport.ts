@@ -182,7 +182,7 @@ async function readResponse(response: IncomingMessage): Promise<Hop> {
   if (encoding !== undefined && encoding.toLowerCase() !== "identity") {
     throw new WatcherError(
       "unsupported-content-type",
-      `The page arrived ${encoding}-encoded, which AutoOps does not decode.`,
+      `The page arrived ${encoding}-encoded, which Koqentra does not decode.`,
     );
   }
 
@@ -191,7 +191,7 @@ async function readResponse(response: IncomingMessage): Promise<Hop> {
   if (contentType === null || contentTypeHeader === undefined) {
     throw new WatcherError(
       "unsupported-content-type",
-      "AutoOps can only read HTML, XHTML and plain text pages.",
+      "Koqentra can only read HTML, XHTML and plain text pages.",
     );
   }
 

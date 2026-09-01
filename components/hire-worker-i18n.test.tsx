@@ -40,7 +40,7 @@ describe("the hire form in English", () => {
   const html = form("en");
 
   it("asks what the work is before asking how to describe it", () => {
-    expect(html).toContain("What would you like AutoOps to handle?");
+    expect(html).toContain("What would you like Koqentra to handle?");
     expect(html).toContain("Create draft");
   });
 
@@ -68,7 +68,7 @@ describe("the hire form in Japanese", () => {
   const html = form("ja");
 
   it("asks what the work is, in Japanese", () => {
-    expect(html).toContain("AutoOps に何を任せますか?");
+    expect(html).toContain("Koqentra に何を任せますか?");
     expect(html).toContain("下書きを作成");
     expect(html).not.toContain("Create draft");
   });

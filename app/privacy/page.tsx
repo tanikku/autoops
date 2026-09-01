@@ -2,12 +2,12 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Privacy — AutoOps",
-  description: "What AutoOps stores, where it goes, and what it does not do.",
+  title: "Privacy — Koqentra",
+  description: "What Koqentra stores, where it goes, and what it does not do.",
 };
 
 /**
- * What AutoOps actually does with what it holds.
+ * What Koqentra actually does with what it holds.
  *
  * **Every sentence here describes something in the code.** A privacy notice
  * that promises deletion nobody implemented, or retention nothing enforces, is
@@ -37,7 +37,7 @@ export default function PrivacyPage() {
     <div className="flex flex-1 flex-col bg-background">
       <header className="mx-auto flex w-full max-w-6xl items-center px-6 py-6 sm:px-10">
         <Link href="/" className="text-lg font-semibold tracking-tight">
-          AutoOps
+          Koqentra
         </Link>
       </header>
 
@@ -46,10 +46,10 @@ export default function PrivacyPage() {
           Privacy
         </h1>
         <p className="mt-3 text-sm text-muted-foreground">
-          What AutoOps receives, where it is kept, and what it does with it.
+          What Koqentra receives, where it is kept, and what it does with it.
         </p>
 
-        <Section title="AutoOps is in Closed Beta">
+        <Section title="Koqentra is in Closed Beta">
           <p>
             Access is by invitation. The service is being tried out rather than
             operated, and it may change or stop without notice.
@@ -58,7 +58,7 @@ export default function PrivacyPage() {
 
         <Section title="What we receive when you sign in">
           <p>
-            Signing in goes through Google. AutoOps receives the account
+            Signing in goes through Google. Koqentra receives the account
             identifier Google issues for you, your email address, your name, and
             the URL of your profile picture. The identifier is what everything
             you create is filed under.
@@ -85,7 +85,7 @@ export default function PrivacyPage() {
           <p>
             Running a worker sends its prompt — the whole of it, with{" "}
             <code>{"{{today}}"}</code> and <code>{"{{now}}"}</code> already
-            filled in — to Anthropic, which produces the result. AutoOps does not
+            filled in — to Anthropic, which produces the result. Koqentra does not
             retry: a request that fails is recorded as a failure and the worker
             waits for its next turn.
           </p>
@@ -94,7 +94,7 @@ export default function PrivacyPage() {
         <Section title="Email notifications">
           <p>
             Email notifications are off unless you turn them on, and you turn
-            them on for one worker at a time. While one is on, AutoOps sends a
+            them on for one worker at a time. While one is on, Koqentra sends a
             message to the address on your account — never to any other — when
             that worker&rsquo;s run finishes or fails. Sending goes through
             Resend, which receives your address, the worker&rsquo;s name, and up
@@ -106,7 +106,7 @@ export default function PrivacyPage() {
         <Section title="Where it is stored">
           <p>
             In a PostgreSQL database hosted on Railway, which also hosts the
-            application. Every time AutoOps stores is stored in UTC; a timezone
+            application. Every time Koqentra stores is stored in UTC; a timezone
             changes how a time reads, never what is kept.
           </p>
         </Section>
@@ -123,14 +123,14 @@ export default function PrivacyPage() {
           <p>
             When a run fails, details of the failure are written to the
             application&rsquo;s server logs so that it can be looked into. Those
-            logs are part of the hosting platform rather than of AutoOps.
+            logs are part of the hosting platform rather than of Koqentra.
           </p>
         </Section>
 
         <Section title="Retention">
           <p>
             Run history is kept until you delete the worker it belongs to.
-            AutoOps does not expire it, and there is no period after which it is
+            Koqentra does not expire it, and there is no period after which it is
             removed automatically.
           </p>
         </Section>
@@ -145,14 +145,14 @@ export default function PrivacyPage() {
         <Section title="Deleting your account">
           <p>
             There is currently no way to delete your whole account from within
-            AutoOps. Deleting each of your workers removes those workers and
+            Koqentra. Deleting each of your workers removes those workers and
             their run history.
           </p>
         </Section>
 
         <Section title="Availability">
           <p>
-            AutoOps is in Closed Beta. Its availability and continuity are not
+            Koqentra is in Closed Beta. Its availability and continuity are not
             guaranteed, and scheduled runs may be missed.
           </p>
         </Section>
@@ -167,15 +167,15 @@ export default function PrivacyPage() {
 
         <Section title="Changes to this notice">
           <p>
-            This notice describes AutoOps as it currently works. It may be
-            updated as AutoOps changes.
+            This notice describes Koqentra as it currently works. It may be
+            updated as Koqentra changes.
           </p>
         </Section>
       </main>
 
       <footer className="mx-auto w-full max-w-6xl px-6 py-8 text-center text-sm text-muted-foreground sm:px-10">
         <Link href="/" className="underline-offset-4 hover:underline">
-          Back to AutoOps
+          Back to Koqentra
         </Link>
       </footer>
     </div>

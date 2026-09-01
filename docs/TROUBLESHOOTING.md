@@ -1,4 +1,4 @@
-# AutoOps Troubleshooting
+# Koqentra Troubleshooting
 
 Symptoms, what causes them, and what to do. If your problem is that a Worker
 produced something useless rather than something broken, start at
@@ -16,7 +16,7 @@ produced something useless rather than something broken, start at
 
 ## Signing in
 
-### "AutoOps is in Closed Beta and sign-in is limited to invited accounts."
+### "Koqentra is in Closed Beta and sign-in is limited to invited accounts."
 
 Your Google account is not on the beta invite list. This is the expected
 message for an uninvited account — nothing is broken.
@@ -50,7 +50,7 @@ their history are unaffected — they belong to the account, not the session.
 
 ### "Prompt is required for scheduled active workers."
 
-You are trying to save a Worker that AutoOps would run **unattended and
+You are trying to save a Worker that Koqentra would run **unattended and
 repeatedly**, with an empty prompt. That combination is rejected, because an
 empty prompt scheduled daily is a request to call the model every day for
 nothing.
@@ -154,7 +154,7 @@ A monthly Worker set to a day that some months do not have — the 31st, or the
 29th to 31st in February — is moved to the last day of the short month.
 
 **It does not move back on its own.** If the original day was not recorded in
-the **Day** field, AutoOps has no way to know what you meant, so the shifted
+the **Day** field, Koqentra has no way to know what you meant, so the shifted
 date sticks. Fix it by editing the Worker and setting **Day** explicitly — then
 the intended day is stored and applied every month.
 
@@ -170,7 +170,7 @@ for the toast before pressing again.
 
 ### "…is already running."
 
-That Worker has an execution in progress, and AutoOps will not start a second
+That Worker has an execution in progress, and Koqentra will not start a second
 one alongside it. This is a safeguard, not an error — the run already underway
 is unaffected.
 
@@ -180,7 +180,7 @@ just picked up. Wait, then check Activity.
 ### "…started, but its outcome could not be recorded."
 
 **This one is worth reading carefully.** The execution began — quite possibly
-successfully — but AutoOps could not write the result down.
+successfully — but Koqentra could not write the result down.
 
 That means:
 
@@ -193,7 +193,7 @@ There is nothing to recover. If you need the output, run the Worker again.
 ### A run has said "Running" for a long time
 
 After about fifteen minutes, Health shows **"Running for longer than
-expected"**. That phrasing is deliberate: AutoOps genuinely cannot tell a slow
+expected"**. That phrasing is deliberate: Koqentra genuinely cannot tell a slow
 run from one whose result was lost, so it does not claim the run failed.
 
 If the row is hours old, treat it as lost and run again.
@@ -209,17 +209,17 @@ If the row is hours old, treat it as lost and run again.
 Every built-in template contains a line like `(paste headlines or article text
 here)`. If you run the Worker without replacing it, the model is asked to
 summarise a parenthetical instruction — and it will produce *something*, which
-AutoOps records as a **successful** run.
+Koqentra records as a **successful** run.
 
 Open the Worker, replace the `(paste …)` line with real material, and run
-again. See [Supplying the information AutoOps
-needs](./USER_GUIDE.md#8-supplying-the-information-autoops-needs).
+again. See [Supplying the information Koqentra
+needs](./USER_GUIDE.md#8-supplying-the-information-koqentra-needs).
 
 ### The output says it cannot access my email / the news / a website
 
 That is correct, and the model is telling you the truth.
 
-**AutoOps sends your prompt and nothing else.** No browsing, no search, no
+**Koqentra sends your prompt and nothing else.** No browsing, no search, no
 mailbox, no calendar, no files, no other tools. A prompt that says "check my
 inbox" or "look up today's headlines" is asking for something that cannot
 happen. Paste the material in instead.
@@ -234,7 +234,7 @@ to do when something is missing. The built-in templates do this — *"Use only
 what is written below"*, *"leave a clearly marked gap instead of inventing
 it"*. Keep those lines when you edit a template.
 
-**They are an instruction to the model, not a guarantee from AutoOps.** They
+**They are an instruction to the model, not a guarantee from Koqentra.** They
 make invention less likely, not impossible. Check anything that matters.
 
 ### A scheduled Worker keeps sending me the same thing
@@ -271,7 +271,7 @@ failures are visible in **Activity** and in each Worker's **Health** and only
 there, and you have to look.
 
 With it on and still nothing arriving, the message may not have been delivered.
-**AutoOps does not retry and does not send it later**, and a delivery that
+**Koqentra does not retry and does not send it later**, and a delivery that
 failed changes nothing about the run: the result is in Activity exactly as it
 was recorded. Ask whoever operates the deployment to check the log for
 `[notify] could not send`.
@@ -295,7 +295,7 @@ is intact. Refresh the dashboard and try again.
 
 ### The Worker is gone but I wanted its history
 
-Deleting a Worker deletes its run history with it, permanently, and AutoOps
+Deleting a Worker deletes its run history with it, permanently, and Koqentra
 does not ask twice. Copy anything you need out of Activity before deleting.
 
 ---
@@ -389,7 +389,7 @@ Look for this line, one per message that was not sent:
 
 **No line at all means nothing was attempted.** Either the Worker does not have
 notifications on, or the run was one that does not send: a website check that
-found nothing, a first check, or a fetch AutoOps declined because it had asked
+found nothing, a first check, or a fetch Koqentra declined because it had asked
 that host a moment ago.
 
 **Nothing here changes a run.** A message that could not be sent leaves the

@@ -10,7 +10,7 @@ import { getWebsiteSource } from "@/lib/website-sources";
 import { minutesToTimeValue } from "@/lib/worker-input";
 
 export const metadata: Metadata = {
-  title: "Edit Worker — AutoOps",
+  title: "Edit Worker — Koqentra",
   description: "Update an AI worker.",
 };
 

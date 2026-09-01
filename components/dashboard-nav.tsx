@@ -27,7 +27,7 @@ export async function DashboardNav() {
     <header className="border-b border-border">
       <div className="mx-auto flex w-full max-w-6xl items-center gap-4 px-6 py-4 sm:px-10">
         <Link href="/" className="text-lg font-semibold tracking-tight">
-          AutoOps
+          Koqentra
         </Link>
 
         <nav className="flex items-center gap-1">

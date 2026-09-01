@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AutoOps — Automate recurring AI workflows.",
+  title: "Koqentra — Automate recurring AI workflows.",
   description: "Create AI routines once. Run forever.",
 };
 

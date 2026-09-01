@@ -219,8 +219,8 @@ export const en = {
     "Times use your account timezone: {timezone}. Leave empty to run at whatever time the worker was saved.",
 
   "worker.create.description":
-    "Define the worker once. AutoOps runs it on your schedule.",
-  "worker.create.draftHeading": "What would you like AutoOps to handle?",
+    "Define the worker once. Koqentra runs it on your schedule.",
+  "worker.create.draftHeading": "What would you like Koqentra to handle?",
   "worker.create.draftPlaceholder":
     "Check this page every day and summarise anything important that changed.",
   "worker.create.createDraft": "Create draft",
@@ -396,13 +396,13 @@ Write nothing that is not in the material. Where a section has nothing to draw o
    * as it arrived and has no key here.
    */
   "worker.draft.notConfigured":
-    "Drafting is unavailable because AutoOps has no AI configured.",
-  "worker.draft.empty": "Describe what you would like AutoOps to handle.",
+    "Drafting is unavailable because Koqentra has no AI configured.",
+  "worker.draft.empty": "Describe what you would like Koqentra to handle.",
   "worker.draft.tooLong": "Keep the description under {limit} characters.",
   "worker.draft.timeout": "Drafting took too long. Try again.",
   "worker.draft.unavailable": "The AI service could not be reached. Try again.",
   "worker.draft.unreadable":
-    "AutoOps could not read the answer. Try describing the work again.",
+    "Koqentra could not read the answer. Try describing the work again.",
   /**
    * The account has asked for as many drafts in an hour as the allowance
    * holds. **It says when to come back rather than how much is left**: a count
@@ -473,7 +473,7 @@ Write nothing that is not in the material. Where a section has nothing to draw o
    */
   "worker.edit.baselineReset":
     "Changing the address resets the comparison baseline. On the next " +
-    "successful check, AutoOps establishes a new baseline instead of treating " +
+    "successful check, Koqentra establishes a new baseline instead of treating " +
     "the new page as a detected change. Past runs are kept.",
 
   "run.detail.title": "Execution",
@@ -587,15 +587,15 @@ Write nothing that is not in the material. Where a section has nothing to draw o
    * stored reason is a diagnostic in whatever wording it arrived with, and the
    * link goes to the page that shows it.
    */
-  "notify.email.changedSubject": "[AutoOps] \"{name}\" detected a change",
-  "notify.email.completedSubject": "[AutoOps] \"{name}\" completed",
-  "notify.email.failedSubject": "[AutoOps] \"{name}\" failed",
+  "notify.email.changedSubject": "[Koqentra] \"{name}\" detected a change",
+  "notify.email.completedSubject": "[Koqentra] \"{name}\" completed",
+  "notify.email.failedSubject": "[Koqentra] \"{name}\" failed",
   "notify.email.worker": "Worker: {name}",
   "notify.email.detectedAt": "Detected at: {time}",
   "notify.email.executedAt": "Executed at: {time}",
-  "notify.email.failedBody": "The run failed. Open AutoOps for details.",
-  "notify.email.truncated": "The rest is available in AutoOps.",
-  "notify.email.viewRun": "View this run in AutoOps:",
+  "notify.email.failedBody": "The run failed. Open Koqentra for details.",
+  "notify.email.truncated": "The rest is available in Koqentra.",
+  "notify.email.viewRun": "View this run in Koqentra:",
 
   "run.action.noWorkerSelected": "No worker selected.",
   "run.action.alreadyRunning": "\"{name}\" is already running.",
@@ -635,7 +635,7 @@ Write nothing that is not in the material. Where a section has nothing to draw o
 
   "settings.title": "Settings",
   "settings.description":
-    "How AutoOps reads and schedules times for your account.",
+    "How Koqentra reads and schedules times for your account.",
   "settings.timezone.title": "Timezone",
   /**
    * What saving a zone does, and deliberately not what it does not.
@@ -659,7 +659,7 @@ Write nothing that is not in the material. Where a section has nothing to draw o
 
   "settings.language.title": "Language",
   "settings.language.description":
-    "The language AutoOps uses for its own screens. Your workers and what they produce are unaffected.",
+    "The language Koqentra uses for its own screens. Your workers and what they produce are unaffected.",
   "settings.language.label": "Language",
   "settings.language.english": "English",
   "settings.language.japanese": "Japanese",

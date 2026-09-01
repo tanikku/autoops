@@ -95,7 +95,7 @@ export function decodeWebsiteContent(
       "unsupported-content-type",
       mediaType === ""
         ? "The response did not say what kind of document it was."
-        : `AutoOps does not watch ${mediaType} pages.`,
+        : `Koqentra does not watch ${mediaType} pages.`,
     );
   }
 
@@ -161,7 +161,7 @@ function resolveHeaderCharset(
   if (resolved === null) {
     throw new WatcherError(
       "unsupported-charset",
-      `AutoOps does not decode pages in ${declared}.`,
+      `Koqentra does not decode pages in ${declared}.`,
     );
   }
 
@@ -200,7 +200,7 @@ function resolveMetaCharset(
   if (resolved === null) {
     throw new WatcherError(
       "unsupported-charset",
-      `AutoOps does not decode pages in ${declared}.`,
+      `Koqentra does not decode pages in ${declared}.`,
     );
   }
 

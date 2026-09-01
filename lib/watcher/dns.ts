@@ -73,7 +73,7 @@ export async function resolveSafeAddresses(
       // told which address learns the internal topology one guess at a time.
       throw new WatcherError(
         "blocked-address",
-        `${hostname} resolves to an address AutoOps will not connect to.`,
+        `${hostname} resolves to an address Koqentra will not connect to.`,
       );
     }
   }

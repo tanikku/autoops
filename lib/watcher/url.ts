@@ -71,7 +71,7 @@ export function parseWatchUrl(raw: string): URL {
   if (url.port !== "") {
     throw new WatcherError(
       "unsupported-port",
-      `AutoOps only watches pages on the standard ${url.protocol.slice(0, -1)} port, not port ${url.port}.`,
+      `Koqentra only watches pages on the standard ${url.protocol.slice(0, -1)} port, not port ${url.port}.`,
     );
   }
 

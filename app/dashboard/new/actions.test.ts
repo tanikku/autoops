@@ -960,12 +960,12 @@ describe("generateWorkerDraftAction", () => {
   it("carries an unsupported answer back as it is", async () => {
     mocks.generate.mockResolvedValue({
       status: "unsupported",
-      reason: "AutoOps cannot read email.",
+      reason: "Koqentra cannot read email.",
     });
 
     await expect(ask("read my email")).resolves.toEqual({
       status: "unsupported",
-      reason: "AutoOps cannot read email.",
+      reason: "Koqentra cannot read email.",
     });
   });
 
@@ -973,7 +973,7 @@ describe("generateWorkerDraftAction", () => {
     mocks.generate.mockResolvedValue({
       status: "needs_input",
       field: "websiteUrl",
-      message: "Add the address of the page you want AutoOps to watch.",
+      message: "Add the address of the page you want Koqentra to watch.",
     });
 
     await expect(ask("watch that page daily")).resolves.toMatchObject({
@@ -1222,7 +1222,7 @@ describe("generateWorkerDraftAction — the words a failure comes back in", () =
     expect(result?.status).toBe("error");
     expect(result).toHaveProperty(
       "message",
-      "AutoOps に任せたい内容を入力してください。",
+      "Koqentra に任せたい内容を入力してください。",
     );
     expect(mocks.generate).not.toHaveBeenCalled();
   });
@@ -1232,7 +1232,7 @@ describe("generateWorkerDraftAction — the words a failure comes back in", () =
 
     expect(result).toHaveProperty(
       "message",
-      "Describe what you would like AutoOps to handle.",
+      "Describe what you would like Koqentra to handle.",
     );
   });
 
@@ -1260,7 +1260,7 @@ describe("generateWorkerDraftAction — the words a failure comes back in", () =
 
     expect(result).toHaveProperty(
       "message",
-      "AutoOps に AI が設定されていないため、下書きを作成できません。",
+      "Koqentra に AI が設定されていないため、下書きを作成できません。",
     );
   });
 
@@ -1289,7 +1289,7 @@ describe("generateWorkerDraftAction — the words a failure comes back in", () =
     mocks.getUserLanguage.mockResolvedValue("ja");
     mocks.generate.mockResolvedValue({
       status: "unsupported",
-      reason: "AutoOps cannot send email yet.",
+      reason: "Koqentra cannot send email yet.",
     });
 
     await ask("email my team every morning");

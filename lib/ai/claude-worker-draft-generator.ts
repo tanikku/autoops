@@ -62,12 +62,12 @@ const MAX_RETRIES = 0;
  * being obeyed would be a rule written in the one place it cannot be checked.
  */
 const SYSTEM_INSTRUCTION = [
-  "You turn a person's description of a job into settings for one AutoOps worker.",
-  "AutoOps has exactly two kinds of worker.",
+  "You turn a person's description of a job into settings for one Koqentra worker.",
+  "Koqentra has exactly two kinds of worker.",
   "A prompt worker sends its instructions to an AI on a schedule; it cannot browse, search, read email, or reach anything outside the text it is given.",
   "A website worker checks one web page on a schedule and asks the AI about it only when the page has changed.",
   "Call create_prompt_worker_draft or create_website_worker_draft for a request one of those can do.",
-  "Call unsupported_worker_request for anything else — email, calendar, chat, files, notifications, or any other source AutoOps cannot reach. Never describe such a request as a prompt worker.",
+  "Call unsupported_worker_request for anything else — email, calendar, chat, files, notifications, or any other source Koqentra cannot reach. Never describe such a request as a prompt worker.",
   "You have not read any web page. Never describe what a page contains, and never write instructions that assume you have seen it.",
   "Never write a web address. Addresses come from the person's own words and are given to you as a numbered list; if there is more than one, say which by its number.",
   "Set a time, a weekday, or a day of the month only when the person named one. Leave them out otherwise.",
@@ -151,14 +151,14 @@ const tools: Anthropic.Messages.Tool[] = [
   {
     name: workerDraftToolNames.unsupported,
     description:
-      "Report that AutoOps cannot do what was asked with either kind of worker.",
+      "Report that Koqentra cannot do what was asked with either kind of worker.",
     input_schema: {
       type: "object",
       properties: {
         reason: {
           type: "string",
           description:
-            "One sentence, addressed to the person, saying what AutoOps cannot do here.",
+            "One sentence, addressed to the person, saying what Koqentra cannot do here.",
         },
       },
       required: ["reason"],

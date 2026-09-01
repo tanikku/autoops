@@ -1,4 +1,4 @@
-# AutoOps — 作業ガイド
+# Koqentra — 作業ガイド
 
 これは **`autoops/CLAUDE.md`** — このリポジトリ専用のファイルです。
 `~/.claude/CLAUDE.md`(全プロジェクト共通の個人設定)は別に存在し、**そちらも同時に適用されます**。
@@ -79,7 +79,7 @@
   見るのは **`head_sha` と `conclusion` の2つ**。`conclusion` が `success` でも、
   それが今の HEAD の SHA でなければ、今のコードは検証されていない。
 
-  **これは環境の話であって AutoOps の制約ではない。** `gh` が使える環境では
+  **これは環境の話であって Koqentra の制約ではない。** `gh` が使える環境では
   `gh run list` でよく、どちらで確認したかはリポジトリに影響しない。
   「`gh` がないから CI は確認できない」で止めないこと。
 
@@ -143,7 +143,7 @@
 | **execution ownership は correctness state**。observability ではないので DB に持ってよい | 判定基準は「読まれ方」。`stuck` は表示のためだけに読まれ、何の分岐にも使われないから DB に持たない。execution ownership は**実行するかしないかの分岐に使われる**。書いた値が振る舞いを変えるものは状態であって観測ではない |
 | **execution lease は無条件の at-most-once を保証しない** | 保証するのは「execution が lease TTL より長引かない限り、同一 Routine の同時実行を抑止する」まで。TTL を超えて生き残った実行と、乗っ取った実行は**現に重なる**。総実行時間に理論上の上界がない(接続待ちが無期限)以上、定数では保証できない。**owner token が守るのは「古い所有者が新しい所有者の lease を消さない」ことだけ** — ここを at-most-once と誤読して上に何かを積むと、再現しにくい形で壊れる |
 | **`User` 行は sign-in では作らない。** provisioning は「行を新たに存在させる必要がある write」の境界でだけ行う | 3案を比較した結果。`auth.ts` に DB を入れる案は「adapter を入れない = middleware を Edge で動かす」根拠を消すうえ、**JWT は sign-in 時にしか発行されないので既存セッションには効かない**。`requireUserId()` に入れる案は read path 5箇所が全て write になり、DB 障害が認証障害として見える。**読み取りが行を作ってはいけない** |
-| **`requireUserId()` に provisioning を足さない。** read-safe 契約はテストで固定してある | 足した瞬間、ページ表示ごとに upsert が走る。AutoOps 全体の「読み取りは書かない」性質(scheduler は read-only、health / overview は導出)を初めて破ることになる |
+| **`requireUserId()` に provisioning を足さない。** read-safe 契約はテストで固定してある | 足した瞬間、ページ表示ごとに upsert が走る。Koqentra 全体の「読み取りは書かない」性質(scheduler は read-only、health / overview は導出)を初めて破ることになる |
 | 有効な write で `auth()` が2回走ることは**許容する** | authentication と provisioning の責務分離を優先した結果。`requireUserId({ provision: true })` のような flag API や、session を広く配る abstraction は作らない。性能最適化はこの分離を壊す理由にならない |
 | Manual Run の per-user guard は **manual entry point だけ**に置く。`enqueueRoutine` / `runRoutine` の共通 path には入れない | scheduled は tick 側(`MAX_DISPATCHES_PER_TICK` / tick budget / 逐次 hand-off)で別に bounded されている。共通 path に入れれば、cron の実行が「所有者が手で何かを走らせていたから」という理由で落ちる。**スケジュールが人の操作に依存してはいけない** |
 | `MANUAL_RUN_SLOT_TTL_MS` は `EXECUTION_LEASE_MS` から**導出も共有もしない**(現在たまたま同じ15分) | 前者は「crash 後にアカウントを何分待たせるか」という product の判断、後者は「worker をいつまで実行中とみなすか」という platform の判断。片方を動かしたときにもう片方が黙って動くのは、`STUCK_THRESHOLD_MS` と `EXECUTION_LEASE_MS` を分けたのと同じ理由で避ける |
@@ -153,14 +153,14 @@
 | Worker quota の atomicity は **`User` 行を per-user の serialization point** にして得る。counter table は作らない | 個数条件は conditional `UPDATE` の WHERE に書けないため、既存3 guard の pattern が使えない。counter を別に持てば `Routine` と二重の真実になり、pause / delete / cascade でズレたときに自然回復しない。**行が数そのもの**なら、止めるのも消すのも次の count に自動で反映される |
 | quota lock の `tx.user.update({ data: { id: userId } })` を **`data: {}` に変えない** | Technical Spike の実測: `data: {}` では Prisma が `UPDATE` を発行せず `SELECT` になり、**ロックを取らずに素通りする**。自己代入は偶然ではなく locking contract。呼び出し側へ散らさず `lib/worker-quota.ts` に閉じ込める。**将来 `User.updatedAt` を足すなら、この lock が account を毎回打刻することになるので再評価する** |
 | Active quota は **`status === "active"` の行数**で数える。`frequency !== "manual"` を条件に足さない | scheduler が実際に拾うのは `active` かつ定期だが、それを quota の条件にすると「cadence を manual に変えただけで枠が空く」挙動になり、dashboard から読み取れない規則になる。**負荷の実体と、人が見て分かる規則は別**でよい |
-| Website の domain throttle は **`DomainThrottle`(host が PK / `nextAllowedAt` のみ)で global**。`RateLimitBucket` / `ManualRunSlot` と混ぜない | 守る対象が「AutoOps の請求」ではなく「他人のサイト」なので、per-user では user 数だけ掛け算される。`RateLimitBucket` は `userId` が NOT NULL で global 行を表現できず、`ManualRunSlot` は「進行中か」を問う lease で意味が違う。**時刻を前進させるだけなので解放も TTL も不要** |
+| Website の domain throttle は **`DomainThrottle`(host が PK / `nextAllowedAt` のみ)で global**。`RateLimitBucket` / `ManualRunSlot` と混ぜない | 守る対象が「Koqentra の請求」ではなく「他人のサイト」なので、per-user では user 数だけ掛け算される。`RateLimitBucket` は `userId` が NOT NULL で global 行を表現できず、`ManualRunSlot` は「進行中か」を問う lease で意味が違う。**時刻を前進させるだけなので解放も TTL も不要** |
 | throttle の key は **exact hostname**(URL parser の正規化済み)。eTLD+1 に集約しない。PSL 依存を足さない | `www` と `news` を別 host として数えるのは取りこぼす方向の誤り。PSL なしの近似は `co.jp` / `github.io` を誤り、**無関係なサイト同士が互いを待たせる**という悪い方向に失敗する |
 | throttle の待機は **`FETCH_BUDGET_MS`(20秒)の内側**。retry は **1回だけ**。2回目も拒否なら `WatcherErrorKind = "throttled"` | budget 外に出すと 1 worker の最悪が 140s → 180s になり、逐次 dispatch の tick 最悪値が Railway の 300s edge を超える(Spike で実算)。待った後は残り budget を**読み直して**hop へ渡す |
 | throttle 拒否は **RunHistory `failed`**。行を作らない案(create を fetch の後ろへ移す)は採らない | 移すと timeout / blocked-address / http-error など**全 fetch 失敗の行が消える**。Sprint 39 で `errorMessage` を分離した意味を失う。Snapshot は不変(既存「失敗は baseline を動かさない」を維持) |
 | `lib/watcher` に **Prisma を import しない**。throttle は `FetchDeps` で注入する | resolver / transport と同じ注入境界。DB を入れると watcher の全規則が DB なしでテストできなくなる |
-| `RunHistory.output` のうち **AutoOps 自身が書いた2文だけ**を表示時に i18n する。保存値は英語のまま変えない | `output` には「モデルの生成物」と「AutoOps の報告」が同居している。前者は利用者の素材で翻訳禁止、後者は画面の言葉。**判定は `routine.kind === "website"` かつ完全一致の2条件**で、前方一致・部分一致・正規表現は使わない — prompt worker は同じ文を意図的に出力できるため。保存時に訳す案は language 変更に追随できないので不採用。`errorMessage` は補間つき `WatcherError` が多く、一部だけ訳すと不揃いになるため**今回は対象外** |
-| **通知するかどうかは semantic state から決める。`RunHistory.output` の文字列を見て判定しない** | `output` には「モデルの生成物」と「AutoOps の報告」が同居しており、prompt worker は AutoOps の2文と同じ文字列を意図的に出力できる。判定に使うのは `WebsiteChangeState`(`initial`/`unchanged`/`changed`)、`RunHistory.status`、`WatcherErrorKind` の3つだけ。どれも run が終わる時点で消えるので、内部の `ExecutionOutcome` に **`RunNotificationKind \| null` を1つ足して**運ぶ。**`runRoutine` の戻り値は `RunHistory` のまま** — queue 契約も dispatcher も手動実行 action も無変更 |
-| Website の `initial` と `unchanged` は**通知しない**。`throttled` の failure も**通知しない** | 前2つは「報告することが何もない成功」で、通知すればページが動かない限り毎 cadence 届く。`throttled` は他人のサイトの障害ではなく **AutoOps 自身の politeness** で、所有者に打つ手がない。**除外するのは通知だけ** — run は `failed` のままで `errorMessage` も持ち、`latestExecutionFailureAt` の対象でもある。`RunHistory` の failed semantics と `last_failed_at` semantics は**変更していない** |
+| `RunHistory.output` のうち **Koqentra 自身が書いた2文だけ**を表示時に i18n する。保存値は英語のまま変えない | `output` には「モデルの生成物」と「Koqentra の報告」が同居している。前者は利用者の素材で翻訳禁止、後者は画面の言葉。**判定は `routine.kind === "website"` かつ完全一致の2条件**で、前方一致・部分一致・正規表現は使わない — prompt worker は同じ文を意図的に出力できるため。保存時に訳す案は language 変更に追随できないので不採用。`errorMessage` は補間つき `WatcherError` が多く、一部だけ訳すと不揃いになるため**今回は対象外** |
+| **通知するかどうかは semantic state から決める。`RunHistory.output` の文字列を見て判定しない** | `output` には「モデルの生成物」と「Koqentra の報告」が同居しており、prompt worker は Koqentra の2文と同じ文字列を意図的に出力できる。判定に使うのは `WebsiteChangeState`(`initial`/`unchanged`/`changed`)、`RunHistory.status`、`WatcherErrorKind` の3つだけ。どれも run が終わる時点で消えるので、内部の `ExecutionOutcome` に **`RunNotificationKind \| null` を1つ足して**運ぶ。**`runRoutine` の戻り値は `RunHistory` のまま** — queue 契約も dispatcher も手動実行 action も無変更 |
+| Website の `initial` と `unchanged` は**通知しない**。`throttled` の failure も**通知しない** | 前2つは「報告することが何もない成功」で、通知すればページが動かない限り毎 cadence 届く。`throttled` は他人のサイトの障害ではなく **Koqentra 自身の politeness** で、所有者に打つ手がない。**除外するのは通知だけ** — run は `failed` のままで `errorMessage` も持ち、`latestExecutionFailureAt` の対象でもある。`RunHistory` の failed semantics と `last_failed_at` semantics は**変更していない** |
 | 通知先は **`Routine.userId` → `User.email` の鎖だけ**。FormData からも session からも取らない | 宛先がフォームに現れないなら、注入も誤配も表現できない。session を使うと scheduled 実行(誰もサインインしていない)と手動実行で宛先が変わりうる。**worker にアドレス列は無い** |
 | 順序は **execution → final RunHistory persistence → email**。`RunPersistenceError` は通知0 | 逆順だと「メールは届いたが Run Detail が存在しない」に到達できる。リンク先が無いメールは、その人自身のアカウントについて嘘を伝えることになる |
 | **メール送信の失敗は Run を一切変えない。** ログ1行だけ | 変えるものが1つでもあれば、通知は observability ではなく policy になる。status / errorMessage / Snapshot / `nextRunAt` / lease のどれも触らない。ログは固定 prefix `[notify] could not send` と run id / routine id / **closed set の reason** のみ。**アドレス・API キー・provider の応答・output・ページ内容は出さない** |
@@ -172,7 +172,7 @@
 | `RESEND_API_KEY` / `EMAIL_FROM` は **送信のたびに読む** | `ANTHROPIC_API_KEY` と `BETA_ALLOWED_EMAILS` が起動時1回なのは、起動時に**何かを作る**から(client / parse 済みリスト)。ここは何も作らないので、早く読んだ値の置き場所が無い。変数を足した deployment が再起動で送り始める |
 | edit は `emailNotificationsEnabled` を**毎回書く** | checkbox は OFF のとき何も送信しない。届いた時だけ書く実装にすると、**ON にはできても OFF に戻せない** |
 | 通知の宛先 helper は `email` / `language` に加えて **`timezone` も読む** | 同じ行・同じクエリで、追加の read は0。他の全ての時刻表示がその zone なので、リンク先の Run Detail と食い違うメールを送ることになるのを避ける。**Focused Design Investigation の記述からの意図的な逸脱**で、報告済み |
-| **テンプレートの文言(name / description / prompt)は3つとも i18n 対象**。「name と prompt は worker の中身になるから訳さない」という以前の判断は**撤回した** | 適用した瞬間から利用者の素材になるのはそのとおりだが、**適用するまでは AutoOps が差し出す例**であって、読めない例は例として機能しない。訳さない対象は「適用した後に人が書いたもの」に線を引き直した。en/ja parity は `TranslationKey` の型で従来どおり担保する。**新しい i18n framework は作っていない** |
+| **テンプレートの文言(name / description / prompt)は3つとも i18n 対象**。「name と prompt は worker の中身になるから訳さない」という以前の判断は**撤回した** | 適用した瞬間から利用者の素材になるのはそのとおりだが、**適用するまでは Koqentra が差し出す例**であって、読めない例は例として機能しない。訳さない対象は「適用した後に人が書いたもの」に線を引き直した。en/ja parity は `TranslationKey` の型で従来どおり担保する。**新しい i18n framework は作っていない** |
 | テンプレートは **`kind` を持ち、選ぶと kind も切り替わる** | 以前は「テンプレート = prompt worker」を前提に、website を選ぶとテンプレート欄ごと隠していた。website の例を出す以上その前提は成り立たない。切り替えは AI draft 適用時の `setKind(draft.kind)` と同じ既存パターンで、**新しい UI architecture は作っていない** |
 | グループ表示は **見出し + 既存カードの2回描画**だけ。group registry も per-group の振る舞いも作らない | 「グループ化のためだけに汎用 UI を作らない」の直接の帰結。テンプレート追加は配列に1件足すだけで、どのグループに出すかは `kind` が決める |
 | **website テンプレートは URL を持たない** | どのページを見るかは選ぶ人しか知らない。`validateWorkerFormForKind` の「website には URL 必須」はそのままなので、空欄のまま保存はできない |
@@ -495,7 +495,7 @@ dispatcher は消えた worker を `failed` に数える設計なので、それ
 | TTL | `EXECUTION_LEASE_MS = 900_000`。**provider timeout からは導出しない** — あちらは1つの provider の1リクエストの方針、こちらはプラットフォームの1実行の方針 |
 | heartbeat | **なし。** 理由は「失効が起きないから」ではなく、起きても owner token が状態を守るから |
 
-**失効判定には app clock を使う。** DB clock なら raw SQL が要り、AutoOps にはまだ
+**失効判定には app clock を使う。** DB clock なら raw SQL が要り、Koqentra にはまだ
 1つもない。差が出るのは**書き込むプロセスが2つ以上あるとき**で、今は1つ。
 **Worker Service か replica 追加の前に再検討すること** — 時計がずれる相手と
 失効時刻を比べることになる。「app clock が永久に正解」と決めたわけではない。
@@ -622,7 +622,7 @@ write outcome     失敗 → 何も書かず RunPersistenceError を投げる
 
 - Healthchecks.io の dead man's switch。**Period 5分 / Grace 15分** なので、
   最後に成功した tick からおよそ20分で通知対象になる。
-- Railway cron の Start Command は **`A && (B || true)`**。A が AutoOps の
+- Railway cron の Start Command は **`A && (B || true)`**。A が Koqentra の
   cron API、B が heartbeat。
   - **A が失敗したら heartbeat を送らない** — `--fail-with-body` があるので
     4xx/5xx が curl の失敗になる。**このフラグが無いと curl は HTTP エラーでも
@@ -639,7 +639,7 @@ write outcome     失敗 → 何も書かず RunPersistenceError を投げる
 ### Sprint 42 — User provisioning 境界の正式化
 
 **Auth identity と DB `User` は別物**で、この設計はそれを意図的に分けている。
-`User` 行は「認証の結果」ではなく **AutoOps 側の application entity**(timezone を
+`User` 行は「認証の結果」ではなく **Koqentra 側の application entity**(timezone を
 持ち、`Routine` の FK 親になる)。**sign-in では作られない。**
 
 | | 責務 | DB write |
@@ -683,7 +683,7 @@ authentication → validation → provisioning → business write
 「実行可能なら prompt 必須」にすると**全 Worker が必須**になり、下書き導線が
 壊れる。
 
-**契約は「AutoOps が無人で繰り返し実行する ⇒ prompt が要る」。**
+**契約は「Koqentra が無人で繰り返し実行する ⇒ prompt が要る」。**
 
 ```
 effectiveStatus === "active" && effectiveFrequency !== "manual" && prompt === ""
@@ -859,7 +859,7 @@ Server Component で読むため。Client Component / `useSearchParams` / Suspen
 実装せずに報告し、PM の判断で「能力整合の修正」として先に直した
 (**feature sprint ではない**)。
 
-- 5件中3件が、AutoOps ができないことを前提に書かれていた —
+- 5件中3件が、Koqentra ができないことを前提に書かれていた —
   「今日の重要ニュース」「受信箱の未返信メール」「追跡中トピックを出典付きで
   調査」。**worker は prompt 1本のモデル呼び出し**で、browsing / search /
   inbox / calendar / files / tool use / MCP / 前回実行の記憶はどれも無い。
@@ -886,7 +886,7 @@ heartbeat、`last_failed_at` は**読みに行く観測であって通知では�
 
 ### Email Notification MVP — worker ごとの opt-in メール通知
 
-**AutoOps が外へ何かを送るのは、これが初めて。** 判断の中身は上の「決定済み」に
+**Koqentra が外へ何かを送るのは、これが初めて。** 判断の中身は上の「決定済み」に
 13行入れた。ここには、そこに収まらない事実だけ書く。
 
 - **schema は `Routine` に Boolean 1列 (`emailNotificationsEnabled`)、migration 1本。**
@@ -919,7 +919,7 @@ heartbeat、`last_failed_at` は**読みに行く観測であって通知では�
   作れてしまう。`AUTH_URL` が無い / http(s) でないなら **delivery failure** であって
   run failure ではない。
 - **本文の切り詰めは 2,000 文字**(`MAX_NOTIFIED_OUTPUT_CHARS`)。超えたら定型文を足す。
-  **AI の出力と worker 名は翻訳しない** — 訳すのは AutoOps 自身の文言(9キー)だけ。
+  **AI の出力と worker 名は翻訳しない** — 訳すのは Koqentra 自身の文言(9キー)だけ。
 - **翻訳の parity 検査に1行足した。** `notify.email.worker` は en/ja で同一文字列
   (`Worker: {name}`)なので、`lib/i18n/index.test.ts` の「同一を許すキー」一覧に
   明示的に加えてある。**黙って同一になったのではない。**
@@ -928,17 +928,36 @@ heartbeat、`last_failed_at` は**読みに行く観測であって通知では�
   **`app/privacy/page.tsx` の「すべての文が実装を説明する」という前提を守るための修正**
   であって、feature の一部ではない。
 - **`.env.example` に `EMAIL_FROM` / `RESEND_API_KEY` を追記した**(BOM と CRLF、
-  末尾改行なしを保存)。README が「`.env.example` は AutoOps が読む変数をすべて挙げる」
+  末尾改行なしを保存)。README が「`.env.example` は Koqentra が読む変数をすべて挙げる」
   と書いているため。
 
-**未確認(重要):**
+**Production E2E — 実測済み(2026-09-01 〜 2026-09-02)。**
 
-- **本番でメールを1通も送っていない。** Resend アカウント・API キー・ドメイン
-  verify・Railway env はいずれも**未設定**で、実装では行わない(手動 setup)。
-  したがって「Resend の API が実際にこの形の request を受け付ける」ことは
-  **実測していない** — 確認したのは、request の形・timeout・分類・不送信条件が
-  テストで固定されていることだけ。
-- **失敗経路も本番未観測。** `rejected` / `unreadable` は unit test のみ。
+Resend の送信ドメイン `send.koqentra.com` を Verified にし、Railway web service に
+`RESEND_API_KEY` と `EMAIL_FROM` を設定したうえで、Production UI からの通常操作
+(Website Worker 新規作成 + 手動実行)で3状態すべてを通した。
+
+| # | 状態 | 実測結果 |
+|---|---|---|
+| 1 | **initial** | Manual Run 成功 → baseline 作成 → output「サイトの初回状態を記録しました。」→ **メール通知なし** |
+| 2 | **changed** | fixture `https://takarazuka-today.jp/autoops-e2e` を VERSION 1 → VERSION 2 に変更 → change 検知成功 → **AI による日本語要約成功** → RunHistory 保存成功 → **Resend 送信成功** → **Gmail 受信トレイへ実到達** |
+| 3 | **unchanged** | VERSION 2 のまま再実行 → output「サイトの内容に変更はありませんでした。」→ Run 成功 → **メール通知なし** |
+
+これで
+**initial → 通知なし / changed → AI 要約 + メール通知 / unchanged → 通知なし**
+が Production で実証された。設計どおりであり、この3行はもう推測ではない。
+
+**受信メールの Subject は
+`[AutoOps]「Email通知 E2Eテスト」で変更を検出しました`
+だった** — E2E 実施はブランド移行前なので、**これは歴史的事実としてそのまま記録する**。
+Brand Migration Phase 1 以降に送られるメールの Subject は `[Koqentra]` になる。
+
+**なお未確認のまま残るもの:**
+
+- **失敗経路は本番未観測。** `rejected` / `unreadable` / `timeout` は unit test のみで、
+  本番で失敗した送信は1件も無い。
+- 実測したのは website worker の3状態のみ。**prompt worker の completed 通知は
+  本番未実施**(判定経路は同一だが、実測ではない)。
 
 ### Template Refresh — Closed Beta 向けテンプレート刷新
 

@@ -10,7 +10,7 @@ import type { TranslationKey } from "@/lib/i18n/en";
  *
  * **`Worker` stays `Worker`.** It is what the product calls the thing it makes,
  * on both sides of the switch;「作業員」would be a different noun about a
- * different subject. `AutoOps` is a name and is never translated either.
+ * different subject. `Koqentra` is a name and is never translated either.
  *
  * **The language names are not both translated.** English readers choosing
  * between languages read "Japanese"; Japanese readers read「日本語」, because
@@ -144,8 +144,8 @@ export const ja: Record<TranslationKey, string> = {
     "時刻はアカウントのタイムゾーン({timezone})で扱われます。空欄にすると、保存したときの時刻に実行されます。",
 
   "worker.create.description":
-    "Worker は一度定義すれば、あとは AutoOps がスケジュールどおりに実行します。",
-  "worker.create.draftHeading": "AutoOps に何を任せますか?",
+    "Worker は一度定義すれば、あとは Koqentra がスケジュールどおりに実行します。",
+  "worker.create.draftHeading": "Koqentra に何を任せますか?",
   "worker.create.draftPlaceholder":
     "このページを毎日チェックして、重要な変更があれば要約して。",
   "worker.create.createDraft": "下書きを作成",
@@ -287,15 +287,15 @@ export const ja: Record<TranslationKey, string> = {
 (ここに書いてください)`,
 
   "worker.draft.notConfigured":
-    "AutoOps に AI が設定されていないため、下書きを作成できません。",
-  "worker.draft.empty": "AutoOps に任せたい内容を入力してください。",
+    "Koqentra に AI が設定されていないため、下書きを作成できません。",
+  "worker.draft.empty": "Koqentra に任せたい内容を入力してください。",
   "worker.draft.tooLong": "内容は {limit} 文字以内にしてください。",
   "worker.draft.timeout":
     "下書きの作成に時間がかかりすぎました。もう一度お試しください。",
   "worker.draft.unavailable":
     "AI サービスに接続できませんでした。もう一度お試しください。",
   "worker.draft.unreadable":
-    "AutoOps が回答を読み取れませんでした。内容を書き直してお試しください。",
+    "Koqentra が回答を読み取れませんでした。内容を書き直してお試しください。",
   "worker.draft.limitReached":
     "AI 下書きの利用上限に達しました。しばらくしてからもう一度お試しください。",
   "worker.draft.failed":
@@ -332,7 +332,7 @@ export const ja: Record<TranslationKey, string> = {
    */
   "worker.edit.baselineReset":
     "アドレスを変更すると、比較の基準はリセットされます。次にチェックが成功した" +
-    "時点で、AutoOps は新しいページを「変更が検出された」として扱わず、新しい" +
+    "時点で、Koqentra は新しいページを「変更が検出された」として扱わず、新しい" +
     "基準を作り直します。過去の実行履歴はそのまま残ります。",
 
   "run.detail.title": "実行の詳細",
@@ -383,16 +383,16 @@ export const ja: Record<TranslationKey, string> = {
    * 括弧は日本語の引用記号。`{name}` は利用者が入力した名前がそのまま入り、
    * 本文に載る AI の要約や出力も翻訳しない。訳すのは AutoOps 自身の文言だけ。
    */
-  "notify.email.changedSubject": "[AutoOps]「{name}」で変更を検出しました",
-  "notify.email.completedSubject": "[AutoOps]「{name}」が完了しました",
-  "notify.email.failedSubject": "[AutoOps]「{name}」の実行に失敗しました",
+  "notify.email.changedSubject": "[Koqentra]「{name}」で変更を検出しました",
+  "notify.email.completedSubject": "[Koqentra]「{name}」が完了しました",
+  "notify.email.failedSubject": "[Koqentra]「{name}」の実行に失敗しました",
   "notify.email.worker": "Worker: {name}",
   "notify.email.detectedAt": "検出日時: {time}",
   "notify.email.executedAt": "実行日時: {time}",
   "notify.email.failedBody":
-    "実行に失敗しました。詳しい内容は AutoOps で確認してください。",
-  "notify.email.truncated": "続きは AutoOps で確認できます。",
-  "notify.email.viewRun": "この実行の詳細は AutoOps で確認できます:",
+    "実行に失敗しました。詳しい内容は Koqentra で確認してください。",
+  "notify.email.truncated": "続きは Koqentra で確認できます。",
+  "notify.email.viewRun": "この実行の詳細は Koqentra で確認できます:",
 
   "run.action.noWorkerSelected": "Worker が選択されていません。",
   "run.action.alreadyRunning": "「{name}」は実行中です。",
@@ -409,7 +409,7 @@ export const ja: Record<TranslationKey, string> = {
 
   "settings.title": "設定",
   "settings.description":
-    "AutoOps がこのアカウントの時刻をどう読み、いつ実行するか。",
+    "Koqentra がこのアカウントの時刻をどう読み、いつ実行するか。",
   "settings.timezone.title": "タイムゾーン",
   /**
    * 英語版と同じ2点だけを言うこと。
@@ -430,7 +430,7 @@ export const ja: Record<TranslationKey, string> = {
 
   "settings.language.title": "言語",
   "settings.language.description":
-    "AutoOps の画面に使う言語です。Worker と、その出力には影響しません。",
+    "Koqentra の画面に使う言語です。Worker と、その出力には影響しません。",
   "settings.language.label": "言語",
   "settings.language.english": "English",
   "settings.language.japanese": "日本語",

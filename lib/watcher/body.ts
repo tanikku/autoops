@@ -88,7 +88,7 @@ export async function readBodyWithLimit(
     if (byteLength > limit) {
       throw new WatcherError(
         "response-too-large",
-        `The page is larger than the ${limit.toLocaleString("en-US")} bytes AutoOps will read.`,
+        `The page is larger than the ${limit.toLocaleString("en-US")} bytes Koqentra will read.`,
       );
     }
 

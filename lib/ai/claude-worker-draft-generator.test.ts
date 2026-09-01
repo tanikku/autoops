@@ -197,11 +197,11 @@ describe("an answer it can use", () => {
     });
   });
 
-  it("reads a request AutoOps cannot do", async () => {
+  it("reads a request Koqentra cannot do", async () => {
     create.mockResolvedValue(
       reply([
         toolUse(workerDraftToolNames.unsupported, {
-          reason: "AutoOps cannot read email.",
+          reason: "Koqentra cannot read email.",
         }),
       ]),
     );
@@ -210,7 +210,7 @@ describe("an answer it can use", () => {
       generator.generate({ request: "read my email", urlCandidates: [] }),
     ).resolves.toEqual({
       status: "unsupported",
-      reason: "AutoOps cannot read email.",
+      reason: "Koqentra cannot read email.",
     });
   });
 

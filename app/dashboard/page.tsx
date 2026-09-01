@@ -14,7 +14,7 @@ import { requireUserId } from "@/lib/session";
 import { getUserLanguage, getUserTimezone } from "@/lib/users";
 
 export const metadata: Metadata = {
-  title: "Dashboard — AutoOps",
+  title: "Dashboard — Koqentra",
   description: "Manage and monitor your AI workers.",
 };
 

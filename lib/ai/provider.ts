@@ -102,7 +102,7 @@ const safeMessages: Record<ProviderErrorKind, string> = {
   "rate-limited": "The AI provider is rate limiting requests right now.",
   unavailable: "The AI provider is temporarily unavailable.",
   unreachable: "The AI provider could not be reached.",
-  unauthorized: "AutoOps is not authorized to call the AI provider.",
+  unauthorized: "Koqentra is not authorized to call the AI provider.",
   "invalid-request":
     "The AI provider rejected this request. The prompt may be too long.",
   refused: "The AI provider declined to answer this prompt.",

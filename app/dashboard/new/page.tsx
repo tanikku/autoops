@@ -6,7 +6,7 @@ import { requireUserId } from "@/lib/session";
 import { getUserLanguage, getUserTimezone } from "@/lib/users";
 
 export const metadata: Metadata = {
-  title: "Hire Worker — AutoOps",
+  title: "Hire Worker — Koqentra",
   description: "Add a new AI worker to your team.",
 };
 

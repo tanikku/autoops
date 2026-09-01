@@ -20,7 +20,7 @@ import {
  */
 
 const API_KEY = "re_test_key_not_a_real_one";
-const FROM = "AutoOps <notifications@example.test>";
+const FROM = "Koqentra <notifications@example.test>";
 const TO = "owner@example.test";
 
 const fetchMock = vi.fn();
@@ -44,7 +44,7 @@ function refused(status: number) {
 }
 
 function message() {
-  return { to: TO, subject: "[AutoOps] a subject", text: "a body" };
+  return { to: TO, subject: "[Koqentra] a subject", text: "a body" };
 }
 
 /** What the one request was given. */

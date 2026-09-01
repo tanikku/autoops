@@ -26,7 +26,7 @@ export default async function Home({
   return (
     <div className="flex flex-1 flex-col bg-background">
       <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6 sm:px-10">
-        <span className="text-lg font-semibold tracking-tight">AutoOps</span>
+        <span className="text-lg font-semibold tracking-tight">Koqentra</span>
         <Button
           variant="ghost"
           size="sm"
@@ -55,7 +55,7 @@ export default async function Home({
 
         {refused ? (
           <p className="mt-8 max-w-md text-balance rounded-lg border border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
-            AutoOps is in Closed Beta and sign-in is limited to invited
+            Koqentra is in Closed Beta and sign-in is limited to invited
             accounts.
           </p>
         ) : null}
@@ -92,7 +92,7 @@ export default async function Home({
       </main>
 
       <footer className="mx-auto w-full max-w-6xl px-6 py-8 text-center text-sm text-muted-foreground sm:px-10">
-        © {new Date().getFullYear()} AutoOps · Closed Beta ·{" "}
+        © {new Date().getFullYear()} Koqentra · Closed Beta ·{" "}
         <Link href="/privacy" className="underline-offset-4 hover:underline">
           Privacy
         </Link>

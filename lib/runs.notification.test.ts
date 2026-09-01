@@ -250,7 +250,7 @@ describe("a website worker", () => {
     await runRoutine("worker-1");
 
     expect(mocks.send).toHaveBeenCalledTimes(1);
-    expect(subject()).toBe('[AutoOps] "Careers page" detected a change');
+    expect(subject()).toBe('[Koqentra] "Careers page" detected a change');
   });
 
   it("sends nothing when the page changed but notifications are off", async () => {
@@ -293,16 +293,16 @@ describe("a website worker", () => {
     await runRoutine("worker-1");
 
     expect(mocks.send).toHaveBeenCalledTimes(1);
-    expect(subject()).toBe('[AutoOps] "Careers page" failed');
+    expect(subject()).toBe('[Koqentra] "Careers page" failed');
   });
 
   /**
    * **The one failure that is ours rather than the site's.** Only the email is
    * excluded — the run is still `failed` and still carries its reason.
    */
-  it("sends nothing when AutoOps declined to fetch the page", async () => {
+  it("sends nothing when Koqentra declined to fetch the page", async () => {
     mocks.fetchWatchedPage.mockRejectedValue(
-      new WatcherError("throttled", "AutoOps fetched this site a moment ago."),
+      new WatcherError("throttled", "Koqentra fetched this site a moment ago."),
     );
 
     await runRoutine("worker-1");
@@ -310,7 +310,7 @@ describe("a website worker", () => {
     expect(mocks.send).not.toHaveBeenCalled();
     expect(written().status).toBe("failed");
     expect(written().errorMessage).toBe(
-      "AutoOps fetched this site a moment ago.",
+      "Koqentra fetched this site a moment ago.",
     );
   });
 
@@ -334,7 +334,7 @@ describe("a prompt worker", () => {
     await runRoutine("worker-1");
 
     expect(mocks.send).toHaveBeenCalledTimes(1);
-    expect(subject()).toBe('[AutoOps] "Careers page" completed');
+    expect(subject()).toBe('[Koqentra] "Careers page" completed');
   });
 
   it("sends nothing when notifications are off", async () => {
@@ -354,7 +354,7 @@ describe("a prompt worker", () => {
     await runRoutine("worker-1");
 
     expect(mocks.send).toHaveBeenCalledTimes(1);
-    expect(subject()).toBe('[AutoOps] "Careers page" completed');
+    expect(subject()).toBe('[Koqentra] "Careers page" completed');
   });
 
   it("emails when the run failed", async () => {
@@ -363,7 +363,7 @@ describe("a prompt worker", () => {
     await runRoutine("worker-1");
 
     expect(mocks.send).toHaveBeenCalledTimes(1);
-    expect(subject()).toBe('[AutoOps] "Careers page" failed');
+    expect(subject()).toBe('[Koqentra] "Careers page" failed');
   });
 
   it("sends nothing when the outcome could not be written down", async () => {

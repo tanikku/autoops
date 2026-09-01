@@ -1,15 +1,15 @@
-# AutoOps User Guide
+# Koqentra User Guide
 
-Everything you need to use AutoOps during the Closed Beta.
+Everything you need to use Koqentra during the Closed Beta.
 
-- [1. What AutoOps is](#1-what-autoops-is)
-- [2. What AutoOps can and cannot do](#2-what-autoops-can-and-cannot-do)
+- [1. What Koqentra is](#1-what-koqentra-is)
+- [2. What Koqentra can and cannot do](#2-what-koqentra-can-and-cannot-do)
 - [3. Signing in](#3-signing-in)
 - [4. Understanding the dashboard](#4-understanding-the-dashboard)
 - [5. Creating your first Worker](#5-creating-your-first-worker)
 - [6. Using a template](#6-using-a-template)
 - [7. Writing a prompt](#7-writing-a-prompt)
-- [8. Supplying the information AutoOps needs](#8-supplying-the-information-autoops-needs)
+- [8. Supplying the information Koqentra needs](#8-supplying-the-information-koqentra-needs)
 - [9. Prompt variables](#9-prompt-variables)
 - [10. Status](#10-status)
 - [11. Frequency](#11-frequency)
@@ -30,27 +30,27 @@ Everything you need to use AutoOps during the Closed Beta.
 
 ---
 
-## 1. What AutoOps is
+## 1. What Koqentra is
 
-AutoOps lets you save a prompt once and run it again without retyping it — by
+Koqentra lets you save a prompt once and run it again without retyping it — by
 hand whenever you want, or on a daily, weekly, or monthly schedule.
 
 A saved prompt is called a **Worker**. Each Worker has a name, a prompt, and a
-frequency. Every time it runs, AutoOps sends its prompt to Claude, stores the
+frequency. Every time it runs, Koqentra sends its prompt to Claude, stores the
 answer, and shows it to you.
 
-That is the whole of it. AutoOps is a scheduler and a record for prompts you
+That is the whole of it. Koqentra is a scheduler and a record for prompts you
 would otherwise be pasting into a chat window each morning.
 
 ---
 
-## 2. What AutoOps can and cannot do
+## 2. What Koqentra can and cannot do
 
 **This section is the most important one in the guide.** Nearly every surprise
-people have with AutoOps comes from expecting something in the right-hand
+people have with Koqentra comes from expecting something in the right-hand
 column.
 
-### AutoOps can
+### Koqentra can
 
 - Store a prompt and run it on demand
 - Run it automatically once a day, once a week, or once a month
@@ -59,7 +59,7 @@ column.
 - Keep every result, with the exact prompt that produced it
 - Show you which runs succeeded and which failed
 
-### AutoOps cannot
+### Koqentra cannot
 
 | It cannot | So this will not work |
 | --- | --- |
@@ -81,27 +81,27 @@ put them in the prompt.
 > **A run that produces something is not the same as a run that produced
 > something true.** If you ask for today's headlines, the model may answer
 > anyway — from what it learned before it was trained, or by filling in the
-> shape of an answer. AutoOps records that as a successful run, because nothing
-> in AutoOps can tell the difference. Read [section 8](#8-supplying-the-information-autoops-needs).
+> shape of an answer. Koqentra records that as a successful run, because nothing
+> in Koqentra can tell the difference. Read [section 8](#8-supplying-the-information-koqentra-needs).
 
 ---
 
 ## 3. Signing in
 
-1. Open the AutoOps URL you were invited with.
+1. Open the Koqentra URL you were invited with.
 2. Press **Continue with Google**.
 3. Choose the Google account you were invited with.
 
 You will land on the dashboard.
 
-**AutoOps is invite-only during the Closed Beta.** Sign-in works only for the
+**Koqentra is invite-only during the Closed Beta.** Sign-in works only for the
 addresses that have been invited. If you try another account, you come back to
 the front page with this message:
 
-> AutoOps is in Closed Beta and sign-in is limited to invited accounts.
+> Koqentra is in Closed Beta and sign-in is limited to invited accounts.
 
 If you see that with the account you were invited with, contact whoever invited
-you — see [Troubleshooting](./TROUBLESHOOTING.md#1-i-cannot-sign-in).
+you — see [Troubleshooting](./TROUBLESHOOTING.md#signing-in).
 
 To sign out, press **Sign out** at the top right of any dashboard page.
 
@@ -187,7 +187,7 @@ The examples come in two groups, because there are two kinds of Worker.
 
 ### Have a page watched for you
 
-These make a **Website Worker**. AutoOps checks the page on the schedule you
+These make a **Website Worker**. Koqentra checks the page on the schedule you
 choose, and only involves AI when the page has actually changed — then it tells
 you what changed.
 
@@ -203,9 +203,9 @@ you what changed.
 **Website address** field is left empty for you to fill in — the Worker will not
 save without it.
 
-**It watches that one page and nothing else.** AutoOps does not search the web,
+**It watches that one page and nothing else.** Koqentra does not search the web,
 follow links, or collect from anywhere else. See
-[section 2](#2-what-autoops-can-and-cannot-do).
+[section 2](#2-what-koqentra-can-and-cannot-do).
 
 ### Have AI do a job regularly
 
@@ -254,7 +254,7 @@ What tends to work:
 ### When a prompt is required
 
 A prompt is required when a Worker is **Active** *and* its frequency is
-**Daily**, **Weekly**, or **Monthly** — in other words, when AutoOps would run
+**Daily**, **Weekly**, or **Monthly** — in other words, when Koqentra would run
 it on its own with nobody watching. Saving one with an empty prompt is refused:
 
 > Prompt is required for scheduled active workers.
@@ -265,9 +265,9 @@ name something and come back to it.
 
 ---
 
-## 8. Supplying the information AutoOps needs
+## 8. Supplying the information Koqentra needs
 
-**AutoOps sends your prompt and nothing else.** There is no step where it looks
+**Koqentra sends your prompt and nothing else.** There is no step where it looks
 something up first.
 
 So if the task depends on information that changes, paste that information into
@@ -282,7 +282,7 @@ the prompt yourself:
 | A comparison | Both versions |
 | A document | The relevant text |
 
-This is not a limitation of how well the model writes — it is that AutoOps
+This is not a limitation of how well the model writes — it is that Koqentra
 never goes and gets anything.
 
 > **This does not mean the model knows nothing.** It can still write, reason,
@@ -293,7 +293,7 @@ never goes and gets anything.
 > The templates say *"Use only what is written below"* because for those tasks
 > you want the answer grounded in your material rather than in general
 > knowledge. That is an instruction to the model, not a description of what
-> AutoOps can reach.
+> Koqentra can reach.
 
 ---
 
@@ -334,7 +334,7 @@ Set on the **Status** field. The form describes each one as you select it.
   stop a schedule without losing the Worker.
 
 **You can press Run on any Worker whatever its status.** Status only controls
-whether AutoOps starts it for you.
+whether Koqentra starts it for you.
 
 ---
 
@@ -414,9 +414,9 @@ Workers alike, and it does not hold up your scheduled runs.
 ## 14. Scheduled execution
 
 Set **Status** to **Active** and **Frequency** to Daily, Weekly, or Monthly.
-AutoOps then starts it for you, without you being there.
+Koqentra then starts it for you, without you being there.
 
-AutoOps checks for due Workers every five minutes, so **a run may start a few
+Koqentra checks for due Workers every five minutes, so **a run may start a few
 minutes after the time you chose**. That is normal.
 
 > ### Scheduling does not refresh anything
@@ -432,7 +432,7 @@ minutes after the time you chose**. That is normal.
 >
 > See [Use Cases](./USE_CASES.md) for examples of both.
 
-**If a Worker misses its slots** — say AutoOps was unavailable for a week — it
+**If a Worker misses its slots** — say Koqentra was unavailable for a week — it
 does not work through the backlog. It runs once to get current and then carries
 on with its normal cadence.
 
@@ -440,7 +440,7 @@ on with its normal cadence.
 
 ## 15. Understanding next run time
 
-A Worker's detail page shows **Next Run**. That is the moment AutoOps intends
+A Worker's detail page shows **Next Run**. That is the moment Koqentra intends
 to start it next, in your timezone.
 
 It moves forward when a run is claimed, so it always points at the next slot
@@ -452,7 +452,7 @@ the most common reason is simply that the next five-minute check has not come
 round.
 
 If it stays overdue for much longer than that, see
-[Troubleshooting](./TROUBLESHOOTING.md#5-my-scheduled-worker-did-not-run).
+[Troubleshooting](./TROUBLESHOOTING.md#my-worker-never-runs-on-its-own).
 
 **Editing a Worker without changing its schedule leaves Next Run alone.**
 Changing the frequency, time, weekday, or day recalculates it.
@@ -473,7 +473,7 @@ runs**, newest first, with the Worker's name, the start time, and a badge:
 Click a row for the full result.
 
 **The list is not paginated.** Everything you have ever run is on one page, and
-it will get longer as you use AutoOps.
+it will get longer as you use Koqentra.
 
 ---
 
@@ -496,9 +496,9 @@ Clicking an Activity row opens **Execution**, which shows:
 shows exactly what the model was asked, including whether you left a
 `(paste … here)` line in by mistake.
 
-**AutoOps writes its own messages in the language you chose; what a Worker
+**Koqentra writes its own messages in the language you chose; what a Worker
 produced is shown as it was written.** When a website check finds nothing new,
-the line you see is AutoOps speaking and follows your Language setting — even
+the line you see is Koqentra speaking and follows your Language setting — even
 for runs from before you changed it. Anything a model wrote is left exactly as
 it came back, whichever language that is.
 
@@ -593,7 +593,7 @@ It is written for diagnosis rather than for reading comfortably.
 
 **Off unless you turn it on, and you turn it on for one Worker at a time.**
 There is an **Email notifications** checkbox when you create a Worker and when
-you edit one. Tick it, save, and AutoOps emails you about that Worker's runs.
+you edit one. Tick it, save, and Koqentra emails you about that Worker's runs.
 
 **Messages go to the address on your account** — the one you signed in with.
 There is nowhere to type a different address, and there is no way to add a
@@ -616,12 +616,12 @@ page every day would otherwise email you every day to say nothing happened.
 result page in the app rather than in the message.
 
 **Long results are cut short.** A message carries the first part of what the
-run produced and says the rest is in AutoOps. The full result is always on the
+run produced and says the rest is in Koqentra. The full result is always on the
 result page.
 
 **A message that cannot be delivered does not affect the run.** If sending
 fails for any reason, the run keeps its result exactly as it was recorded —
-nothing is lost from AutoOps, and the result page is still there. **Nothing is
+nothing is lost from Koqentra, and the result page is still there. **Nothing is
 sent twice and nothing is retried**, so a message that never arrives is not
 resent later.
 
@@ -632,14 +632,14 @@ produced is never translated — it arrives exactly as it was stored.
 
 ## 24. Current Closed Beta limitations
 
-Beyond the capability boundary in [section 2](#2-what-autoops-can-and-cannot-do):
+Beyond the capability boundary in [section 2](#2-what-koqentra-can-and-cannot-do):
 
 | Limitation | Detail |
 | --- | --- |
 | **Invite only** | Sign-in is limited to invited addresses |
-| **Ten AI drafts an hour** | Asking AutoOps to write a Worker for you is limited to ten requests an hour per account |
-| **Email notifications only** | Email is the only thing AutoOps sends anywhere, it is off unless you turn it on per Worker, and it goes to your account's address. There is no Slack, no chat, no phone notification, no webhook, and no daily summary |
-| **Nothing is sent twice** | A message is attempted once. If it cannot be delivered, it is not retried and not sent later — the result is still in AutoOps |
+| **Ten AI drafts an hour** | Asking Koqentra to write a Worker for you is limited to ten requests an hour per account |
+| **Email notifications only** | Email is the only thing Koqentra sends anywhere, it is off unless you turn it on per Worker, and it goes to your account's address. There is no Slack, no chat, no phone notification, no webhook, and no daily summary |
+| **Nothing is sent twice** | A message is attempted once. If it cannot be delivered, it is not retried and not sent later — the result is still in Koqentra |
 | **No retry** | A failed run waits for its next slot |
 | **Each run list shows the newest twenty** | Activity shows an account's, a Worker's page shows that Worker's. No paging, no filtering, no search — older runs are kept, and nothing lists them |
 | **Runs are kept indefinitely** | Nothing expires. Deleting a Worker deletes its runs |
@@ -652,14 +652,14 @@ Beyond the capability boundary in [section 2](#2-what-autoops-can-and-cannot-do)
 | **One run per Worker at a time** | A second attempt is refused while one is in progress |
 | **One manual run at a time** | Pressing Run while a Worker you started by hand is still going is refused, whichever Worker it is |
 | **Twenty manual runs an hour** | Per account, counted from the first run of the hour. A run that fails still counts. Scheduled runs are not counted against it |
-| **One visit to a site at a time** | AutoOps does not fetch the same website twice in quick succession, whoever asked. A run that arrives while the site was just checked waits briefly, and is recorded as failed if its turn does not come |
+| **One visit to a site at a time** | Koqentra does not fetch the same website twice in quick succession, whoever asked. A run that arrives while the site was just checked waits briefly, and is recorded as failed if its turn does not come |
 | **Availability is not guaranteed** | It is a beta; runs may be missed |
 
 ---
 
 ## 25. Privacy
 
-What AutoOps stores, where it goes, and what it does not do is at
+What Koqentra stores, where it goes, and what it does not do is at
 the **`/privacy`** page in the app — reachable from the **Privacy** link in the
 footer of the front page.
 

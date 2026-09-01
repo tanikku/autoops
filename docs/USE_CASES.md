@@ -1,15 +1,15 @@
-# AutoOps Use Cases
+# Koqentra Use Cases
 
-Worker setups that work with what AutoOps can actually do today. Every prompt
+Worker setups that work with what Koqentra can actually do today. Every prompt
 here is ready to copy and paste.
 
 Before using these, it is worth knowing the one rule they are all built around:
 
-> **AutoOps sends your prompt and nothing else.** It does not browse, search,
+> **Koqentra sends your prompt and nothing else.** It does not browse, search,
 > read email, or open files, and it does not remember what a previous run
 > produced. Anything a task depends on has to be *in* the prompt.
 
-See [What AutoOps can and cannot do](./USER_GUIDE.md#2-what-autoops-can-and-cannot-do).
+See [What Koqentra can and cannot do](./USER_GUIDE.md#2-what-koqentra-can-and-cannot-do).
 
 ---
 
@@ -74,7 +74,7 @@ text over the `(paste …)` line. Nothing happens automatically.
 **Expected output** — Three or four one-sentence points, then a short "worth
 watching" list.
 
-**Important limitation** — AutoOps does not fetch the articles. If you leave the
+**Important limitation** — Koqentra does not fetch the articles. If you leave the
 placeholder in, the run still succeeds and the briefing will be about nothing.
 
 ---
@@ -104,7 +104,7 @@ Use only what is written below.
 
 **Expected output** — Three distinct posts under 280 characters.
 
-**Important limitation** — AutoOps writes the posts. **It does not publish
+**Important limitation** — Koqentra writes the posts. **It does not publish
 them** — there is no connection to X or any other platform. Copy them out
 yourself.
 
@@ -137,7 +137,7 @@ answered.
 **Expected output** — One draft per email, each under 150 words, with marked
 gaps where facts are missing.
 
-**Important limitation** — AutoOps has **no access to your mailbox** and cannot
+**Important limitation** — Koqentra has **no access to your mailbox** and cannot
 send anything. Consider what you paste in: it is stored with the Worker and
 sent to Anthropic. See [Privacy](./USER_GUIDE.md#25-privacy).
 
@@ -170,7 +170,7 @@ Use only what is written below. If an action item has no clear owner, put it und
 **Expected output** — Three headed sections, with unowned actions surfaced as
 open questions rather than assigned to someone at random.
 
-**Important limitation** — AutoOps cannot reach your calendar or any meeting
+**Important limitation** — Koqentra cannot reach your calendar or any meeting
 tool. The notes have to come from you.
 
 ---
@@ -207,7 +207,7 @@ Use only what is written below. Do not add anything from elsewhere.
 **Expected output** — What is new, what has gone, what reads differently, and a
 short conclusion.
 
-**Important limitation** — **AutoOps cannot compare this run to the last one.**
+**Important limitation** — **Koqentra cannot compare this run to the last one.**
 It has no memory between runs, so "what changed since last time" only works if
 you paste both sides in yourself.
 
@@ -216,7 +216,7 @@ you paste both sides in yourself.
 # Scheduled Workers — the model generates it
 
 Scheduling earns its place when you want **something new each time** and nothing
-outside AutoOps is needed to produce it. The prompt stays fixed; what varies is
+outside Koqentra is needed to produce it. The prompt stays fixed; what varies is
 what the model writes.
 
 **These four need no pasted material and no external data.** They are the cases
@@ -363,18 +363,18 @@ any of it. Every month starts from nothing.
 
 ## What is deliberately not here
 
-Some obvious-sounding Workers cannot be built with AutoOps today. They are left
+Some obvious-sounding Workers cannot be built with Koqentra today. They are left
 out rather than written up with a warning:
 
 | Not possible | Why |
 | --- | --- |
-| A digest gathered from across the news | AutoOps searches nothing. A **Website** Worker watches one page you name, and [#1](#1-brief-me-on-these-articles) works from articles you paste in |
+| A digest gathered from across the news | Koqentra searches nothing. A **Website** Worker watches one page you name, and [#1](#1-brief-me-on-these-articles) works from articles you paste in |
 | Monitoring a website with a **Prompt** Worker | It has no HTTP access and no memory of the previous check. A **Website** Worker does both — see [Using a template](./USER_GUIDE.md#6-using-a-template) |
 | An inbox summary each morning | No mailbox access. Use [#3](#3-draft-replies-to-these-emails) and paste the messages |
 | A weekly report from your project tracker | No GitHub, no Sheets, no external database |
-| Posting anything anywhere | AutoOps writes text. It does not send it |
+| Posting anything anywhere | Koqentra writes text. It does not send it |
 | "Tell me what changed since last run" | A Worker cannot see its own history. Use [#5](#5-what-changed-between-these-two-versions) and paste both versions |
-| Alerting you anywhere but by email | Email is the only thing AutoOps sends, it is off unless you turn it on per Worker, and it goes to your account's address — see [Email notifications](./USER_GUIDE.md#23-email-notifications) |
+| Alerting you anywhere but by email | Email is the only thing Koqentra sends, it is off unless you turn it on per Worker, and it goes to your account's address — see [Email notifications](./USER_GUIDE.md#23-email-notifications) |
 
 **Every example on this page is written out by hand rather than taken from a
 template.** The built-in templates cover different ground — watching a page, and
