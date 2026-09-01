@@ -178,34 +178,62 @@ counter beside each label turns red if you are over the limit.
 
 ## 6. Using a template
 
-The **Choose a Template** section at the top of the hire form fills in a name, a
-prompt, and a frequency for you. Everything stays editable afterwards.
+The **Choose a Template** section on the hire form fills in a name, a
+frequency and the instructions for you, and picks the kind of Worker to match.
+Everything stays editable afterwards, and nothing is saved until you press
+**Save**.
 
-**Every template is a prompt starter, not a connection to anything.** None of
-them goes and finds material — each one has a place where *you* paste the
-material in.
+The examples come in two groups, because there are two kinds of Worker.
 
-| Template | You paste in | You get |
+### Have a page watched for you
+
+These make a **Website Worker**. AutoOps checks the page on the schedule you
+choose, and only involves AI when the page has actually changed — then it tells
+you what changed.
+
+| Template | Watches | You get, when it changes |
 | --- | --- | --- |
-| **News Reporter** | Headlines or article text | A short briefing of what matters |
-| **X Post Writer** | An announcement, release notes, or a changelog | Three short posts, under 280 characters each |
-| **Email Assistant** | The emails you need to answer | A reply draft for each |
-| **Meeting Assistant** | Meeting notes or a transcript | Decisions, action items with owners, open questions |
-| **Research Analyst** | Two versions of the same notes | What changed between them, and a conclusion |
+| **Watch a local government page** | A council or agency page | What moved on applications, events, dates and procedures |
+| **Watch a product page** | A product's own page | Price moves, availability, spec and campaign changes |
+| **Watch a company's careers page** | A careers page | Jobs added or taken down, and changed conditions |
+| **Watch a news page** | The one news page you give it | What was added, removed or rewritten |
+| **Watch a grants page** | A grant or subsidy page | Rounds opening, eligibility, amounts and deadlines |
 
-**All five start on Manual frequency.** The material lives in the prompt, so
-running one on a schedule would send the same paragraphs again and get the same
-answer back. Run them when you have something new to feed in.
+**You supply the address.** A template cannot know which page you mean, so the
+**Website address** field is left empty for you to fill in — the Worker will not
+save without it.
 
-Each template's prompt contains a marked place to paste, like this:
+**It watches that one page and nothing else.** AutoOps does not search the web,
+follow links, or collect from anywhere else. See
+[section 2](#2-what-autoops-can-and-cannot-do).
+
+### Have AI do a job regularly
+
+These make a **Prompt Worker**. There is nothing to check — AI works from the
+words in the Worker, every time it runs.
+
+| Template | You write in | You get |
+| --- | --- | --- |
+| **Plan the day's work** | Today's plans, requests and concerns | Them put in order, with a line on why each comes where it does |
+| **Think up ideas regularly** | A theme | Five ideas or improvements, each with a first step |
+| **Write a recurring report** | Your material | A report in the same four sections every time |
+
+**A Prompt Worker only knows what you wrote into it.** It has no inbox, no
+calendar, no files and no search, so each of these has a marked place for your
+material:
 
 ```
---- ARTICLES ---
-(paste headlines or article text here)
+--- THEME ---
+(write yours here)
 ```
 
-Replace that line with your material. If you leave it as it is, the Worker will
-run and the result will be about nothing.
+Replace that line with yours. If you leave it as it is, the Worker will still
+run, and the result will be about nothing.
+
+**These start on a schedule, and that is a choice you can change.** They are
+written around a standing theme rather than around something you supply afresh
+each run — but if what you write in only makes sense once, set Frequency to
+**Manual** and run it when you have something new.
 
 ---
 

@@ -96,8 +96,11 @@ Each module does one thing, and the boundaries are deliberate:
 | `lib/runs.ts` | Recording what happened | Decide when to run |
 
 **Templates** (`lib/worker-templates.ts`) sit outside this pipeline entirely.
-They are starting values for the create form — a name, a prompt, a frequency —
-and nothing reads them after a worker exists.
+They are starting values for the create form — a kind, a name, a prompt, a
+frequency — and nothing reads them after a worker exists. Their words live in
+the dictionary rather than in the module, so an example is offered in the
+language of whoever is reading it; the address a website example needs is the
+one thing they do not carry, because only the person choosing can know it.
 
 The queue exists as a seam rather than an implementation. Swapping the inline
 call for a real backend should not require changes above or below it.
@@ -1902,21 +1905,28 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
 
 **Product**
 
-- **A worker can only work on what its prompt already contains, and the
-  templates were written as though it could not.** A worker is one model call
-  with the text it holds — no browsing, no search, no inbox, no files, no tools,
-  and no sight of what it produced last time. Three of the five presets offered
-  "today's important news", "the unanswered emails in my inbox" and "research
-  the topic I am tracking, with sources". They were rewritten in the
-  documentation sprint to take pasted material instead, and all five moved to
-  `manual` because material carried in the prompt does not change on a cadence.
+- **A prompt worker can only work on what its prompt already contains, and the
+  templates were once written as though it could not.** A prompt worker is one
+  model call with the text it holds — no browsing, no search, no inbox, no
+  files, no tools, and no sight of what it produced last time. Three of the five
+  presets then on offer promised "today's important news", "the unanswered
+  emails in my inbox" and "research the topic I am tracking, with sources".
+  They were rewritten in the documentation sprint to take pasted material
+  instead, and all five moved to `manual` because material carried in the prompt
+  does not change on a cadence.
 
-  **The wording was the part that could be fixed; the gap it described was
-  not.** Scheduling is worth most when each run sees something new, and nothing
-  in AutoOps can go and find anything. What remains is the narrower product the
-  code actually implements — the scheduled examples in
-  [Use Cases](./docs/USE_CASES.md) are the ones that survive it, and they work
-  because the model generates the output rather than fetching it.
+  **The set has since been replaced**, and the boundary it was written against
+  has moved for one of the two kinds. Five of the eight examples now make
+  website workers, which do see something new — they fetch one named page,
+  compare it with the last time, and involve a model only when it differs. The
+  three prompt examples keep the rule: each carries the place its material is
+  written into, and none of them names a source outside the prompt.
+
+  **What did not change is what a prompt worker can reach.** Nothing in AutoOps
+  searches, and a website worker fetches the one address it was given rather
+  than going and finding anything. The scheduled examples in
+  [Use Cases](./docs/USE_CASES.md) still work because the model generates the
+  output rather than fetching it.
 
   **What follows from the boundary is what a worker cannot be, not what the
   answer has to be.** A worker that needs external information, a worker that

@@ -6,6 +6,7 @@ import {
   injectTemplate,
 } from "@/components/worker-draft-form";
 import type { WorkerDraft } from "@/lib/ai/worker-draft";
+import { t } from "@/lib/i18n";
 import { workerTemplates } from "@/lib/worker-templates";
 
 /**
@@ -162,11 +163,31 @@ describe("applying a source", () => {
   });
 
   it("labels a template as one, and gives it no status", () => {
-    const applied = injectTemplate(workerTemplates[0], "template-1");
+    const applied = injectTemplate(workerTemplates[0], "en", "template-1");
 
     expect(applied.source).toBe("template");
-    expect(applied.values.name).toBe(workerTemplates[0].name);
+    expect(applied.values.name).toBe(t("en", workerTemplates[0].nameKey));
     expect(applied.values.status).toBeUndefined();
+  });
+
+  /**
+   * The words come from the dictionary now, so the same template applied by two
+   * accounts fills the fields in the language each of them reads.
+   */
+  it("fills the fields in the language it was asked for", () => {
+    const english = injectTemplate(workerTemplates[0], "en", "template-1");
+    const japanese = injectTemplate(workerTemplates[0], "ja", "template-2");
+
+    expect(english.values.name).toBe(t("en", workerTemplates[0].nameKey));
+    expect(japanese.values.name).toBe(t("ja", workerTemplates[0].nameKey));
+    expect(japanese.values.name).not.toBe(english.values.name);
+  });
+
+  /** A template must not switch on something that sends mail. */
+  it("leaves email notifications alone", () => {
+    const applied = injectTemplate(workerTemplates[0], "en", "template-1");
+
+    expect(applied.values.emailNotificationsEnabled).toBeUndefined();
   });
 
   it("gives every application its own token", () => {
@@ -179,14 +200,22 @@ describe("applying a source", () => {
    * so applying either simply replaces what was there.
    */
   it("replaces whatever was applied before, in either direction", () => {
-    let injected = injectTemplate(workerTemplates[0], injectionToken("template", 0));
+    let injected = injectTemplate(
+      workerTemplates[0],
+      "en",
+      injectionToken("template", 0),
+    );
     expect(injected.source).toBe("template");
 
     injected = injectDraft(WEBSITE_DRAFT, "draft", injectionToken("draft", 1));
     expect(injected.source).toBe("draft");
     expect(injected.values.websiteUrl).toBe("https://example.com/news");
 
-    injected = injectTemplate(workerTemplates[1], injectionToken("template", 2));
+    injected = injectTemplate(
+      workerTemplates[1],
+      "en",
+      injectionToken("template", 2),
+    );
     expect(injected.source).toBe("template");
     expect(injected.values.websiteUrl).toBeUndefined();
   });

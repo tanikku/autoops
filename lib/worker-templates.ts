@@ -1,102 +1,149 @@
-import type { RoutineFrequency } from "@/types";
+import type { TranslationKey } from "@/lib/i18n";
+import type { RoutineFrequency, RoutineKind } from "@/types";
 
 /**
  * Starting values for the hire form.
  *
- * **A template can only describe what a worker can actually do.** A worker is
- * one call to a model with the prompt it holds — there is no browsing, no
- * inbox, no calendar, and no memory of what it produced last time. Anything a
- * template offers has to be something the model can do with the words in front
- * of it, and everything else has to come from the person who writes the prompt.
+ * **A template can only describe what a worker can actually do**, and the two
+ * kinds can do different things. A website worker fetches one address it was
+ * given, compares it with what it saw last time, and asks a model about the
+ * difference; a prompt worker is one call to a model with the words it holds.
+ * Neither browses, searches, reads an inbox, or remembers what it produced
+ * before.
  *
- * That is why each of these has a place to paste the material in. The earlier
- * versions read as though AutoOps would go and find it — "today's important
- * news", "the unanswered emails in my inbox", "research the topic I am
- * tracking, with sources" — and a run that produced something anyway was
- * recorded as a success, because nothing in the pipeline can tell an answer
- * from an invention.
+ * That boundary is what every example here is written against. An earlier set
+ * read as though AutoOps would go and find things — "today's important news",
+ * "the unanswered emails in my inbox" — and a run that produced something
+ * anyway was recorded as a success, because nothing in the pipeline can tell an
+ * answer from an invention. So a **website** example never suggests searching
+ * or collecting from anywhere but the one page, and a **prompt** example always
+ * carries the place where its material is written in.
  *
- * **They start on `manual` for the same reason.** The material is part of the
- * prompt, so a run repeats what was pasted rather than picking up anything
- * new; running one on a cadence would bill the model daily to say the same
- * thing. A schedule earns its place when the output depends on the date, and
- * a worker whose prompt carries its own input is not that.
+ * **The words live in the dictionary, all three of them.** A template's name
+ * and prompt do become the account's own material once it is applied — but
+ * until then they are AutoOps offering an example, and an example nobody can
+ * read is not one. What is never translated is anything written *after* a
+ * template is applied. This reverses the earlier position that a template's
+ * name and prompt stay as written; see the report for that sprint.
+ *
+ * **Frequency is per kind, and the reason is not the same for both.** A website
+ * worker earns a cadence: it looks at a page that changes on its own, and the
+ * model is only involved when something did. A prompt worker's material is part
+ * of its prompt, so a cadence re-asks the same question — the three here are on
+ * one anyway because each is written around a standing theme rather than around
+ * something pasted in for a single run. Every worker still starts as a `draft`,
+ * so nothing runs until somebody turns it on.
  */
 export type WorkerTemplate = {
   id: string;
-  name: string;
-  description: string;
-  defaultPrompt: string;
+  /**
+   * What applying this template makes.
+   *
+   * **New, and it is what lets a template offer a watcher at all.** Before it,
+   * every template was a prompt worker by construction and the list was hidden
+   * whenever the website kind was chosen. Applying one now sets the kind, the
+   * same way applying an AI draft already did.
+   */
+  kind: RoutineKind;
+  nameKey: TranslationKey;
+  descriptionKey: TranslationKey;
+  /**
+   * What goes in the instructions field.
+   *
+   * For a website worker that is what to do about a change that has already
+   * been found; for a prompt worker it is the whole of the job. The two read
+   * differently for that reason, and the form labels the field differently too.
+   */
+  promptKey: TranslationKey;
   defaultFrequency: RoutineFrequency;
 };
 
+/**
+ * The examples, in the order the hire page offers them.
+ *
+ * **Website first**, because watching a page is the thing AutoOps does that a
+ * person cannot easily do by hand every morning, and it is what the Closed Beta
+ * is trying to learn about. The prompt examples follow rather than disappear:
+ * which group gets used is itself the question.
+ *
+ * **No template carries an address.** Which page to watch is the one thing only
+ * the person choosing can know, so a website template fills in everything
+ * except that and leaves the field empty for them.
+ */
 export const workerTemplates: WorkerTemplate[] = [
   {
-    id: "news-reporter",
-    name: "News Reporter",
-    description: "Turns headlines or articles you paste in into a short briefing.",
-    defaultPrompt: `Today is {{today}}.
-
-Write a short briefing from the articles below: the three or four things that matter most, one sentence each, then anything worth watching.
-
-Use only what is written below. If something is unclear, say so rather than filling it in.
-
---- ARTICLES ---
-(paste headlines or article text here)`,
-    defaultFrequency: "manual",
+    id: "municipal-notices",
+    kind: "website",
+    nameKey: "template.municipalNotices.name",
+    descriptionKey: "template.municipalNotices.description",
+    promptKey: "template.municipalNotices.prompt",
+    defaultFrequency: "daily",
   },
   {
-    id: "x-post-writer",
-    name: "X Post Writer",
-    description: "Turns an update you paste in into a few short social posts.",
-    defaultPrompt: `Write three X posts about the update below. Keep each under 280 characters, avoid hashtags, and give each one a different angle so they are not three versions of the same sentence.
-
-Use only what is written below.
-
---- UPDATE ---
-(paste your announcement, release notes or changelog here)`,
-    defaultFrequency: "manual",
+    id: "product-page",
+    kind: "website",
+    nameKey: "template.productPage.name",
+    descriptionKey: "template.productPage.description",
+    promptKey: "template.productPage.prompt",
+    defaultFrequency: "daily",
   },
   {
-    id: "email-assistant",
-    name: "Email Assistant",
-    description: "Drafts replies to emails you paste in.",
-    defaultPrompt: `Draft a reply to each email below. Keep each under 150 words, match the tone of the message it answers, and separate the drafts with a blank line.
-
-Use only what is written below. Where a reply needs something that is not there, leave a clearly marked gap instead of inventing it.
-
---- EMAILS ---
-(paste the emails you need to answer here)`,
-    defaultFrequency: "manual",
+    id: "careers-page",
+    kind: "website",
+    nameKey: "template.careersPage.name",
+    descriptionKey: "template.careersPage.description",
+    promptKey: "template.careersPage.prompt",
+    defaultFrequency: "daily",
   },
   {
-    id: "meeting-assistant",
-    name: "Meeting Assistant",
-    description:
-      "Turns meeting notes you paste in into decisions and action items.",
-    defaultPrompt: `Turn the notes below into three sections: decisions made, action items with an owner for each, and open questions.
-
-Use only what is written below. If an action item has no clear owner, put it under open questions rather than guessing.
-
---- NOTES ---
-(paste your meeting notes or transcript here)`,
-    defaultFrequency: "manual",
+    id: "news-page",
+    kind: "website",
+    nameKey: "template.newsPage.name",
+    descriptionKey: "template.newsPage.description",
+    promptKey: "template.newsPage.prompt",
+    defaultFrequency: "daily",
   },
   {
-    id: "research-analyst",
-    name: "Research Analyst",
-    description: "Compares two versions of your notes and reports what changed.",
-    defaultPrompt: `Generated at {{now}}.
-
-Compare the two sets of notes below and report what changed: what is new, what has gone, and what is still there but reads differently. Finish with a short conclusion.
-
-Use only what is written below. Do not add anything from elsewhere.
-
---- EARLIER ---
-(paste the earlier version here)
-
---- CURRENT ---
-(paste the current version here)`,
-    defaultFrequency: "manual",
+    id: "grant-info",
+    kind: "website",
+    nameKey: "template.grantInfo.name",
+    descriptionKey: "template.grantInfo.description",
+    promptKey: "template.grantInfo.prompt",
+    defaultFrequency: "daily",
+  },
+  {
+    id: "daily-work-plan",
+    kind: "prompt",
+    nameKey: "template.dailyWorkPlan.name",
+    descriptionKey: "template.dailyWorkPlan.description",
+    promptKey: "template.dailyWorkPlan.prompt",
+    defaultFrequency: "daily",
+  },
+  {
+    id: "idea-generator",
+    kind: "prompt",
+    nameKey: "template.ideaGenerator.name",
+    descriptionKey: "template.ideaGenerator.description",
+    promptKey: "template.ideaGenerator.prompt",
+    defaultFrequency: "weekly",
+  },
+  {
+    id: "recurring-report",
+    kind: "prompt",
+    nameKey: "template.recurringReport.name",
+    descriptionKey: "template.recurringReport.description",
+    promptKey: "template.recurringReport.prompt",
+    defaultFrequency: "weekly",
   },
 ];
+
+/**
+ * The examples of one kind, in order.
+ *
+ * **A filter rather than two lists.** One array is still what a template
+ * belongs to, so adding an example is one entry and cannot end up in a group
+ * nobody renders — which is what two hand-kept lists would eventually produce.
+ */
+export function templatesOfKind(kind: RoutineKind): WorkerTemplate[] {
+  return workerTemplates.filter((template) => template.kind === kind);
+}

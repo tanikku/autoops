@@ -33,7 +33,7 @@ import {
 import type { WorkerDraft } from "@/lib/ai/worker-draft";
 import { t, type TranslationKey } from "@/lib/i18n";
 import { minutesToTimeValue } from "@/lib/worker-input";
-import { workerTemplates, type WorkerTemplate } from "@/lib/worker-templates";
+import { templatesOfKind, type WorkerTemplate } from "@/lib/worker-templates";
 import { isRoutineStatus, type RoutineKind, type RoutineStatus } from "@/types";
 
 /**
@@ -58,6 +58,23 @@ const kindOptions: {
     label: "worker.kind.websiteOption",
     description: "worker.kind.websiteOptionDescription",
   },
+];
+
+/**
+ * The two groups the examples are offered in, and the order they appear in.
+ *
+ * **Watching a page comes first.** It is the thing AutoOps does that nobody
+ * wants to do by hand every morning, and it is what the Closed Beta is trying
+ * to learn about. The prompt group follows rather than disappearing: which one
+ * gets used is itself the question being asked.
+ *
+ * **A heading and a kind, and nothing else.** Grouping is a list rendered twice
+ * under two headings — there is no group registry, no per-group behaviour, and
+ * nothing a new template would have to be described in twice.
+ */
+const templateGroups: { kind: RoutineKind; heading: TranslationKey }[] = [
+  { kind: "website", heading: "template.group.website" },
+  { kind: "prompt", heading: "template.group.prompt" },
 ];
 
 /**
@@ -173,9 +190,21 @@ export function RoutineForm({
     setInjections((count) => count + 1);
   }
 
+  /**
+   * Puts a template into the fields.
+   *
+   * **The kind follows the template**, the same way it follows a draft. A
+   * template is now an example of one of two different things, and the fields
+   * it fills depend on which — a watcher needs the address box on screen, and
+   * a prompt worker must not have one. Setting it here is what makes choosing
+   * an example a single press rather than a press and a correction.
+   */
   function selectTemplate(item: WorkerTemplate) {
     setTemplate(item);
-    apply(injectTemplate(item, injectionToken("template", injections)));
+    setKind(item.kind);
+    apply(
+      injectTemplate(item, language, injectionToken("template", injections)),
+    );
   }
 
   /**
@@ -330,12 +359,16 @@ export function RoutineForm({
         </div>
       </section>
 
-      {/* **Templates are prompt workers**, every one of them: each is a name, a
-          cadence and a prompt, and none of them names a page. Hiding the list
-          rather than adding a kind to the template model keeps that a fact
-          about what a template is, instead of a field every future template has
-          to answer. */}
-      <section className={kind === "website" ? "hidden" : "mt-8 max-w-2xl"}>
+      {/* **Both kinds have examples now, so the list is always on screen.** It
+          used to be hidden whenever the website kind was chosen, because every
+          template was a prompt worker and offering one there would have been
+          offering the wrong thing. What replaced that is a `kind` on the
+          template itself: the list is grouped by it, and choosing one sets it.
+
+          **Two headed groups, and nothing more than that.** They are the same
+          card in the same grid under a heading — no new component, no registry,
+          and no shape a future template has to be described in twice. */}
+      <section className="mt-8 max-w-2xl">
         <h2 className="text-lg font-medium tracking-tight">
           {t(language, "worker.create.templatesHeading")}
         </h2>
@@ -343,31 +376,43 @@ export function RoutineForm({
           {t(language, "worker.create.templatesHelp")}
         </p>
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          {workerTemplates.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              aria-pressed={template?.id === item.id}
-              onClick={() => selectTemplate(item)}
-              className="rounded-xl text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-            >
-              <Card
-                size="sm"
-                className={
-                  template?.id === item.id
-                    ? "h-full ring-2 ring-primary"
-                    : "h-full"
-                }
-              >
-                <CardHeader>
-                  <CardTitle>{item.name}</CardTitle>
-                  <CardDescription>{item.description}</CardDescription>
-                </CardHeader>
-              </Card>
-            </button>
-          ))}
-        </div>
+        {templateGroups.map((group) => (
+          <div key={group.kind} className="mt-6">
+            <h3 className="text-sm font-medium text-muted-foreground">
+              {t(language, group.heading)}
+            </h3>
+
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {templatesOfKind(group.kind).map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  aria-pressed={template?.id === item.id}
+                  onClick={() => selectTemplate(item)}
+                  className="rounded-xl text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                >
+                  <Card
+                    size="sm"
+                    className={
+                      template?.id === item.id
+                        ? "h-full ring-2 ring-primary"
+                        : "h-full"
+                    }
+                  >
+                    <CardHeader>
+                      {/* Both are the dictionary's now. What stays untranslated
+                          is whatever is typed in after one is applied. */}
+                      <CardTitle>{t(language, item.nameKey)}</CardTitle>
+                      <CardDescription>
+                        {t(language, item.descriptionKey)}
+                      </CardDescription>
+                    </CardHeader>
+                  </Card>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
       </section>
 
       <form

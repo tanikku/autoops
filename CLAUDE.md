@@ -172,6 +172,12 @@
 | `RESEND_API_KEY` / `EMAIL_FROM` は **送信のたびに読む** | `ANTHROPIC_API_KEY` と `BETA_ALLOWED_EMAILS` が起動時1回なのは、起動時に**何かを作る**から(client / parse 済みリスト)。ここは何も作らないので、早く読んだ値の置き場所が無い。変数を足した deployment が再起動で送り始める |
 | edit は `emailNotificationsEnabled` を**毎回書く** | checkbox は OFF のとき何も送信しない。届いた時だけ書く実装にすると、**ON にはできても OFF に戻せない** |
 | 通知の宛先 helper は `email` / `language` に加えて **`timezone` も読む** | 同じ行・同じクエリで、追加の read は0。他の全ての時刻表示がその zone なので、リンク先の Run Detail と食い違うメールを送ることになるのを避ける。**Focused Design Investigation の記述からの意図的な逸脱**で、報告済み |
+| **テンプレートの文言(name / description / prompt)は3つとも i18n 対象**。「name と prompt は worker の中身になるから訳さない」という以前の判断は**撤回した** | 適用した瞬間から利用者の素材になるのはそのとおりだが、**適用するまでは AutoOps が差し出す例**であって、読めない例は例として機能しない。訳さない対象は「適用した後に人が書いたもの」に線を引き直した。en/ja parity は `TranslationKey` の型で従来どおり担保する。**新しい i18n framework は作っていない** |
+| テンプレートは **`kind` を持ち、選ぶと kind も切り替わる** | 以前は「テンプレート = prompt worker」を前提に、website を選ぶとテンプレート欄ごと隠していた。website の例を出す以上その前提は成り立たない。切り替えは AI draft 適用時の `setKind(draft.kind)` と同じ既存パターンで、**新しい UI architecture は作っていない** |
+| グループ表示は **見出し + 既存カードの2回描画**だけ。group registry も per-group の振る舞いも作らない | 「グループ化のためだけに汎用 UI を作らない」の直接の帰結。テンプレート追加は配列に1件足すだけで、どのグループに出すかは `kind` が決める |
+| **website テンプレートは URL を持たない** | どのページを見るかは選ぶ人しか知らない。`validateWorkerFormForKind` の「website には URL 必須」はそのままなので、空欄のまま保存はできない |
+| **テンプレートの `defaultFrequency` は kind で分ける。「全件 manual」は website には適用しない** | Documentation Sprint が全件 manual にした理由は「prompt に素材を抱えているので cadence で回しても同じ結果」。website worker はページ自身が変わるので、その理由が**成り立たない**。prompt 側3件も定期前提の題材(標準テーマ)に書き換えたため daily / weekly にした — **これは Documentation Sprint の判断の更新であり、報告済み** |
+| **テンプレートは `emailNotificationsEnabled` を設定しない** | 既定は schema の false のまま。カードを1回押しただけの人の代わりにメール送信を有効化しない。Email Notification の default semantics は今回**変更していない** |
 | `take` は **未採用**。ただし scheduler に置くことを永久に禁じたわけでもない | 本番 Routine 0件で行数の実害がなく、catch-up と組み合わせるとバックログが1 interval を超えた時点でスロットを静かに失う。tenant fairness の論点も未解決。**根拠が揃うまで入れない**、が理由のすべて |
 
 ## 現在地
@@ -843,6 +849,11 @@ Server Component で読むため。Client Component / `useSearchParams` / Suspen
 
 ### Documentation Sprint — 利用者向けドキュメントと template の能力整合
 
+> **この節のテンプレート5件は Template Refresh Sprint で全件置き換えられた**
+> (下の節)。**残しているのは経緯の記録** — 「実装にない能力を約束していた」
+> という失敗と、その検知が人の再読でしかできなかったという事実は、
+> 新しいテンプレートにも同じだけ当てはまる。現在の8件については下の節を見ること。
+
 **ドキュメントを書き始めた時点で、現在のコードを source of truth として
 確認した結果、`lib/worker-templates.ts` が実装にない能力を約束していた。**
 実装せずに報告し、PM の判断で「能力整合の修正」として先に直した
@@ -928,6 +939,39 @@ heartbeat、`last_failed_at` は**読みに行く観測であって通知では�
   **実測していない** — 確認したのは、request の形・timeout・分類・不送信条件が
   テストで固定されていることだけ。
 - **失敗経路も本番未観測。** `rejected` / `unreadable` は unit test のみ。
+
+### Template Refresh — Closed Beta 向けテンプレート刷新
+
+**「何を AI Worker に任せられるか」がテンプレートだけで分かる状態を作るスプリント。**
+判断の中身は上の「決定済み」に6行入れた。ここには残りの事実だけ書く。
+
+- **8件 = website 5 + prompt 3。** 旧5件(News Reporter / X Post Writer /
+  Email Assistant / Meeting Assistant / Research Analyst)は**全件置き換えた**。
+  id はどこにも永続化されていない(テンプレート用の table も列も無い)ので、
+  差し替えても既存 worker には一切影響しない。
+- **`WorkerTemplate` の形が変わった。** `name` / `description` / `defaultPrompt`
+  の生文字列 → `nameKey` / `descriptionKey` / `promptKey`(`TranslationKey`)と
+  `kind`。`injectTemplate(template, language, token)` に language が増えた。
+- **`{{today}}` / `{{now}}` は辞書の中でもそのまま生き残る。** `t()` は values を
+  渡したときしか置換せず、テンプレートは values なしで引く。**ここは暗黙の前提なので
+  テストで固定してある**(`lib/worker-templates.test.ts`)。
+- **schema 変更なし / migration なし / 依存追加なし。** Email Notification MVP の
+  commit には一切触れていない。
+- **テストは「文言が実装の能力を超えていないこと」を検査する。** website 側は
+  検索・巡回・収集を示唆する語を禁止、prompt 側はメール・カレンダー・Slack・検索・
+  取得を示唆する語を禁止し、素材の貼り付け位置があることを要求する。
+  **前回テンプレートが実装にない能力を約束したとき、落ちるテストは1つも無かった** —
+  それを繰り返さないための検査。
+
+**未確認:**
+
+- **ブラウザでの実操作は行っていない。** 検証したのは静的レンダリング
+  (`renderToStaticMarkup`)までで、「カードを押す → kind が変わる → フォームが
+  remount して値が入る」は**クリックを伴うため到達していない**。これは
+  `injectTemplate` / `templatesOfKind` を純関数として切り出してある理由そのもので、
+  関数側は固定済み。
+- **テンプレートから作った worker を実行していない。** Anthropic 呼び出し・
+  外部サイト取得はいずれも行っていない。
 
 ### 未確認 — 別途扱う
 

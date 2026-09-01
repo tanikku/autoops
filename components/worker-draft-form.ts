@@ -1,5 +1,6 @@
 import type { WorkerFieldValues } from "@/components/worker-fields";
 import type { WorkerDraft } from "@/lib/ai/worker-draft";
+import { t } from "@/lib/i18n";
 import { minutesToTimeValue } from "@/lib/worker-input";
 import type { RoutineStatus } from "@/types";
 import type { WorkerTemplate } from "@/lib/worker-templates";
@@ -83,17 +84,36 @@ export function injectDraft(
  * behaviour, deliberately left alone. The draft path preserves the current
  * status because that is what this change is about; making templates do the
  * same is a separate decision about a separate path.
+ *
+ * **It carries no address either, and that is not the same omission.** A
+ * website template knows what to do about a change and cannot know which page
+ * to watch, so the field is left empty for the person to fill in — the same
+ * shape `draftToFieldValues` leaves a prompt worker's address in.
+ *
+ * **The language is passed in rather than reached for.** A template's words
+ * live in the dictionary now, and this module is shared by the client form:
+ * which language to read them in belongs to the caller, exactly as it does for
+ * every component that takes `language` as a prop.
+ *
+ * **Nothing is asked for with values**, which is what keeps `{{today}}` and
+ * `{{now}}` in a prompt intact — `t()` only substitutes when it is given some,
+ * and those braces are for `lib/prompt.ts` to resolve when the worker runs.
+ *
+ * **`emailNotificationsEnabled` is deliberately absent.** No template sets it,
+ * so the checkbox falls back to off — the default the schema gives every
+ * worker. A template must not switch on something that sends mail.
  */
 export function injectTemplate(
   template: WorkerTemplate,
+  language: string,
   token: string,
 ): InjectedValues {
   return {
     token,
     source: "template",
     values: {
-      name: template.name,
-      prompt: template.defaultPrompt,
+      name: t(language, template.nameKey),
+      prompt: t(language, template.promptKey),
       frequency: template.defaultFrequency,
     },
   };

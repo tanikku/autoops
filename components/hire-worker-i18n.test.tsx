@@ -56,6 +56,8 @@ describe("the hire form in English", () => {
   it("offers templates and the fields below them", () => {
     expect(html).toContain("Choose a Template");
     expect(html).toContain("Start from a template");
+    expect(html).toContain("Have a page watched for you");
+    expect(html).toContain("Have AI do a job regularly");
     expect(html).toContain(">Name<");
     expect(html).toContain(">Save<");
     expect(html).toContain(">Cancel<");
@@ -79,6 +81,8 @@ describe("the hire form in Japanese", () => {
 
   it("offers templates and the fields below them", () => {
     expect(html).toContain("テンプレートを選ぶ");
+    expect(html).toContain("Web を見ておいてもらう");
+    expect(html).toContain("AI に定期的に仕事をしてもらう");
     expect(html).toContain("名前");
     expect(html).toContain("保存");
     expect(html).toContain("キャンセル");
@@ -115,15 +119,22 @@ describe("what the language does not change", () => {
   });
 
   /**
-   * Template titles are the worker's name once one is applied, and the prompt
-   * they carry is execution content. Neither is translated, so both read the
-   * same in either language — see the Day 2B report for why that is a decision
-   * rather than an omission.
+   * **The examples themselves are translated, and that reverses an earlier
+   * decision.** It used to be that a template's title and prompt stayed as
+   * written, on the grounds that both become the worker once one is applied.
+   * They do — but until then they are AutoOps offering an example, and an
+   * example nobody can read is not one.
+   *
+   * **What the language still does not reach is anything typed afterwards.**
+   * The field names, the stored kinds and the cadence values above are the same
+   * in both, and nothing translates a name or a prompt once it is in the form.
    */
-  it("shows the templates exactly as they are written", () => {
-    for (const language of ["en", "ja"]) {
-      expect(form(language)).toContain("News Reporter");
-    }
+  it("offers the examples in the language being read", () => {
+    expect(form("en")).toContain("Watch a local government page");
+    expect(form("ja")).toContain("自治体のお知らせをチェック");
+
+    expect(form("ja")).not.toContain("Watch a local government page");
+    expect(form("en")).not.toContain("自治体のお知らせをチェック");
   });
 });
 

@@ -33,9 +33,14 @@ those on Manual.
 
 # Manual Workers — you bring the material
 
-These match the five built-in templates. All of them start on **Manual**
-frequency, and all of them start as a **Draft** so nothing runs before you are
-ready.
+These are written out here rather than offered as templates: each one works on
+material you paste in for that run, so it belongs on **Manual** frequency. Every
+Worker starts as a **Draft** whichever way you make it, so nothing runs before
+you are ready.
+
+**The built-in templates are a different set** — five for watching a page and
+three for asking a model on a schedule. See
+[Using a template](./USER_GUIDE.md#6-using-a-template).
 
 ---
 
@@ -363,17 +368,18 @@ out rather than written up with a warning:
 
 | Not possible | Why |
 | --- | --- |
-| A daily news digest | AutoOps cannot fetch news. Use [#1](#1-brief-me-on-these-articles) and paste the articles in |
-| Monitoring a website or feed for changes | No HTTP access, and no memory of the previous check |
+| A digest gathered from across the news | AutoOps searches nothing. A **Website** Worker watches one page you name, and [#1](#1-brief-me-on-these-articles) works from articles you paste in |
+| Monitoring a website with a **Prompt** Worker | It has no HTTP access and no memory of the previous check. A **Website** Worker does both — see [Using a template](./USER_GUIDE.md#6-using-a-template) |
 | An inbox summary each morning | No mailbox access. Use [#3](#3-draft-replies-to-these-emails) and paste the messages |
 | A weekly report from your project tracker | No GitHub, no Sheets, no external database |
 | Posting anything anywhere | AutoOps writes text. It does not send it |
 | "Tell me what changed since last run" | A Worker cannot see its own history. Use [#5](#5-what-changed-between-these-two-versions) and paste both versions |
-| Alerting you when something goes wrong | There are no notifications. Failures are visible in Activity |
+| Alerting you anywhere but by email | Email is the only thing AutoOps sends, it is off unless you turn it on per Worker, and it goes to your account's address — see [Email notifications](./USER_GUIDE.md#23-email-notifications) |
 
-**AutoOps supports scheduling, but all five built-in templates are Manual**,
-because each of them works on material you supply. The scheduled examples above
-were written from scratch for that reason.
+**Every example on this page is written out by hand rather than taken from a
+template.** The built-in templates cover different ground — watching a page, and
+asking a model on a schedule — and are described in
+[Using a template](./USER_GUIDE.md#6-using-a-template).
 
 ---
 

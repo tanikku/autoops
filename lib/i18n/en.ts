@@ -244,6 +244,150 @@ export const en = {
     "Start from a template, or fill in the form below yourself.",
 
   /**
+   * The two things a template can be, as headings over the list.
+   *
+   * **Named by what the reader gets, not by what the column holds.** `website`
+   * and `prompt` are the stored kinds and the words the kind selector uses for
+   * choosing one; these say what having one of each is *for*, which is the
+   * question somebody scanning a list of examples is asking.
+   */
+  "template.group.website": "Have a page watched for you",
+  "template.group.prompt": "Have AI do a job regularly",
+
+  /**
+   * The examples themselves.
+   *
+   * **All three parts of a template are translated, including the two that
+   * become the worker.** The name is copied into the Name field and the prompt
+   * into the instructions, so both end up as the account's own material — but
+   * they arrive from AutoOps rather than from the account, and an example
+   * offered in a language its reader does not use is not an example. What
+   * stays untranslated is everything written *after* a template is applied.
+   *
+   * **A prompt holds `{{today}}` and `{{now}}` as literal text.** `t()` only
+   * substitutes when it is given values, and nothing asks for these with any —
+   * the doubled braces are for `lib/prompt.ts` to resolve at run time.
+   *
+   * **Every website example says AutoOps checks one page it was given.** None
+   * of them may suggest searching, collecting or following anything else:
+   * a watcher fetches the address it holds and compares it with what it saw
+   * last time, and a template that implied more would be describing a product
+   * that does not exist.
+   *
+   * **Every prompt example works only from what is written into it.** There is
+   * no inbox, no calendar, no file and no search behind any of them, so each
+   * one carries the place where its material goes.
+   */
+  "template.municipalNotices.name": "Watch a local government page",
+  "template.municipalNotices.description":
+    "Checks a local government page regularly. When an application, an event or a procedure changes, AI sums up what is different.",
+  "template.municipalNotices.prompt": `Sum up what changed on this page, briefly and in plain words.
+
+Pay attention to:
+- applications opening or closing
+- dates, times and places
+- who it is for
+- deadlines and how to apply
+- documents added, replaced or removed
+
+Leave out anything that did not change. Do not fill in what the page does not say.`,
+
+  "template.productPage.name": "Watch a product page",
+  "template.productPage.description":
+    "Checks a product page regularly. When the price or what is being sold changes, AI sums up what is different.",
+  "template.productPage.prompt": `Sum up what changed on this product page, briefly and in plain words.
+
+Pay attention to:
+- the price, and by how much it moved
+- availability
+- the specification or what is included
+- campaigns, discounts and their end dates
+- delivery, warranty and other conditions of sale
+
+Leave out anything that did not change. Do not fill in what the page does not say.`,
+
+  "template.careersPage.name": "Watch a company's careers page",
+  "template.careersPage.description":
+    "Checks a careers page regularly. When a job is added or a posting changes, AI sums up the role, the location and the conditions.",
+  "template.careersPage.prompt": `Sum up what changed on this careers page, briefly and in plain words.
+
+Pay attention to:
+- postings added or taken down
+- the role and the team
+- the location, and whether it can be done remotely
+- employment type, pay and requirements
+- when applications open and close
+
+Leave out anything that did not change. Do not fill in what the page does not say.`,
+
+  "template.newsPage.name": "Watch a news page",
+  "template.newsPage.description":
+    "Checks the news page you give it regularly. When something is added or rewritten, AI sums up what is different.",
+  "template.newsPage.prompt": `Sum up what changed on this page, briefly and in plain words.
+
+Pay attention to:
+- items that were added, and what each one says
+- items that were removed
+- items still there whose wording or date changed
+
+List the new items first. Leave out anything that did not change, and do not fill in what the page does not say.`,
+
+  "template.grantInfo.name": "Watch a grants page",
+  "template.grantInfo.description":
+    "Checks a grant or subsidy page regularly. When a round opens or the terms change, AI sums up who it is for, the deadline and what moved.",
+  "template.grantInfo.prompt": `Sum up what changed on this page, briefly and in plain words.
+
+Pay attention to:
+- rounds opening or closing
+- who is eligible
+- what the money may be spent on
+- how much is available
+- the application deadline and the documents required
+
+Leave out anything that did not change. Do not fill in what the page does not say.`,
+
+  "template.dailyWorkPlan.name": "Plan the day's work",
+  "template.dailyWorkPlan.description":
+    "From what you write in, AI puts the day's checks and tasks in order of what matters most.",
+  "template.dailyWorkPlan.prompt": `Today is {{today}}.
+
+Using only what is written below, put today's checks and tasks in order of what matters most. Give each one a single line saying why it comes where it does, and finish with anything that has to be decided by somebody else.
+
+Do not add anything that is not written below. If something is unclear, say so rather than filling it in.
+
+--- TODAY'S PLANS, REQUESTS AND CONCERNS ---
+(write yours here)`,
+
+  "template.ideaGenerator.name": "Think up ideas regularly",
+  "template.ideaGenerator.description":
+    "On the theme you write in, AI comes up with new ideas and improvements each time it runs.",
+  "template.ideaGenerator.prompt": `Come up with five ideas or improvements for the theme below. Give each one a line on what it is for and a line on the first step it would take.
+
+Make them genuinely different from one another rather than five wordings of the same thought.
+
+Work only from what is written below, and do not state anything as fact that is not there.
+
+--- THEME ---
+(write yours here)`,
+
+  "template.recurringReport.name": "Write a recurring report",
+  "template.recurringReport.description":
+    "From the material you write in, AI produces a report in the same shape every time.",
+  "template.recurringReport.prompt": `Generated at {{now}}.
+
+Using only the material below, write a report in these four sections:
+
+1. Summary, in three lines
+2. What the material shows
+3. What is worth watching
+4. What to do next
+
+Write nothing that is not in the material. Where a section has nothing to draw on, write "no information" rather than filling it in.
+
+--- MATERIAL ---
+(write yours here)`,
+
+  /**
    * Why drafting produced nothing.
    *
    * **All eight are AutoOps speaking, which is what lets them be translated.**
