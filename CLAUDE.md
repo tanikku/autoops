@@ -178,6 +178,10 @@
 | **website テンプレートは URL を持たない** | どのページを見るかは選ぶ人しか知らない。`validateWorkerFormForKind` の「website には URL 必須」はそのままなので、空欄のまま保存はできない |
 | **テンプレートの `defaultFrequency` は kind で分ける。「全件 manual」は website には適用しない** | Documentation Sprint が全件 manual にした理由は「prompt に素材を抱えているので cadence で回しても同じ結果」。website worker はページ自身が変わるので、その理由が**成り立たない**。prompt 側3件も定期前提の題材(標準テーマ)に書き換えたため daily / weekly にした — **これは Documentation Sprint の判断の更新であり、報告済み** |
 | **テンプレートは `emailNotificationsEnabled` を設定しない** | 既定は schema の false のまま。カードを1回押しただけの人の代わりにメール送信を有効化しない。Email Notification の default semantics は今回**変更していない** |
+| **Production の主 origin は `https://app.koqentra.com`**。root の `koqentra.com` にアプリを載せない | Auth.js の cookie は host-only(`__Host-` prefix、domain 属性を持てない)なので、`app.` に閉じれば LP や将来の別サブドメインへセッションが漏れる経路が**構造的に存在しない**。root を SaaS にすると cookie スコープと LP が同一 origin に同居する。`/dashboard` は全て認証必須で SEO 価値が無く、root は LP に譲るのが正しい。**逆(root → app)へ後から動かすのはサインイン URL の変更を伴うため高くつく — 非対称なので `app.` から始める** |
+| **旧 Railway generated domain は削除しない** | 切替前に送信済みのメール内 Run Detail リンクが旧 origin を指しており、消すとリンク切れになる。切り戻し先としても機能する。**両 origin が同一ビルドを配信していることは実測済み** |
+| **ブランド移行を理由に内部識別子を rename しない** | repository 名 `autoops` / Railway service 名 / generated domain / `package.json` の name / ローカル DB 識別子 / migration history / env 変数名。**利用者から見えるブランド**と**インフラ内部識別子**は別物で、後者を変えても得るものは一貫性の見た目だけ。User-Agent `AutoOpsWatcher/1.0` も同じ扱いで、変更するなら別 Phase の独立判断 |
+| **`AUTH_URL` は Production origin の唯一の供給源**。2つ目を作らない | Auth.js が内部で読み、アプリ側は `lib/notify/run-notification.ts` の Run Detail URL 生成が読む。**この2つは同じ変数を読むので分離できない** — 切り替えるとサインイン origin とメール内リンクが同時に動く。`AUTH_TRUST_HOST` / `NEXTAUTH_URL` / `NEXTAUTH_URL_INTERNAL` は**設定しない**(いずれも ABSENT のまま) |
 | `take` は **未採用**。ただし scheduler に置くことを永久に禁じたわけでもない | 本番 Routine 0件で行数の実害がなく、catch-up と組み合わせるとバックログが1 interval を超えた時点でスロットを静かに失う。tenant fairness の論点も未解決。**根拠が揃うまで入れない**、が理由のすべて |
 
 ## 現在地
@@ -991,6 +995,59 @@ Brand Migration Phase 1 以降に送られるメールの Subject は `[Koqentra
   関数側は固定済み。
 - **テンプレートから作った worker を実行していない。** Anthropic 呼び出し・
   外部サイト取得はいずれも行っていない。
+
+### Custom Domain Migration — AutoOps から Koqentra へ
+
+**正式名称が Koqentra に決まり、Production の主 origin を
+`https://app.koqentra.com` へ移した。** 判断は上の「決定済み」に4行入れた。
+ここには経緯と実測だけ書く。
+
+**段階移行の順序と、その順序でなければならなかった理由:**
+
+| Phase | 内容 | 実測 |
+|---|---|---|
+| 1 | user-facing の `AutoOps` → `Koqentra`(commit `e560796`) | CI success / deploy SUCCESS / landing・privacy とも切替確認 |
+| 2 | Railway に custom domain 追加 + DNS + TLS | `Verified: yes` / `CERTIFICATE_STATUS_TYPE_VALID` / 証明書は `CN=app.koqentra.com`(Let's Encrypt) |
+| 3 | Google OAuth に新 redirect URI を**追加**(旧は残す) | authorization request で `redirect_uri_mismatch` なし。**未登録 URI を使った陰性対照では実際に mismatch を検出**しており、手法の妥当性まで確認済み |
+| 4 | `AUTH_URL` を新 origin へ切替 | 自動 deployment SUCCESS。`/api/auth/providers` の callbackUrl が新 origin へ |
+| 5 | 実 Google サインイン + Website Watcher / Email E2E | 下表 |
+
+**Phase 1 が先で、Phase 3 が Phase 4 より先でなければならない。**
+Phase 1 は URL に一切触れないので独立。Phase 3 → 4 の順を逆にすると、Google が
+新 URI を知らない状態で Auth.js が送出し、**全員がサインイン不能になる**。
+
+**Custom Domain 移行後の Production E2E(実測):**
+
+| # | 状態 | 実測結果 |
+|---|---|---|
+| 1 | **initial** | fixture `https://takarazuka-today.jp/koqentra-e2e` VERSION 1 で初回 Manual Run → completed →「サイトの初回状態を記録しました。」→ **メール通知なし** |
+| 2 | **changed** | fixture を VERSION 1 → VERSION 2 → Manual Run → completed → **AI 日本語要約成功** → **Gmail 実受信**。From `Koqentra <notifications@send.koqentra.com>` / Subject `[Koqentra]「Koqentra Email通知 E2E」で変更を検出しました` / **user-facing AutoOps 0件** / メール内リンク `https://app.koqentra.com/dashboard/runs/<run-id>` から**正しい Run Detail へ到達** |
+| 3 | **unchanged** | VERSION 2 のまま Manual Run → completed →「サイトの内容に変更はありませんでした。」→ **メール通知なし** |
+
+**上の「Email Notification MVP」節にある E2E 記録は移行前のもので、
+Subject が `[AutoOps]` になっている。あれは歴史的事実として残してある** —
+機械的に Koqentra へ書き換えないこと。
+
+**E2E fixture が2つあるのは意図的:**
+
+- `https://takarazuka-today.jp/autoops-e2e` — 移行前 E2E の証跡。**VERSION 2 固定**
+- `https://takarazuka-today.jp/koqentra-e2e` — 移行後の回帰資産。**VERSION 2**
+
+既存 fixture を VERSION 3 に上げる案(案A)ではなく**新 fixture を足す案(案B)を
+採った**。既存の「VERSION 2 固定」制約を一つも破らず、戻し忘れが原理的に起きず、
+専用ページが将来の回帰資産として残るため。**Snapshot を人工的に操作する案は
+検討したうえで却下** — 「変更を検知した」ではなく「検知したことにした」状態になり、
+E2E の検証価値そのものが消える。
+
+**未確認:**
+
+- **メール送信の失敗経路は本番未観測**(`rejected` / `unreadable` / `timeout` は
+  unit test のみ)。
+- **prompt worker の completed 通知は本番未実施**。判定経路は website と同一だが、
+  実測ではない。
+- **Production の Worker / Snapshot / RunHistory を Claude Code 側から読んでいない。**
+  Postgres は内部ドメインのみで公開 proxy が無く、開けるには service 設定変更が要る。
+  上の E2E 表は**ユーザーが UI で実施し報告した実測**であって、DB 照会ではない。
 
 ### 未確認 — 別途扱う
 

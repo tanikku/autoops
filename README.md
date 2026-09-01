@@ -1963,6 +1963,28 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
 
 **Reading**
 
+- **A model that answers in Markdown is shown as Markdown source.** The
+  execution page renders `output` inside a `<pre>` with `whitespace-pre-wrap`,
+  so `**Summary**` arrives on screen with its asterisks. It was seen in
+  production during the custom-domain E2E and it is a presentation gap rather
+  than a fault: nothing is lost, mis-stored, or mis-sent, and the email carries
+  the same text as `text/plain` by design.
+
+  **Nothing here is unsafe.** The output is inserted as text — there is no
+  `dangerouslySetInnerHTML` on this path and no Markdown or sanitiser
+  dependency in the project — so a worker cannot get markup onto anybody's
+  screen today. **Any fix that renders Markdown changes that**, and would have
+  to bring sanitisation with it, because the string being rendered is whatever
+  a model wrote about a page somebody else controls.
+
+  Three directions, none chosen: render Markdown on the execution page (best
+  reading, adds a dependency and an injection surface); ask the model for plain
+  text in the prompt (no new surface, but it is an instruction rather than a
+  guarantee, and it narrows what a summary can express); or strip the notation
+  before storing or showing it (edits the account's own material, which
+  `lib/run-display.ts` exists to avoid). **The email would want the same answer
+  as the screen**, and `text/plain` is the one it already has
+
 - **Run history reaches back twenty runs per screen, and no further.** Activity
   shows the twenty most recent runs of an account; a worker's own page shows the
   twenty most recent of that worker. Between them every recent execution has a
@@ -2014,11 +2036,31 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
   | Decision | Resolution |
   | --- | --- |
   | Hosting platform | Railway. The driver adapter's Node APIs work there without changes |
-  | Environment variables | Set in the Railway dashboard, per service. `AUTH_URL` is set to the issued domain |
+  | Environment variables | Set in the Railway dashboard, per service. `AUTH_URL` is set to the production origin — `https://app.koqentra.com` since the custom domain was adopted, and the Railway-issued domain before that |
   | Applying migrations | The Web Service's start command is `prisma migrate deploy && next start`, exactly as anticipated. `package.json` was left unchanged |
   | `CRON_SECRET` | Set on both the Web Service and the Cron Service as separate environment variables with the same value |
   | Database hosting | Railway's managed PostgreSQL plugin |
   | Cron execution | A Railway Cron Service, on a 5-minute schedule (Railway's minimum interval — the 1-minute interval originally planned is not available), calling `POST /api/cron/run` |
+
+- **The production origin is `https://app.koqentra.com`, and the
+  Railway-issued domain still answers.** Both are custom and generated domains
+  on the same service, serving the same build. The issued one is kept rather
+  than removed: links in emails sent before the switch point at it, and it is
+  the way back if the custom domain ever has to be given up.
+
+  **`AUTH_URL` is what decides the origin, and it decides two things at once.**
+  Auth.js builds its OAuth callback from it, and
+  [Email Notifications](#email-notifications) builds each run's link from it —
+  the same variable, so the two cannot be moved apart. Changing it therefore
+  changes where people sign in *and* where every future email points, in one
+  step. `AUTH_TRUST_HOST`, `NEXTAUTH_URL` and `NEXTAUTH_URL_INTERNAL` are all
+  deliberately unset.
+
+  **Names inside the infrastructure were left alone**: the repository, the
+  Railway service, the issued domain, the package name, the local database
+  identifiers, the migration history and the watcher's User-Agent all still say
+  `autoops`. None of them is user-facing, and renaming them buys consistency
+  nowhere anybody looks
 
   One deployment-specific pitfall surfaced and was fixed: a service sourced
   from a Docker image (the Cron Service) runs its start command in **exec
