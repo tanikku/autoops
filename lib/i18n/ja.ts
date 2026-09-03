@@ -142,6 +142,8 @@ export const ja: Record<TranslationKey, string> = {
   "worker.field.runAt": "実行時刻",
   "worker.field.timezoneNote":
     "時刻はアカウントのタイムゾーン({timezone})で扱われます。空欄にすると、保存したときの時刻に実行されます。",
+  /** 「未設定です」とは言わない — DB は既定の UTC と明示的な UTC を区別できない。 */
+  "worker.field.timezoneSettingsLink": "設定から変更できます",
 
   "worker.create.description":
     "Worker は一度定義すれば、あとは Koqentra がスケジュールどおりに実行します。",
@@ -157,6 +159,14 @@ export const ja: Record<TranslationKey, string> = {
   "worker.create.draftSummary": "{what}\u30fb{cadence}",
   "worker.create.applyToForm": "フォームに反映",
   "worker.create.kindHeading": "この Worker は何をしますか?",
+  /**
+   * 初回チェックは成功していて、しかも「何も起きていない」ように見える。
+   * baseline / snapshot / hash などの内部用語は使わず、
+   * 「最初は記録するだけ」「そのときは通知しない」「次回から比べる」の3点だけを言う。
+   */
+  "worker.create.websiteFirstRunNote":
+    "最初のチェックでは、いまのページの状態を記録するだけで通知は送りません。比べる相手がまだないためです。次回以降は記録した状態と比べて、変わったところがあればお知らせします。",
+
   "worker.create.templatesHeading": "テンプレートを選ぶ",
   "worker.create.templatesHelp":
     "テンプレートから始めるか、下のフォームに自分で入力してください。",
@@ -437,4 +447,11 @@ export const ja: Record<TranslationKey, string> = {
   "settings.language.saved": "言語を保存しました。",
   "settings.language.invalid": "一覧から言語を選んでください。",
   "settings.language.failed": "言語を保存できませんでした。",
+
+  /** 問い合わせ先が未設定の deployment では、この節ごと表示されない。 */
+  "settings.support.title": "サポート",
+  "settings.support.description":
+    "Koqentra は Closed Beta です。思ったとおりに動かないとき、そもそも動いているのか分からないときは、お気軽にご連絡ください。ベータはそのためのものです。",
+  "settings.support.action": "メールで問い合わせる",
+  "settings.support.subject": "Koqentra サポート",
 };

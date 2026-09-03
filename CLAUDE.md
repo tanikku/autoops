@@ -182,6 +182,9 @@
 | **旧 Railway generated domain は削除しない** | 切替前に送信済みのメール内 Run Detail リンクが旧 origin を指しており、消すとリンク切れになる。切り戻し先としても機能する。**両 origin が同一ビルドを配信していることは実測済み** |
 | **ブランド移行を理由に内部識別子を rename しない** | repository 名 `autoops` / Railway service 名 / generated domain / `package.json` の name / ローカル DB 識別子 / migration history / env 変数名。**利用者から見えるブランド**と**インフラ内部識別子**は別物で、後者を変えても得るものは一貫性の見た目だけ。User-Agent `AutoOpsWatcher/1.0` も同じ扱いで、変更するなら別 Phase の独立判断 |
 | **`AUTH_URL` は Production origin の唯一の供給源**。2つ目を作らない | Auth.js が内部で読み、アプリ側は `lib/notify/run-notification.ts` の Run Detail URL 生成が読む。**この2つは同じ変数を読むので分離できない** — 切り替えるとサインイン origin とメール内リンクが同時に動く。`AUTH_TRUST_HOST` / `NEXTAUTH_URL` / `NEXTAUTH_URL_INTERNAL` は**設定しない**(いずれも ABSENT のまま) |
+| **timezone について「未設定です」と表示しない** | `User.timezone` は `@default("UTC")` で、`ensureUser` は timezone に触らない。したがって **「一度も設定していない UTC」と「明示的に選んだ UTC」は DB 上で識別不能**。区別できないものを断定すると、UTC を意図して選んだ利用者に誤った表示をすることになる。**言ってよいのは「いまこのアカウントは {zone} である」という事実と、変更先(Settings)まで** |
+| 問い合わせ先は **`SUPPORT_EMAIL` env の1箇所だけ**。source に住所を書かない | secret ではないが**コードについての事実でもない**。そして推測した住所は無いより悪い — 行き止まりを出口の形で見せることになる。**未設定の deployment では Support 節ごと出さない**(`RESEND_API_KEY` と同じ「欠けている env は機能を壊すのではなく無くす」の形)。空白・制御文字・`@` なしは未設定と同じ扱い |
+| **「正常なのに壊れて見える」は UI と表示文言で直す。実行 semantics は触らない** | 初回実行は成功なのにモデルも呼ばずメールも送らないため「何も起きていない」ように見える。**直し方は「初回にもメールを送る」ではなく「先に言っておく」**。同じ理由で、`RunHistory.output` の**保存値と表示値は食い違ってよい** — 保存値は `lib/run-display.ts` の完全一致判定と既存行が依存するので不変、表示は各言語で「その run が何をしたか」を言う(英語の `run.system.websiteBaseline` が実例)。**表示が保存値と一字一句同じであることは要件ではない** |
 | `take` は **未採用**。ただし scheduler に置くことを永久に禁じたわけでもない | 本番 Routine 0件で行数の実害がなく、catch-up と組み合わせるとバックログが1 interval を超えた時点でスロットを静かに失う。tenant fairness の論点も未解決。**根拠が揃うまで入れない**、が理由のすべて |
 
 ## 現在地

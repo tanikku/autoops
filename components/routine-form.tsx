@@ -427,6 +427,16 @@ export function RoutineForm({
         }}
         className="mt-8 flex max-w-2xl flex-col gap-6"
       >
+        {/* **`websiteUrlNote` is the same slot the edit form uses, saying the
+            other half of the story.** Both notes are about the watched address
+            and the state kept for it: editing says that moving the address
+            throws the recorded state away, and hiring says that the first check
+            is what records it — quietly, with no notification, because there is
+            nothing yet to compare against. It is shown for a website worker
+            only, which the field component already decides.
+
+            **Nothing about execution changes here.** This says out loud what a
+            first run already does. */}
         <WorkerFields
           values={
             injected?.values ??
@@ -443,6 +453,7 @@ export function RoutineForm({
           kind={kind}
           timezone={timezone}
           language={language}
+          websiteUrlNote={t(language, "worker.create.websiteFirstRunNote")}
         />
 
         <div className="flex gap-2">

@@ -407,4 +407,7 @@ app. Operational visibility is the cron log lines above.
 
 ---
 
+**Still stuck?** The support address is under **Settings** once you are signed
+in. Koqentra is in Closed Beta, and hearing about it is the point.
+
 See also: **[User Guide](./USER_GUIDE.md)** · **[Use Cases](./USE_CASES.md)**

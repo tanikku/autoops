@@ -1205,6 +1205,7 @@ cp .env.example .env
 | `BETA_ALLOWED_EMAILS` | Yes | Comma-separated addresses allowed to sign in. **Unset means nobody can** — see below |
 | `AUTH_URL` | **In production** | The deployed origin, e.g. `https://koqentra.example.com`. Leave it unset locally — see below |
 | `ANTHROPIC_API_KEY` | No | Real AI execution. Without it, a stand-in provider answers |
+| `SUPPORT_EMAIL` | No | The address Settings and the privacy notice offer as a way to reach a person. **Without it there is no support link at all** — see below |
 | `RESEND_API_KEY` | No | Sends [email notifications](#email-notifications). Without it, nothing is sent and a line is logged |
 | `EMAIL_FROM` | No | The sender those are from, e.g. `Koqentra <notifications@example.com>`. Needed alongside the key; either one missing sends nothing |
 
@@ -1246,6 +1247,29 @@ notice on its own.
 **Removing somebody from the list does not sign them out.** Sessions are JWTs
 with no server-side store, so a token already issued stays valid until it
 expires. The list controls who can sign in next, not who is signed in now.
+
+### `SUPPORT_EMAIL` decides whether there is a way to reach anybody
+
+**It is not a secret** — the whole point of it is to be read off a screen — and
+it is in the environment rather than in the source for one reason: a support
+address is not a fact about the code, and an invented one is worse than none. A
+`mailto:` that goes nowhere is a dead end dressed up as a way out.
+
+**Unset means the section is absent, not broken.** With no value, neither
+Settings nor the privacy notice renders a Contact section, and nobody is told
+that an operator forgot something that is not the reader's problem. That is the
+same shape `RESEND_API_KEY` has: a missing variable makes a feature absent
+rather than faulty.
+
+**Both places, because both audiences exist.** Settings is where somebody
+already signed in goes looking; `/privacy` is public, and a privacy notice that
+can only be asked about by people with accounts is not much of one. The address
+is read in one module and written in neither page — that is what keeps the two
+from drifting.
+
+A value carrying whitespace, a control character, or no `@` is refused for the
+same reason as an absent one — see `lib/support.ts`. That is a sanity check on
+what an operator typed, not a promise that the address receives mail.
 
 ### `AUTH_URL` is only needed once you deploy
 

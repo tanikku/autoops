@@ -210,6 +210,122 @@ describe("what the schedule says about the timezone", () => {
 
     expect(html).not.toContain("Times use your account timezone");
   });
+
+  /**
+   * **Naming the zone was not enough on its own.** The sentence said which zone
+   * the account is on and stopped there, leaving somebody who wanted a
+   * different one with nowhere to go. The way out sits beside the fact.
+   */
+  it("says where the zone is changed", () => {
+    const html = render({ timezone: "UTC", values: { frequency: "daily" } });
+
+    expect(html).toContain("Change it in Settings");
+    expect(html).toContain('href="/dashboard/settings"');
+  });
+
+  it("says where the zone is changed, in Japanese", () => {
+    const html = render({
+      language: "ja",
+      timezone: "UTC",
+      values: { frequency: "daily" },
+    });
+
+    expect(html).toContain("設定から変更できます");
+    expect(html).toContain('href="/dashboard/settings"');
+  });
+
+  /** The way out belongs to the note, so it appears exactly where it does. */
+  it("offers no settings link on a manual worker", () => {
+    const html = render({ timezone: "UTC", values: { frequency: "manual" } });
+
+    expect(html).not.toContain("Change it in Settings");
+    expect(html).not.toContain('href="/dashboard/settings"');
+  });
+
+  /**
+   * **It states the zone, it does not diagnose it.** A new account is on UTC
+   * because that is the column's default, and the database cannot tell that
+   * apart from somebody choosing UTC deliberately — so nothing here may call it
+   * unset, missing, or wrong.
+   */
+  it.each([
+    ["en", ["not set", "unset", "missing", "have not chosen"]],
+    ["ja", ["未設定", "設定されていません", "初期値のまま"]],
+  ] as const)("does not diagnose the zone in %s", (language, phrases) => {
+    const said = `${t(language, "worker.field.timezoneNote")} ${t(
+      language,
+      "worker.field.timezoneSettingsLink",
+    )}`;
+
+    for (const phrase of phrases) {
+      expect(said).not.toContain(phrase);
+    }
+  });
+});
+
+/**
+ * What a website worker is told about its first check.
+ *
+ * **The run it describes is a success that looks like nothing happened.** No
+ * model is asked and no email goes out, because there is no earlier state to
+ * compare against — and somebody expecting a summary reads that as broken. It
+ * came up in the production end-to-end check, which is why the form says it
+ * beforehand.
+ *
+ * **Nothing about execution changed to make this true.** The note describes
+ * what a first run already did.
+ */
+describe("what a website worker is told about the first check", () => {
+  const note = (language: string) =>
+    render({
+      language,
+      kind: "website",
+      values: {},
+      websiteUrlNote: t(language, "worker.create.websiteFirstRunNote"),
+    });
+
+  it("says the first check records the page and does not notify", () => {
+    const html = note("en");
+
+    expect(html).toContain("The first check records the page as it is now");
+    expect(html).toContain("does not notify you");
+  });
+
+  it("says comparison starts from the check after it", () => {
+    expect(note("en")).toContain(
+      "Every check after that is compared with what was recorded",
+    );
+  });
+
+  it("says all three things in Japanese", () => {
+    const html = note("ja");
+
+    expect(html).toContain("いまのページの状態を記録するだけ");
+    expect(html).toContain("通知は送りません");
+    expect(html).toContain("次回以降は記録した状態と比べて");
+  });
+
+  /**
+   * **No internal vocabulary.** What the reader needs is the behaviour, not the
+   * name of the row it is kept in.
+   */
+  it.each(["baseline", "snapshot", "Snapshot", "hash", "contentHash"])(
+    "does not say %o",
+    (word) => {
+      expect(t("en", "worker.create.websiteFirstRunNote")).not.toContain(word);
+      expect(t("ja", "worker.create.websiteFirstRunNote")).not.toContain(word);
+    },
+  );
+
+  /** A prompt worker has no page to check, so it is told nothing about one. */
+  it("is not shown to a prompt worker", () => {
+    const html = render({
+      values: {},
+      websiteUrlNote: t("en", "worker.create.websiteFirstRunNote"),
+    });
+
+    expect(html).not.toContain("The first check records the page");
+  });
 });
 
 /**

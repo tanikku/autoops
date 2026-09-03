@@ -672,4 +672,5 @@ service that sends the message.
 ---
 
 Something not covered here? Try **[Troubleshooting](./TROUBLESHOOTING.md)** or
-**[Use Cases](./USE_CASES.md)**.
+**[Use Cases](./USE_CASES.md)** — or write to us. The support address is under
+**Settings** once you are signed in.

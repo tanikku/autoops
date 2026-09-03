@@ -161,14 +161,30 @@ describe("run detail — a website run", () => {
     expect(sections).not.toHaveProperty("Prompt");
   });
 
+  /**
+   * **What is stored and what is shown are the same thing except once.** A
+   * model's answer is the account's material and is never reworded; the two
+   * sentences Koqentra writes for itself are read in the account's language,
+   * and for an English reader that is a no-op on one of them and not on the
+   * other — the first check's stored wording names the state the run found
+   * rather than what it did. See `lib/i18n/en.ts`.
+   */
   it.each([
-    ["an AI answer", "The price moved to £12."],
-    ["a first check", "Website baseline is not established yet."],
-    ["a check that found nothing", "Website content has not changed."],
-  ])("shows %s as the output", async (_label, output) => {
+    ["an AI answer", "The price moved to £12.", "The price moved to £12."],
+    [
+      "a first check",
+      "Website baseline is not established yet.",
+      "The website's initial state was recorded.",
+    ],
+    [
+      "a check that found nothing",
+      "Website content has not changed.",
+      "Website content has not changed.",
+    ],
+  ])("shows %s as the output", async (_label, output, shown) => {
     mocks.getRun.mockResolvedValue(website({ output }));
 
-    expect(labelled(await render()).Output).toBe(output);
+    expect(labelled(await render()).Output).toBe(shown);
   });
 
   /**

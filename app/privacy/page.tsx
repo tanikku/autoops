@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { DEFAULT_LANGUAGE, t } from "@/lib/i18n";
+import { supportMailtoHref } from "@/lib/support";
 
 export const metadata: Metadata = {
   title: "Privacy — Koqentra",
@@ -32,7 +34,23 @@ function Section({
   );
 }
 
+/**
+ * **Rendered per request, because the contact section is configuration.**
+ * This page used to be prerendered, which was right while every word of it was
+ * a constant. It now reads `SUPPORT_EMAIL`, and a page baked at build time
+ * would answer with whatever the build environment happened to hold — most
+ * likely nothing — and keep answering that after the variable was set. Nothing
+ * else about the page changed.
+ */
+export const dynamic = "force-dynamic";
+
 export default function PrivacyPage() {
+  // This page is written in English rather than translated, so the subject line
+  // is read in the default language — the one the page itself is in.
+  const supportHref = supportMailtoHref(
+    t(DEFAULT_LANGUAGE, "settings.support.subject"),
+  );
+
   return (
     <div className="flex flex-1 flex-col bg-background">
       <header className="mx-auto flex w-full max-w-6xl items-center px-6 py-6 sm:px-10">
@@ -164,6 +182,30 @@ export default function PrivacyPage() {
             decision.
           </p>
         </Section>
+
+        {/* **The way to reach a person without signing in.** Settings carries
+            the same link for somebody who is already inside; this page is
+            public, and a privacy notice that can only be asked about by people
+            with accounts is not much of one.
+
+            **The address comes from the same single source** — `lib/support.ts`
+            reading `SUPPORT_EMAIL` — and is never written here. With none
+            configured there is no section, exactly as on Settings: no reader is
+            shown a link that goes nowhere. */}
+        {supportHref ? (
+          <Section title="Contact">
+            <p>
+              Questions about this notice, or about what Koqentra holds for your
+              account, can be sent to us by email. If you are signed in, the
+              same address is under <strong>Settings</strong>.
+            </p>
+            <p>
+              <a href={supportHref} className="underline underline-offset-4">
+                {t(DEFAULT_LANGUAGE, "settings.support.action")}
+              </a>
+            </p>
+          </Section>
+        ) : null}
 
         <Section title="Changes to this notice">
           <p>

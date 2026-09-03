@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -472,8 +473,23 @@ export function WorkerFields({
             defaultValue={values.runAt}
             className="w-40"
           />
+          {/* **The zone was already named here; what was missing is where to
+              change it.** The sentence states the account's current zone as a
+              fact — it does not say the zone is unset, because a new account is
+              on UTC by the column's default and the database cannot tell that
+              apart from somebody choosing UTC deliberately.
+
+              Only a worker on a cadence gets this. A manual worker has no time
+              of day for a zone to interpret, and the whole block is already
+              inside that condition. */}
           <p className="text-xs text-muted-foreground">
-            {t(language, "worker.field.timezoneNote", { timezone })}
+            {t(language, "worker.field.timezoneNote", { timezone })}{" "}
+            <Link
+              href="/dashboard/settings"
+              className="underline underline-offset-4 hover:text-foreground"
+            >
+              {t(language, "worker.field.timezoneSettingsLink")}
+            </Link>
           </p>
         </div>
       ) : null}

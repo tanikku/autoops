@@ -217,6 +217,20 @@ export const en = {
   "worker.field.runAt": "Run at",
   "worker.field.timezoneNote":
     "Times use your account timezone: {timezone}. Leave empty to run at whatever time the worker was saved.",
+  /**
+   * Where the zone above is changed.
+   *
+   * **Shown beside the zone rather than instead of it.** The sentence before it
+   * already names the zone the account is on; what was missing is that it is a
+   * setting at all, and where. A new account is on UTC because that is the
+   * column's default — **this does not say the zone is unset**, which is
+   * something the database cannot distinguish from somebody choosing UTC on
+   * purpose.
+   *
+   * It appears only where the note does, which is only on a worker that runs on
+   * a cadence. A manual worker has no time of day to interpret.
+   */
+  "worker.field.timezoneSettingsLink": "Change it in Settings",
 
   "worker.create.description":
     "Define the worker once. Koqentra runs it on your schedule.",
@@ -239,6 +253,23 @@ export const en = {
   "worker.create.draftSummary": "{what} \u00b7 {cadence}",
   "worker.create.applyToForm": "Apply to form",
   "worker.create.kindHeading": "What should this worker do?",
+  /**
+   * What the first successful check does, said before anybody waits for it.
+   *
+   * **The run it describes is a success, and reads like nothing happened.** A
+   * first check has no earlier state to compare against, so it records the page
+   * and stops: no model is asked, and no email goes out. Somebody who was
+   * expecting a summary reads that as a broken worker — it came up in the
+   * production end-to-end check — and the fix is to say so beforehand rather
+   * than to start sending mail about a change nobody has seen yet.
+   *
+   * **No internal vocabulary.** Not "baseline", not "snapshot", not "hash":
+   * what the reader needs is that the first run remembers the page, that it is
+   * quiet on purpose, and that comparison starts from the next one.
+   */
+  "worker.create.websiteFirstRunNote":
+    "The first check records the page as it is now and does not notify you — there is nothing to compare it against yet. Every check after that is compared with what was recorded, and you hear about it when something differs.",
+
   "worker.create.templatesHeading": "Choose a Template",
   "worker.create.templatesHelp":
     "Start from a template, or fill in the form below yourself.",
@@ -567,10 +598,23 @@ Write nothing that is not in the material. Where a section has nothing to draw o
    * **Stored in English and translated when shown.** They sit in
    * `RunHistory.output` beside what models write, which is the account's
    * material and is never touched — see `lib/run-display.ts` for the two
-   * conditions that keep the two apart. The English here is word for word what
-   * is stored, so an English reader sees no difference at all.
+   * conditions that keep the two apart.
+   *
+   * **`websiteBaseline` no longer repeats what is stored, and that is the
+   * point.** The stored sentence — "Website baseline is not established yet." —
+   * is written from the moment before the run: it names the state the check
+   * found. Read afterwards, on the page of a run that succeeded, it says
+   * nothing happened. It is the same successful run the Japanese calls
+   * 「サイトの初回状態を記録しました。」, and an English reader was the only
+   * one being told their worker had not done anything.
+   *
+   * **The stored value is untouched.** Changing it would break the exact match
+   * in `lib/run-display.ts` and strand every row already written; translating
+   * at display time is precisely what lets an old row read correctly today.
+   * `websiteUnchanged` still matches its stored wording, because that one was
+   * never misleading.
    */
-  "run.system.websiteBaseline": "Website baseline is not established yet.",
+  "run.system.websiteBaseline": "The website's initial state was recorded.",
   "run.system.websiteUnchanged": "Website content has not changed.",
 
   /**
@@ -666,6 +710,28 @@ Write nothing that is not in the material. Where a section has nothing to draw o
   "settings.language.saved": "Language saved.",
   "settings.language.invalid": "Select a language from the list.",
   "settings.language.failed": "Could not save your language.",
+
+  /**
+   * How somebody reaches a person.
+   *
+   * **Settings is where it sits because that is the one page inside the
+   * dashboard that is about the account rather than about a worker**, and
+   * because no page behind sign-in has a footer to put it in. Somebody who is
+   * stuck goes looking for settings; somebody who is not never needs this.
+   *
+   * **The whole section is absent when no address is configured** — see
+   * `lib/support.ts`. These words are never shown next to a link that goes
+   * nowhere.
+   *
+   * `settings.support.subject` is the subject line the message opens with. It
+   * is short on purpose: whoever reads the mailbox needs to know which product
+   * it is about, and the person writing needs the room.
+   */
+  "settings.support.title": "Support",
+  "settings.support.description":
+    "Koqentra is in Closed Beta. If something is not working the way you expected, or you are not sure whether it is working at all, write to us — that is what the beta is for.",
+  "settings.support.action": "Email support",
+  "settings.support.subject": "Koqentra support",
 } as const;
 
 /**

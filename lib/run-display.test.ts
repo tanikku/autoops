@@ -28,10 +28,23 @@ describe("the sentences Koqentra writes for itself", () => {
 });
 
 describe("a website worker's own two sentences", () => {
+  /**
+   * **English is a translation here too, and no longer a copy.** The stored
+   * sentence is written from the moment before the run — it names the state the
+   * check found — and read afterwards, on a run that succeeded, it says nothing
+   * happened. What is shown says what the run did, which is what the Japanese
+   * always said.
+   */
   it("reads the first check in English", () => {
     expect(
       formatRunOutputForDisplay(WEBSITE_BASELINE_OUTPUT, "website", "en"),
-    ).toBe("Website baseline is not established yet.");
+    ).toBe("The website's initial state was recorded.");
+  });
+
+  it("leaves the stored sentence alone while doing it", () => {
+    expect(WEBSITE_BASELINE_OUTPUT).toBe(
+      "Website baseline is not established yet.",
+    );
   });
 
   it("reads the first check in Japanese", () => {

@@ -64,6 +64,15 @@ const HEALTH = {
  * worker would have had translated. What keeps it in English is the kind: a
  * prompt worker's output is the account's material, whatever it happens to say.
  */
+/**
+ * A sentence as it appears in the markup rather than in the dictionary.
+ *
+ * React escapes an apostrophe on its way into HTML, so a string carrying one
+ * cannot be searched for literally in a rendered page. Escaping the expectation
+ * rather than loosening it keeps the assertion on the whole sentence.
+ */
+const asRendered = (text: string) => text.replace(/'/g, "&#x27;");
+
 const RUN: RecentRun = {
   id: "run-1",
   status: "completed",
@@ -315,18 +324,37 @@ describe("the activity list", () => {
    * live in the same column as what a model produces, and the kind is what
    * tells them apart — which is why the row carries it.
    */
+  /**
+   * **English is a reading too, not a passthrough.** The first check's stored
+   * sentence describes the state the run found rather than what it did, so the
+   * English shown is its own wording — see `lib/i18n/en.ts`. The second one
+   * still reads exactly as it is stored, which is why both columns are given.
+   */
   it.each([
-    ["a first check", "Website baseline is not established yet.", "サイトの初回状態を記録しました。"],
-    ["a check that found nothing", "Website content has not changed.", "サイトの内容に変更はありませんでした。"],
-  ])("reads %s in the account's language", (_label, stored, japanese) => {
-    const runs = [{ ...RUN, output: stored, routineKind: "website" as const }];
+    [
+      "a first check",
+      "Website baseline is not established yet.",
+      "The website's initial state was recorded.",
+      "サイトの初回状態を記録しました。",
+    ],
+    [
+      "a check that found nothing",
+      "Website content has not changed.",
+      "Website content has not changed.",
+      "サイトの内容に変更はありませんでした。",
+    ],
+  ])(
+    "reads %s in the account's language",
+    (_label, stored, english, japanese) => {
+      const runs = [{ ...RUN, output: stored, routineKind: "website" as const }];
 
-    expect(activity("en", runs)).toContain(stored);
+      expect(activity("en", runs)).toContain(asRendered(english));
 
-    const ja = activity("ja", runs);
-    expect(ja).toContain(japanese);
-    expect(ja).not.toContain(stored);
-  });
+      const ja = activity("ja", runs);
+      expect(ja).toContain(japanese);
+      expect(ja).not.toContain(asRendered(english));
+    },
+  );
 
   it("still shows a website worker's AI answer as it was written", () => {
     const summary = "The consultation deadline moved.";
