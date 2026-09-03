@@ -1,12 +1,12 @@
 import "server-only";
 
-import { DEFAULT_TIMEZONE } from "@/lib/datetime";
 import {
   DEFAULT_LANGUAGE,
   isSupportedLanguage,
   type Language,
 } from "@/lib/i18n";
 import { prisma } from "@/lib/prisma";
+import { NEW_ACCOUNT_TIMEZONE } from "@/lib/timezones";
 
 /**
  * The zone the signed-in user's timestamps are rendered in.
@@ -15,10 +15,16 @@ import { prisma } from "@/lib/prisma";
  * at sign-in and would keep serving the old value until the next one, so a
  * changed setting would appear to do nothing.
  *
- * Falls back to UTC for a user whose row does not exist yet — nothing writes
- * it until a write path provisions it (`requireProvisionedUserId`), so a fresh
- * account can reach the dashboard before the row does. **Reading must not be
- * what creates it**, which is why the fallback is here rather than a write.
+ * Falls back for a user whose row does not exist yet — nothing writes it until
+ * a write path provisions it (`requireProvisionedUserId`), so a fresh account
+ * can reach the dashboard before the row does. **Reading must not be what
+ * creates it**, which is why the fallback is here rather than a write.
+ *
+ * **The fallback is the column's default, not UTC.** It answers for a row that
+ * is about to be created, and `User.timezone @default` is what that row will
+ * get; anything else would have the hire form quote one zone and the action
+ * that follows it schedule in another. `DEFAULT_TIMEZONE` is a different
+ * question — what to render when a *stored* zone is unreadable — and stays UTC.
  */
 export async function getUserTimezone(userId: string): Promise<string> {
   const user = await prisma.user.findUnique({
@@ -26,7 +32,7 @@ export async function getUserTimezone(userId: string): Promise<string> {
     select: { timezone: true },
   });
 
-  return user?.timezone ?? DEFAULT_TIMEZONE;
+  return user?.timezone ?? NEW_ACCOUNT_TIMEZONE;
 }
 
 /**

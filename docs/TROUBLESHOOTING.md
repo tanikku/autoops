@@ -140,8 +140,8 @@ Monthly** frequency. Manual Workers have no next run by definition.
 ### It ran at the wrong time
 
 - **Check your timezone in Settings.** Schedules are interpreted in the
-  timezone on your account, not your browser's. A new account starts on **UTC**
-  until you change it.
+  timezone on your account, not your browser's. A new account starts on
+  **Asia/Tokyo**; accounts created earlier kept whatever they already had.
 - **Daylight saving.** A Worker set to 09:00 keeps running at 09:00 on your
   clock across a DST change — that is the intended behaviour, and it means the
   UTC instant shifts by an hour.

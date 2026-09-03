@@ -16,7 +16,15 @@
  * saving — come from the platform rather than from arithmetic of our own.
  */
 
-/** Used when a user has no zone set, and when the stored one is unusable. */
+/**
+ * Used when a stored zone is unusable — renamed, truncated, or from an older
+ * client — so a dashboard still renders instead of throwing.
+ *
+ * **Not what a new account gets.** That is `NEW_ACCOUNT_TIMEZONE`, which
+ * tracks `User.timezone`'s column default. This one answers a different
+ * question: an unreadable value is a fault, and UTC states the stored instant
+ * with no offset invented on top of it.
+ */
 export const DEFAULT_TIMEZONE = "UTC";
 
 /**

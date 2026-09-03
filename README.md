@@ -1083,7 +1083,7 @@ The columns that carry a schedule:
 
 | Column | Type | Meaning |
 | --- | --- | --- |
-| `User.timezone` | `String` (default `"UTC"`) | IANA zone. Decides how timestamps read *and* what a chosen time or day means |
+| `User.timezone` | `String` (default `"Asia/Tokyo"`) | IANA zone. Decides how timestamps read *and* what a chosen time or day means. The default is the zone a *new* row gets; existing rows were never rewritten, and UTC stays selectable |
 | `Routine.frequency` | `String` (default `"manual"`) | How often: `manual`, `daily`, `weekly`, `monthly` |
 | `Routine.runAtMinutes` | `Int?` | Minutes into the day in the owner's zone: `0` is midnight, `540` is 09:00. Null keeps the slot's existing time |
 | `Routine.runAtWeekday` | `Int?` | `weekly` only. 0 (Sunday) to 6 (Saturday), matching `Date#getUTCDay` so no conversion sits between the column and the arithmetic. Null keeps the slot's existing weekday |
@@ -1771,8 +1771,9 @@ Two functions divide the question, and the split is the contract:
 | `requireProvisionedUserId()` | Who is asking, *and* guarantees their row exists | An upsert |
 
 **Reads use the first.** Every page renders without the row — `getUserTimezone`
-falls back to UTC — so provisioning on the way in would put a write behind
-every page view and buy nothing.
+falls back to `NEW_ACCOUNT_TIMEZONE`, the same zone the column default would
+have given it — so provisioning on the way in would put a write behind every
+page view and buy nothing.
 
 **Writes that need the row use the second**, and today those are creating a
 worker, saving a timezone, and asking Koqentra to draft a worker — that last one

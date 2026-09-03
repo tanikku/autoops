@@ -59,10 +59,10 @@ export function isUserProvisioningError(error: unknown): boolean {
  * edge. The row is created lazily instead, and this is where.
  *
  * **Only write paths ask for it.** A read renders fine without the row —
- * `getUserTimezone` falls back to UTC — so provisioning on the way in would
- * make every page view a write for no gain. What actually needs the row is a
- * write: a `Routine` carries a foreign key to it, a `RateLimitBucket` carries
- * one too, and the account's own settings live on it.
+ * `getUserTimezone` falls back to the column default — so provisioning on the
+ * way in would make every page view a write for no gain. What actually needs
+ * the row is a write: a `Routine` carries a foreign key to it, a
+ * `RateLimitBucket` carries one too, and the account's own settings live on it.
  *
  * **Ask for it after deciding the work is going ahead.** A submission that
  * gets rejected must not create the row that saving it would have needed, so

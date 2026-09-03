@@ -25,6 +25,26 @@ export const supportedTimezones = [
 export type SupportedTimezone = (typeof supportedTimezones)[number]["value"];
 
 /**
+ * The zone an account has before anybody chooses one.
+ *
+ * **It must stay equal to `User.timezone`'s `@default`.** The column is what
+ * actually decides a new row's zone — `ensureUser` omits it — and this is what
+ * the dashboard shows for an account whose row does not exist yet, which is
+ * every account until its first write. Two different answers would tell a
+ * first-time user their worker runs at 09:00 in one zone and then schedule it
+ * in another.
+ *
+ * Asia/Tokyo rather than UTC because that is where the Closed Beta's users
+ * are. **Nothing about UTC was removed**: it is still in the list above, and
+ * an account that selects it keeps it.
+ *
+ * Typed as `SupportedTimezone` so a value the selector cannot offer — and
+ * `isSupportedTimezone` would therefore reject on the way back in — does not
+ * compile.
+ */
+export const NEW_ACCOUNT_TIMEZONE: SupportedTimezone = "Asia/Tokyo";
+
+/**
  * Guards the write.
  *
  * The select can only submit these values, but a form post is not a promise —

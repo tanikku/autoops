@@ -18,9 +18,16 @@ model User {
   name           String?
   image          String?
   /// IANA zone the dashboard renders timestamps in, e.g. "Asia/Tokyo".
-  /// Defaults to UTC so existing rows keep displaying exactly what they did
-  /// before there was a setting to change.
-  timezone       String            @default("UTC")
+  ///
+  /// Defaults to Asia/Tokyo because that is where the Closed Beta's users are:
+  /// an account that never opens Settings and asks for 09:00 means 09:00 where
+  /// it is, not 09:00 UTC. **This is an initial value, not a policy** — UTC is
+  /// still one of `supportedTimezones`, and an account that chooses it keeps it.
+  ///
+  /// **Only rows created after the default changed are affected.** Existing
+  /// rows were not rewritten, and could not have been: nothing distinguishes a
+  /// row that took the old default from one whose owner chose UTC on purpose.
+  timezone       String            @default("Asia/Tokyo")
   /// Language AutoOps uses for its own screens, "en" or "ja".
   ///
   /// A plain string rather than a database enum: adding a language should be a

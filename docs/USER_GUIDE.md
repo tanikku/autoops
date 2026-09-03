@@ -373,10 +373,13 @@ Your timezone decides two things:
 1. How every time on every screen reads.
 2. **What "09:00" means for a scheduled Worker.**
 
-**It starts on UTC.** If you are not in UTC and you do not change this, a
-Worker set to run at 09:00 will run at 09:00 UTC. **Set your timezone before
-you create scheduled Workers** — changing it later does not move the next run
-of a Worker that already exists.
+**A new account starts on Asia/Tokyo.** If that is not your zone and you do
+not change it, a Worker set to run at 09:00 will run at 09:00 in Tokyo. **Set
+your timezone before you create scheduled Workers** — changing it later does
+not move the next run of a Worker that already exists.
+
+If your account was created before this default changed, it kept the zone it
+had. Settings shows which one that is.
 
 The list covers UTC, Tokyo, Seoul, Singapore, London, Paris, New York, Chicago,
 Denver, Los Angeles, and Sydney.
