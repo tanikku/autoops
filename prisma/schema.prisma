@@ -44,6 +44,28 @@ model User {
   runs           RunHistory[]
   rateLimits     RateLimitBucket[]
   manualRunSlots ManualRunSlot[]
+
+  /// **The Creator side of the account, and it is a separate side.** None of
+  /// these is reachable from a `Routine`, and none of them reaches one: a
+  /// worker runs on a schedule and writes a `RunHistory`, while what follows
+  /// is material somebody handed over and the decisions made about it. They
+  /// share an owner and nothing else.
+  ///
+  /// **Every one of them is listed here so that deleting an account takes
+  /// them with it.** The cascade is declared on the far side; these fields are
+  /// what make the relation exist at all, and they add no column to this table.
+  creatorProfile     CreatorProfile?
+  contentItems       ContentItem[]
+  editorialDecisions EditorialDecision[]
+  contentDrafts      ContentDraft[]
+  creatorFeedback    CreatorFeedback[]
+  /// **A list, though an account has at most one.** What holds it to one is
+  /// the chain — `CreatorProfile.userId` is unique and
+  /// `CreatorMemory.creatorProfileId` is unique — rather than a constraint on
+  /// this column, which carries an ordinary index. Declaring the relation
+  /// one-to-one here would claim a uniqueness the database is not being asked
+  /// to enforce.
+  creatorMemories    CreatorMemory[]
 }
 
 model Routine {
@@ -367,4 +389,210 @@ model DomainThrottle {
   host          String   @id
   /// The earliest instant a fetch of this host may begin.
   nextAllowedAt DateTime
+}
+
+/// What the owner has told Koqentra about the work, in their own words.
+///
+/// **This is the explicit half of Creator memory, and the only half a person
+/// writes.** Three separate things are kept apart on purpose and this is the
+/// first of them: what somebody stated (here), what they actually did
+/// (`CreatorFeedback`), and what a model concluded from watching them
+/// (`CreatorMemory`). Folding them together would let an inference overwrite a
+/// declaration, which is the one direction that must never be possible — a
+/// stated preference is true because it was stated, and no amount of observed
+/// behaviour makes it false.
+///
+/// **One per account.** `userId` is unique rather than an ordinary index, so
+/// the shape is enforced by the database instead of by whoever writes next.
+/// Multiple profiles per account are one dropped constraint away if they are
+/// ever wanted, and are not wanted now.
+///
+/// **No display name.** `User.name` and `User.image` already come from the
+/// provider and are refreshed there; a second copy here would be a second
+/// answer to the same question, stale from the moment it was written.
+model CreatorProfile {
+  id                String         @id @default(cuid())
+  userId            String         @unique
+  /// Who the writing is for, as the owner describes them.
+  audience          String         @default("")
+  /// What the owner is trying to achieve by publishing.
+  goals             String         @default("")
+  /// How it should sound — the instruction a draft is written under.
+  voiceInstructions String         @default("")
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contentItems      ContentItem[]
+  memory            CreatorMemory?
+}
+
+/// One piece of material the owner handed over to be judged.
+///
+/// **Given, not watched.** A `WebsiteSource` exists to be checked again and
+/// again, and its whole point is whether it moved since last time; this is a
+/// thing somebody chose to submit once. No hash, no snapshot, no baseline —
+/// there is nothing here to compare against, because comparison is not what it
+/// is for. That is why this carries no foreign key to `Routine` or
+/// `WebsiteSource`, and why neither of them knows it exists.
+///
+/// **`userId` alongside `creatorProfileId`, deliberately.** The profile
+/// already implies the owner, so this column is redundant on paper — and
+/// `RunHistory` carries the same redundancy for the same reason: every read is
+/// scoped by the owner directly, and a query that has to travel through a
+/// parent to find out who something belongs to is a query that can be written
+/// without doing so.
+model ContentItem {
+  id               String              @id @default(cuid())
+  userId           String
+  creatorProfileId String
+  /// How the material arrived: "text" or "url". A plain string narrowed by
+  /// `isCreatorSourceKind`, following `Routine.kind` and `status` rather than a
+  /// database enum — adding a way in should not be a migration.
+  sourceKind       String
+  /// Where it came from, when it came from somewhere. Null for pasted text.
+  sourceUrl        String?
+  title            String?
+  /// The material itself, as text.
+  body             String
+  createdAt        DateTime            @default(now())
+  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  creatorProfile   CreatorProfile      @relation(fields: [creatorProfileId], references: [id], onDelete: Cascade)
+  decisions        EditorialDecision[]
+
+  @@index([userId])
+  @@index([creatorProfileId])
+}
+
+/// The judgement: whether this material is worth publishing on one channel.
+///
+/// **The decision is the event, and the draft is optional.** A `skip` says the
+/// material is not worth a post and produces nothing to read; a `recommend`
+/// produces a `ContentDraft`. Because half of all decisions may carry no
+/// draft, this — not the draft — is what feedback answers. Hanging feedback
+/// off the draft would leave a person unable to disagree with a `skip`, which
+/// is exactly the disagreement worth hearing.
+///
+/// **`verdict` says what was decided, never how the run went.** There is no
+/// `failed` here and there must not be one: a request that never reached a
+/// model produced no judgement at all, and recording one would put a sentence
+/// the model never wrote into the history the memory is derived from.
+///
+/// **One decision per channel per item.** The same material can be judged for
+/// `x` and for `longform` separately — they are different questions — but
+/// asking the same question twice is a second answer to overwrite, not a
+/// second row.
+model EditorialDecision {
+  id            String           @id @default(cuid())
+  userId        String
+  contentItemId String
+  /// "x", "reddit" or "longform". **`longform` is a shape, not a site**: note,
+  /// Substack and a personal blog all want the same long piece, and naming one
+  /// of them here would make the column wrong everywhere else.
+  targetChannel String
+  /// "recommend" or "skip".
+  verdict       String
+  /// Why, in the model's words — shown to the person deciding whether to agree.
+  reason        String
+  createdAt     DateTime         @default(now())
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contentItem   ContentItem      @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+  draft         ContentDraft?
+  feedback      CreatorFeedback?
+
+  @@unique([contentItemId, targetChannel])
+  @@index([userId])
+}
+
+/// What the model wrote, exactly as it wrote it.
+///
+/// **Immutable, and that is the entire reason it is a separate row.** When
+/// somebody edits a draft before publishing, the edit goes to
+/// `CreatorFeedback.editedBody` and this is left alone. The pair — what was
+/// proposed and what was actually wanted — is the most informative thing the
+/// system ever sees about a person's taste, and overwriting this to store the
+/// result would destroy precisely the half that carries the signal.
+///
+/// **Only a `recommend` has one.** The relation is one-to-one and optional
+/// from the decision's side; nothing creates a draft for a `skip`.
+model ContentDraft {
+  id                  String            @id @default(cuid())
+  userId              String
+  editorialDecisionId String            @unique
+  /// The proposed text. Never rewritten.
+  body                String
+  createdAt           DateTime          @default(now())
+  user                User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  editorialDecision   EditorialDecision @relation(fields: [editorialDecisionId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// What the person did about a decision. A fact, not an opinion about one.
+///
+/// **It answers the decision, not the draft.** There is no foreign key to
+/// `ContentDraft` here, and adding one would quietly re-introduce the problem
+/// this shape exists to avoid: a `skip` has no draft, so feedback hung off the
+/// draft could never disagree with one.
+///
+/// **Append-only.** A row here records something that happened at a moment,
+/// and something that happened does not later become something else. Nothing
+/// updates it; there is no undo in C1, and a change of mind would be a new
+/// decision rather than a rewritten memory of the old one. The `@unique` holds
+/// that to one answer per decision.
+///
+/// **The human half of memory.** `CreatorProfile` is what the owner said,
+/// `CreatorMemory` is what a model concluded, and this is what they actually
+/// did — the only one of the three that is evidence.
+model CreatorFeedback {
+  id                  String            @id @default(cuid())
+  userId              String
+  editorialDecisionId String            @unique
+  /// "approve", "edit" or "reject". `approve` agrees with the decision — and a
+  /// `skip` is a decision, so approving one is ordinary rather than a special
+  /// case. `reject` disagrees with the decision itself.
+  action              String
+  /// What the person actually wanted, when they edited rather than agreed. The
+  /// original stays in `ContentDraft.body`; the two together are the point.
+  editedBody          String?
+  /// Why, when they chose to say. Optional because being made to explain a
+  /// rejection is how people stop rejecting things.
+  reason              String?
+  createdAt           DateTime          @default(now())
+  user                User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  editorialDecision   EditorialDecision @relation(fields: [editorialDecisionId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// What a model concluded from watching, kept apart from what it watched.
+///
+/// **Derived, and therefore disposable.** Everything here can be rebuilt from
+/// `CreatorFeedback` and `CreatorProfile`, which is what makes it safe to
+/// replace: a summary that turns out to be wrong is regenerated, and no fact
+/// is lost in the process. That property only holds while the raw feedback
+/// keeps living somewhere else, which is why the three kinds of memory are
+/// three tables.
+///
+/// **One per profile, rewritten in place.** Not one per channel: the tendencies
+/// worth remembering are mostly about the person rather than the site, and a
+/// summary can say where they differ in its own words. Splitting the row by
+/// channel is a later constraint if the summary ever proves too coarse.
+///
+/// `derivedFromCount` records how much evidence a summary was built from, so a
+/// conclusion drawn from two decisions is not mistaken for one drawn from two
+/// hundred.
+model CreatorMemory {
+  id               String         @id @default(cuid())
+  userId           String
+  creatorProfileId String         @unique
+  /// The conclusion, in prose. Empty until something has been learned.
+  summary          String         @default("")
+  /// How many feedback events the summary was built from.
+  derivedFromCount Int            @default(0)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  creatorProfile   CreatorProfile @relation(fields: [creatorProfileId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }

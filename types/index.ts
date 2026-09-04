@@ -322,3 +322,82 @@ export type WebsiteSnapshot = {
   lastChangedAt: Date | null;
   createdAt: Date;
 };
+
+/**
+ * The Creator side of the domain, which is not the worker side.
+ *
+ * **Nothing here widens `RoutineKind`.** A worker is something Koqentra runs on
+ * a schedule; this is material somebody handed over and the decisions made
+ * about it, and the two only share an owner. Adding `"creator"` to
+ * `routineKinds` would put a value into `isRoutineKind` that the executor has
+ * no branch for — and that guard is what promises every kind it accepts can be
+ * run.
+ *
+ * The shape is the one `RoutineKind`, `RoutineStatus` and `RunStatus` already
+ * use: an `as const` list, a type read off it, and a guard that narrows a
+ * string on the way in. The database columns are plain `String`, so these are
+ * the only thing standing between a stored value and the code that reads it.
+ */
+
+/** How material arrived: pasted, or fetched from an address. */
+export const creatorSourceKinds = ["text", "url"] as const;
+
+export type CreatorSourceKind = (typeof creatorSourceKinds)[number];
+
+export function isCreatorSourceKind(value: string): value is CreatorSourceKind {
+  return (creatorSourceKinds as readonly string[]).includes(value);
+}
+
+/**
+ * Where a piece could be published.
+ *
+ * **`longform` is a shape, not a site.** note, Substack and somebody's own blog
+ * all want the same long piece written the same way, and naming one of them
+ * here would make the value wrong for the other two — and wrong again in every
+ * country where the popular one is a different site.
+ */
+export const creatorTargetChannels = ["x", "reddit", "longform"] as const;
+
+export type CreatorTargetChannel = (typeof creatorTargetChannels)[number];
+
+export function isCreatorTargetChannel(
+  value: string,
+): value is CreatorTargetChannel {
+  return (creatorTargetChannels as readonly string[]).includes(value);
+}
+
+/**
+ * What was decided about one piece of material for one channel.
+ *
+ * **Two values, and no third for a request that went wrong.** A call that never
+ * reached a model produced no judgement, and recording one would put a verdict
+ * nobody reached into the history that memory is derived from. How execution
+ * went is not what this column is for — the same separation `RunStatus` keeps
+ * from `ProviderErrorKind`.
+ */
+export const editorialVerdicts = ["recommend", "skip"] as const;
+
+export type EditorialVerdict = (typeof editorialVerdicts)[number];
+
+export function isEditorialVerdict(value: string): value is EditorialVerdict {
+  return (editorialVerdicts as readonly string[]).includes(value);
+}
+
+/**
+ * What the person did about a decision.
+ *
+ * `approve` agrees with the decision — and a `skip` is a decision, so approving
+ * one is ordinary rather than a special case. `reject` disagrees with the
+ * decision itself. `edit` keeps the recommendation but not the wording, and is
+ * the only one of the three that carries text; which decisions may receive it
+ * is an application rule rather than something this list can express.
+ */
+export const creatorFeedbackActions = ["approve", "edit", "reject"] as const;
+
+export type CreatorFeedbackAction = (typeof creatorFeedbackActions)[number];
+
+export function isCreatorFeedbackAction(
+  value: string,
+): value is CreatorFeedbackAction {
+  return (creatorFeedbackActions as readonly string[]).includes(value);
+}
