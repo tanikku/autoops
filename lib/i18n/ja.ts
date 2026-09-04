@@ -311,6 +311,31 @@ export const ja: Record<TranslationKey, string> = {
   "worker.draft.failed":
     "現在、AI 下書きを作成できません。しばらくしてからもう一度お試しください。",
 
+  // Creator 側では「下書き」を使わない。Worker の設定案を指す語として既に
+  // 使われており、投稿本文を同じ語で呼ぶと、どちらの話か読み手に分からなく
+  // なる。こちらが作るのは「投稿文」。
+  "creator.analysis.notConfigured":
+    "Koqentra に AI が設定されていないため、文章を読み取れません。",
+  "creator.analysis.empty": "読み取りたい文章を貼り付けてください。",
+  "creator.analysis.tooLong": "文章が長すぎるため、一度に読み取れません。",
+  "creator.analysis.limitReached":
+    "1 時間あたりの上限に達しました。しばらくしてからもう一度お試しください。",
+  "creator.analysis.timeout":
+    "読み取りに時間がかかりすぎました。もう一度お試しください。",
+  "creator.analysis.unavailable":
+    "AI サービスに接続できませんでした。もう一度お試しください。",
+  "creator.analysis.unreadable":
+    "AI の回答を読み取れませんでした。もう一度お試しください。",
+  "creator.analysis.failed":
+    "現在この処理を実行できません。しばらくしてからもう一度お試しください。",
+  "creator.analysis.done": "文章を読み取りました。",
+
+  "creator.feedback.saved": "ご回答を記録しました。",
+  "creator.feedback.alreadyRecorded": "この提案にはすでに回答済みです。",
+  "creator.feedback.invalid": "この提案に対しては、その回答を記録できません。",
+  "creator.feedback.failed":
+    "現在は保存できませんでした。もう一度お試しください。",
+
   "worker.detail.noDescription": "説明はありません。",
   "worker.detail.workerType": "Worker の種類",
   "worker.detail.unrecognised": "不明",

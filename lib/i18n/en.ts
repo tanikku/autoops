@@ -453,6 +453,60 @@ Write nothing that is not in the material. Where a section has nothing to draw o
    */
   "worker.draft.failed": "Drafting is unavailable right now. Try again.",
 
+  /**
+   * What comes back from asking Koqentra to read a piece of writing.
+   *
+   * **The vocabulary is the Creator one, not the worker one.** Nothing here
+   * says "draft", "run" or "worker": those already mean specific things on the
+   * other side of the product — a proposal for a worker's settings, one
+   * execution of one — and a third meaning would make every sentence about
+   * either of them ambiguous. What this side produces is a *post*.
+   *
+   * **None of these repeats what went wrong underneath.** A provider's message
+   * names services and status codes, a driver's names tables; neither is
+   * something the person who pasted an article can act on, and both are the
+   * kind of detail that should not travel outward. What each says is what the
+   * reader can do next.
+   */
+  "creator.analysis.notConfigured":
+    "Koqentra is not set up to read your writing yet.",
+  "creator.analysis.empty": "Paste the writing you would like read.",
+  "creator.analysis.tooLong": "That piece is too long to read in one go.",
+  /**
+   * The allowance is spent. **An ordinary answer, not a failure** — and it says
+   * so without naming a number, because a count invites arithmetic and the
+   * useful fact is that waiting works.
+   */
+  "creator.analysis.limitReached":
+    "You have reached this hour's limit. Try again later.",
+  "creator.analysis.timeout": "Reading took too long. Try again.",
+  "creator.analysis.unavailable":
+    "The AI service could not be reached. Try again.",
+  /** An answer arrived and could not be used. Retrying is genuinely worth it. */
+  "creator.analysis.unreadable":
+    "The AI's answer could not be read. Try again.",
+  /**
+   * Something on Koqentra's own side stopped it — today, its database.
+   *
+   * **It names no cause on purpose.** `unavailable` would be a false statement
+   * about a database that would not answer, and the database is not the
+   * reader's business either. What is true and useful is that it cannot happen
+   * at the moment and that trying later is worth it.
+   */
+  "creator.analysis.failed": "This is unavailable right now. Try again.",
+  "creator.analysis.done": "Your writing has been read.",
+
+  /** What comes back from agreeing, rewriting, or disagreeing with a decision. */
+  "creator.feedback.saved": "Thanks — that has been noted.",
+  /**
+   * Answers are kept as they were given. **Not an error and not an overwrite**:
+   * the record of what somebody decided at a moment does not later become a
+   * record of something else.
+   */
+  "creator.feedback.alreadyRecorded": "You have already answered this one.",
+  "creator.feedback.invalid": "That answer does not fit this suggestion.",
+  "creator.feedback.failed": "That could not be saved right now. Try again.",
+
   "worker.detail.noDescription": "No description.",
   "worker.detail.workerType": "Worker type",
   /** A kind stored by a version this one cannot read. It says so; it does not guess. */

@@ -33,7 +33,11 @@ const {
   AI_DRAFT_SCOPE,
   AI_DRAFT_WINDOW_MS,
   consumeAiDraftQuota,
+  consumeCreatorAnalysisQuota,
   consumeManualRunQuota,
+  CREATOR_ANALYSIS_LIMIT,
+  CREATOR_ANALYSIS_SCOPE,
+  CREATOR_ANALYSIS_WINDOW_MS,
   MANUAL_RUN_LIMIT,
   MANUAL_RUN_SCOPE,
   MANUAL_RUN_WINDOW_MS,
@@ -265,7 +269,7 @@ describe("consumeAiDraftQuota — the scope", () => {
   });
 });
 
-describe("the two allowances", () => {
+describe("the allowances", () => {
   it("keeps drafting and running apart", () => {
     expect(MANUAL_RUN_LIMIT).toBe(20);
     expect(MANUAL_RUN_WINDOW_MS).toBe(3_600_000);
@@ -275,21 +279,52 @@ describe("the two allowances", () => {
   });
 
   /**
+   * **Three product decisions about three actions, each with its own
+   * constants.** They happen to share an hour; one of them moving must not move
+   * the others, which is why none of them reads another's.
+   */
+  it("gives Creator analysis its own, smaller allowance", () => {
+    expect(CREATOR_ANALYSIS_LIMIT).toBe(5);
+    expect(CREATOR_ANALYSIS_WINDOW_MS).toBe(3_600_000);
+    expect(CREATOR_ANALYSIS_SCOPE).toBe("creator-analysis");
+
+    expect(CREATOR_ANALYSIS_LIMIT).toBeLessThan(AI_DRAFT_LIMIT);
+    expect(CREATOR_ANALYSIS_LIMIT).toBeLessThan(MANUAL_RUN_LIMIT);
+  });
+
+  it("gives each allowance a scope of its own", () => {
+    const scopes = [AI_DRAFT_SCOPE, MANUAL_RUN_SCOPE, CREATOR_ANALYSIS_SCOPE];
+
+    expect(new Set(scopes).size).toBe(scopes.length);
+  });
+
+  /**
    * **There is no "spend some quota" API, and that is the design.** A caller
    * that could name its own scope or its own limit could invent an allowance
    * nobody decided on, or spend one action's against another's. What is
    * exported is one function per action, each naming its own constants.
    */
-  it("exposes only the two named allowances", () => {
+  it("exposes only the named allowances", () => {
     const exported = Object.keys(rateLimit).filter((name) =>
       name.startsWith("consume"),
     );
 
     expect(exported.sort()).toEqual([
       "consumeAiDraftQuota",
+      "consumeCreatorAnalysisQuota",
       "consumeManualRunQuota",
     ]);
     expect(consumeManualRunQuota.length).toBeLessThanOrEqual(2);
+    expect(consumeCreatorAnalysisQuota.length).toBeLessThanOrEqual(2);
+  });
+
+  /** Nothing gives a count back, for any of the three. */
+  it("offers no way to refund one", () => {
+    const refundish = Object.keys(rateLimit).filter((name) =>
+      /refund|release|restore|giveBack/i.test(name),
+    );
+
+    expect(refundish).toEqual([]);
   });
 });
 
@@ -451,5 +486,180 @@ describe("the scopes do not meet", () => {
     expect(updateCall(1).where.count).toEqual({ lt: AI_DRAFT_LIMIT });
     expect(updateCall(2).where.count).toEqual({ lt: MANUAL_RUN_LIMIT });
     expect(AI_DRAFT_LIMIT).not.toBe(MANUAL_RUN_LIMIT);
+  });
+});
+
+/**
+ * The Creator allowance, which is the same machinery under a third name.
+ *
+ * These check the two things that are actually its own: that it counts against
+ * a row nobody else touches, and that five is the number. The window logic
+ * underneath is `consumeFixedWindowQuota`, already fixed above for the other
+ * two — re-testing every branch of it here would be testing the same code a
+ * third time and calling it coverage.
+ */
+describe("consumeCreatorAnalysisQuota — a live window", () => {
+  it("allows the fifth reading of the hour", async () => {
+    updateMany.mockResolvedValue({ count: 1 });
+
+    expect(await consumeCreatorAnalysisQuota(USER, NOW)).toBe(true);
+    expect(updateCall(1).where.count).toEqual({ lt: 5 });
+  });
+
+  /**
+   * **The limit is a condition inside the write.** Two requests arriving
+   * together are separated by the database rather than by whichever read the
+   * count first — the same property the other two allowances rely on, and the
+   * reason nothing here reads a number and then decides.
+   */
+  it("lets the database do the adding, and the comparing", async () => {
+    updateMany.mockResolvedValue({ count: 1 });
+
+    await consumeCreatorAnalysisQuota(USER, NOW);
+
+    const { where, data } = updateCall(1);
+
+    expect(data).toEqual({ count: { increment: 1 } });
+    expect(where.count).toEqual({ lt: CREATOR_ANALYSIS_LIMIT });
+    expect(where.scope).toBe("creator-analysis");
+  });
+
+  it("refuses the sixth when nothing else can take it", async () => {
+    updateMany.mockResolvedValue({ count: 0 });
+    findUnique.mockResolvedValue({ id: "bucket-1" });
+
+    expect(await consumeCreatorAnalysisQuota(USER, NOW)).toBe(false);
+  });
+});
+
+describe("consumeCreatorAnalysisQuota — the window boundary", () => {
+  /**
+   * **Exactly an hour old is still the same window.** The floor is `>=`, so it
+   * is the first request *past* the hour that opens a new one — the same rule
+   * the other two allowances follow, restated here because it is the kind of
+   * off-by-one that only shows up on a boundary nobody tested.
+   */
+  it("keeps a window that is exactly an hour old", async () => {
+    updateMany.mockResolvedValue({ count: 1 });
+
+    await consumeCreatorAnalysisQuota(USER, NOW);
+
+    const exactlyAnHourAgo = new Date(NOW.getTime() - CREATOR_ANALYSIS_WINDOW_MS);
+    expect(matchesLiveWindow(updateCall(1).where, exactlyAnHourAgo)).toBe(true);
+  });
+
+  it("starts a new window on the first request past the hour", async () => {
+    updateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
+
+    expect(await consumeCreatorAnalysisQuota(USER, NOW)).toBe(true);
+
+    const justPastAnHourAgo = new Date(
+      NOW.getTime() - CREATOR_ANALYSIS_WINDOW_MS - 1,
+    );
+    expect(matchesLiveWindow(updateCall(1).where, justPastAnHourAgo)).toBe(false);
+    expect(matchesExpiredWindow(updateCall(2).where, justPastAnHourAgo)).toBe(true);
+    expect(updateCall(2).data).toEqual({ count: 1, windowStartedAt: NOW });
+  });
+});
+
+describe("consumeCreatorAnalysisQuota — an account with no row yet", () => {
+  it("opens the account's first window at one", async () => {
+    updateMany.mockResolvedValue({ count: 0 });
+    findUnique.mockResolvedValue(null);
+    create.mockResolvedValue({ id: "bucket-1" });
+
+    expect(await consumeCreatorAnalysisQuota(USER, NOW)).toBe(true);
+    expect(create.mock.calls[0][0].data).toEqual({
+      userId: USER,
+      scope: "creator-analysis",
+      windowStartedAt: NOW,
+      count: 1,
+    });
+  });
+
+  /**
+   * Two first requests racing: one creates the row and the other loses to the
+   * unique constraint, then tries the live window once more. Exactly as the
+   * other allowances behave, because it is the same function.
+   */
+  it("tries once more when somebody else created the row first", async () => {
+    updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+    findUnique.mockResolvedValue(null);
+    create.mockRejectedValue(uniqueViolation());
+
+    expect(await consumeCreatorAnalysisQuota(USER, NOW)).toBe(true);
+  });
+});
+
+describe("consumeCreatorAnalysisQuota — a database that will not answer", () => {
+  /**
+   * **A failure is not a refusal.** Throwing is what lets the caller fail
+   * closed on purpose; returning `false` here would make "the allowance is
+   * spent" and "we could not find out" the same answer, and only one of them is
+   * something to tell a reader about.
+   */
+  it("throws rather than reporting a spent allowance", async () => {
+    updateMany.mockRejectedValue(new Error("connection terminated"));
+
+    await expect(consumeCreatorAnalysisQuota(USER, NOW)).rejects.toThrow(
+      "connection terminated",
+    );
+  });
+
+  it("lets a failed create out too", async () => {
+    updateMany.mockResolvedValue({ count: 0 });
+    findUnique.mockResolvedValue(null);
+    create.mockRejectedValue(new Error("connection terminated"));
+
+    await expect(consumeCreatorAnalysisQuota(USER, NOW)).rejects.toThrow(
+      "connection terminated",
+    );
+  });
+});
+
+describe("the Creator allowance stands alone", () => {
+  it("touches only the creator-analysis row", async () => {
+    updateMany.mockResolvedValue({ count: 0 });
+    findUnique.mockResolvedValue(null);
+    create.mockResolvedValue({ id: "bucket-1" });
+
+    await consumeCreatorAnalysisQuota(USER, NOW);
+
+    for (const [argument] of updateMany.mock.calls) {
+      expect(argument.where.scope).toBe("creator-analysis");
+    }
+    expect(findUnique).toHaveBeenCalledWith({
+      where: { userId_scope: { userId: USER, scope: "creator-analysis" } },
+    });
+    expect(create.mock.calls[0][0].data.scope).toBe("creator-analysis");
+  });
+
+  /**
+   * Spending one of each in turn: three writes against three scopes with three
+   * limits. Nothing an account reads a piece of writing with comes out of what
+   * it runs workers with.
+   */
+  it("asks about its own limit, next to the other two", async () => {
+    updateMany.mockResolvedValue({ count: 1 });
+
+    await consumeAiDraftQuota(USER, NOW);
+    await consumeManualRunQuota(USER, NOW);
+    await consumeCreatorAnalysisQuota(USER, NOW);
+
+    expect(updateCall(1).where).toMatchObject({
+      scope: AI_DRAFT_SCOPE,
+      count: { lt: AI_DRAFT_LIMIT },
+    });
+    expect(updateCall(2).where).toMatchObject({
+      scope: MANUAL_RUN_SCOPE,
+      count: { lt: MANUAL_RUN_LIMIT },
+    });
+    expect(updateCall(3).where).toMatchObject({
+      scope: CREATOR_ANALYSIS_SCOPE,
+      count: { lt: CREATOR_ANALYSIS_LIMIT },
+    });
   });
 });

@@ -79,6 +79,30 @@ export const MANUAL_RUN_WINDOW_MS = 60 * 60 * 1000;
 /** Which allowance the hand-started-run rows belong to. */
 export const MANUAL_RUN_SCOPE = "manual-run";
 
+/**
+ * How many pieces one account may have judged inside a window.
+ *
+ * **The lowest of the three, because one of these costs the most.** A worker
+ * draft is a short classification and a manual run is usually one prompt; a
+ * Creator analysis reads a whole article together with up to twelve past
+ * decisions, and answers with three separate judgements and as many drafts.
+ * Five an hour is enough to work through a morning's writing and not enough for
+ * a loop nobody meant to start.
+ */
+export const CREATOR_ANALYSIS_LIMIT = 5;
+
+/**
+ * How long a Creator window lasts.
+ *
+ * **An hour, like the other two, and deliberately its own constant.** They are
+ * three product decisions about three different actions; one moving must not
+ * move the others.
+ */
+export const CREATOR_ANALYSIS_WINDOW_MS = 60 * 60 * 1000;
+
+/** Which allowance the Creator-analysis rows belong to. */
+export const CREATOR_ANALYSIS_SCOPE = "creator-analysis";
+
 /** Prisma's code for a unique constraint that would have been broken. */
 const UNIQUE_VIOLATION = "P2002";
 
@@ -271,6 +295,35 @@ export async function consumeManualRunQuota(
     MANUAL_RUN_SCOPE,
     MANUAL_RUN_LIMIT,
     MANUAL_RUN_WINDOW_MS,
+    now,
+  );
+}
+
+/**
+ * Spends one Creator analysis from this account's allowance.
+ *
+ * **Counted before the model is asked, and never given back.** What the
+ * allowance protects against is the asking: a request that reaches Anthropic
+ * and then fails has already cost what it cost, so a refund would make the
+ * count a record of successes rather than a bound on requests. There is no
+ * refund path here for the same reason there is none for the other two.
+ *
+ * **Analysis only.** Recording what somebody decided about a judgement calls no
+ * model and writes one row; bounding that with this would make disagreeing with
+ * Koqentra cost the same as asking it a question.
+ *
+ * @returns `true` when the analysis may go ahead, `false` when the allowance is
+ *   spent. A database failure throws, because it is neither.
+ */
+export async function consumeCreatorAnalysisQuota(
+  userId: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  return consumeFixedWindowQuota(
+    userId,
+    CREATOR_ANALYSIS_SCOPE,
+    CREATOR_ANALYSIS_LIMIT,
+    CREATOR_ANALYSIS_WINDOW_MS,
     now,
   );
 }
