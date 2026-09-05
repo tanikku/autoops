@@ -14,6 +14,19 @@ const mocks = vi.hoisted(() => ({
   requireUserId: vi.fn(),
   requireProvisionedUserId: vi.fn(),
   getUserLanguage: vi.fn(),
+  readCreatorProfile: vi.fn(),
+  readRecentFeedbackContext: vi.fn(),
+}));
+
+/**
+ * **The two reads the learning panel is built from, replaced at the boundary.**
+ * They are the same functions the analyzer's context comes from — which is the
+ * point of the panel — so what is checked here is that the page asks them for
+ * the signed-in account and writes nothing while doing it.
+ */
+vi.mock("@/lib/creator/repository", () => ({
+  readCreatorProfile: mocks.readCreatorProfile,
+  readRecentFeedbackContext: mocks.readRecentFeedbackContext,
 }));
 
 vi.mock("@/auth", () => ({ auth: vi.fn(), signIn: vi.fn(), signOut: vi.fn() }));
@@ -44,6 +57,10 @@ beforeEach(() => {
   mocks.requireUserId.mockReset().mockResolvedValue("user-1");
   mocks.requireProvisionedUserId.mockReset().mockResolvedValue("user-1");
   mocks.getUserLanguage.mockReset().mockResolvedValue("en");
+  mocks.readCreatorProfile
+    .mockReset()
+    .mockResolvedValue({ audience: "", goals: "", voiceInstructions: "" });
+  mocks.readRecentFeedbackContext.mockReset().mockResolvedValue([]);
 });
 
 describe("who it renders for", () => {
@@ -66,6 +83,121 @@ describe("who it renders for", () => {
     await render();
 
     expect(mocks.getUserLanguage).toHaveBeenCalledWith("user-9");
+  });
+
+  /**
+   * **One trusted id, three reads.** A page that took an owner from anywhere
+   * else — a prop, a search param — could show one account's preferences to
+   * another; it takes no arguments at all, and every read is given the same id
+   * the session boundary returned.
+   */
+  it("reads the profile and the history for that same account", async () => {
+    mocks.requireUserId.mockResolvedValue("user-9");
+
+    await render();
+
+    expect(mocks.readCreatorProfile).toHaveBeenCalledWith("user-9");
+    expect(mocks.readRecentFeedbackContext).toHaveBeenCalledWith("user-9");
+  });
+
+  it("takes no request input, so nobody can choose whose context is shown", () => {
+    expect(CreatorNewPage.length).toBe(0);
+  });
+
+  /** Looking at what will be considered is not a reason to write anything. */
+  it("reads each source once and writes nothing", async () => {
+    await render();
+
+    expect(mocks.readCreatorProfile).toHaveBeenCalledTimes(1);
+    expect(mocks.readRecentFeedbackContext).toHaveBeenCalledTimes(1);
+    expect(mocks.requireProvisionedUserId).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * **A preview, not an input.** What the panel shows is read again on the server
+ * when the form is submitted; if any of it travelled through the browser, a
+ * client could name the context its own analysis was judged against.
+ */
+describe("what the learning panel is and is not", () => {
+  const profile = {
+    audience: "PROFILE-AUDIENCE",
+    goals: "PROFILE-GOALS",
+    voiceInstructions: "PROFILE-VOICE",
+  };
+
+  const entry = {
+    targetChannel: "x" as const,
+    verdict: "recommend" as const,
+    decisionReason: "SECRET-DECISION-REASON",
+    draftBody: "SECRET-DRAFT",
+    action: "edit" as const,
+    editedBody: "SECRET-EDIT",
+    feedbackReason: "SECRET-FEEDBACK-REASON",
+    contentTitle: "AN EARLIER PIECE",
+    contentExcerpt: "Its opening lines.",
+  };
+
+  it("renders the section", async () => {
+    const html = await render();
+
+    expect(html).toContain(t("en", "creator.learning.title"));
+    expect(html).toContain("<details");
+    expect(html).toContain("<summary");
+  });
+
+  it("shows the stored preferences and the answers it was given", async () => {
+    mocks.readCreatorProfile.mockResolvedValue(profile);
+    mocks.readRecentFeedbackContext.mockResolvedValue([entry]);
+
+    const html = await render();
+
+    expect(html).toContain("PROFILE-AUDIENCE");
+    expect(html).toContain("AN EARLIER PIECE");
+  });
+
+  /**
+   * **Nothing about the context is submitted.** The form's contract stays two
+   * fields; a hidden input carrying a profile or a history would be a claim the
+   * server has to distrust anyway.
+   */
+  it("sends only a title and a body, whatever the panel is showing", async () => {
+    mocks.readCreatorProfile.mockResolvedValue(profile);
+    mocks.readRecentFeedbackContext.mockResolvedValue([entry]);
+
+    const html = await render();
+    const names = [...html.matchAll(/name="([^"]+)"/g)].map((match) => match[1]);
+
+    expect(names.sort()).toEqual(["body", "title"]);
+    for (const field of ["audience", "goals", "voiceInstructions", "feedback"]) {
+      expect(html).not.toContain(`name="${field}"`);
+    }
+  });
+
+  /** The compact panel is deliberately not a transcript — see the component. */
+  it.each([
+    "SECRET-DECISION-REASON",
+    "SECRET-DRAFT",
+    "SECRET-EDIT",
+    "SECRET-FEEDBACK-REASON",
+  ])("does not render %s", async (secret) => {
+    mocks.readCreatorProfile.mockResolvedValue(profile);
+    mocks.readRecentFeedbackContext.mockResolvedValue([entry]);
+
+    expect(await render()).not.toContain(secret);
+  });
+
+  /** Koqentra derives no preference, so no screen may imply one. */
+  it("claims nothing was learned about the person", async () => {
+    mocks.readCreatorProfile.mockResolvedValue(profile);
+    mocks.readRecentFeedbackContext.mockResolvedValue([entry]);
+
+    const text = (await render()).replace(/<[^>]*>/g, " ");
+
+    expect(text).not.toMatch(/\bmemory\b/i);
+    expect(text).not.toMatch(/\blearn(ed|s)?\b/i);
+    expect(text).not.toContain("学習");
+    expect(text).not.toContain("好み");
   });
 });
 

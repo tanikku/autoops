@@ -570,6 +570,57 @@ Write nothing that is not in the material. Where a section has nothing to draw o
     "The content you submit is sent to Anthropic for analysis.",
   "creator.new.privacyLink": "Privacy",
 
+  /**
+   * What the next analysis will be told, shown before it happens.
+   *
+   * **Stored facts, not conclusions.** Everything under this heading is either
+   * something the person typed or something they did — nothing here is a claim
+   * about what they *prefer*, because Koqentra does not derive one. Wording
+   * like "we have learned that you like…" would describe a feature that does
+   * not exist and would be read as one that does.
+   */
+  /**
+   * **No product name in the heading.** The dictionary's rule is that a key
+   * naming Koqentra in English names it in Japanese too, and the natural
+   * Japanese for this sentence does not — so the English drops it rather than
+   * the Japanese gaining an awkward one.
+   */
+  "creator.learning.title": "What will be considered",
+  "creator.learning.description":
+    "The preferences you have set, and how you answered recently.",
+  "creator.learning.profileHeading": "Publishing preferences",
+  "creator.learning.audience": "Who you are writing for",
+  "creator.learning.goals": "What you are trying to achieve",
+  "creator.learning.voice": "How it should sound",
+  "creator.learning.notSet": "Not set",
+  "creator.learning.answersHeading": "Recent answers",
+  /** How many, against the ceiling the analyzer actually applies. */
+  "creator.learning.answerCount": "{count} of up to {limit}",
+  "creator.learning.noAnswers": "No previous answers yet.",
+  "creator.learning.youLabel": "You",
+  "creator.learning.untitled": "Untitled content",
+  /**
+   * **Said because the list above is deliberately short.** An analysis carries
+   * more than this panel shows, and a reader who assumed otherwise would think
+   * their edits were being ignored.
+   */
+  "creator.learning.detailNote":
+    "An analysis may also use the reasons given, the post texts, your edited versions, and a short extract of each piece.",
+
+  /**
+   * What somebody actually chose, in the words they chose it with.
+   *
+   * **The stored value is not the sentence.** `approve` means "post this" on a
+   * recommendation and "yes, leave it" on a skip; showing the column would ask
+   * the reader to translate a database value before they could recognise their
+   * own decision. There is no `skip` + `edit` pair — the repository refuses one.
+   */
+  "creator.learning.action.usedAsIs": "Used as-is",
+  "creator.learning.action.editedAndUsed": "Edited and used",
+  "creator.learning.action.rejected": "Rejected",
+  "creator.learning.action.agreedWithSkip": "Agreed with skip",
+  "creator.learning.action.wouldPost": "Would post",
+
   "worker.detail.noDescription": "No description.",
   "worker.detail.workerType": "Worker type",
   /** A kind stored by a version this one cannot read. It says so; it does not guess. */

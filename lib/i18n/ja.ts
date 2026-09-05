@@ -385,6 +385,35 @@ export const ja: Record<TranslationKey, string> = {
     "入力した内容は、分析のため Anthropic に送信されます。",
   "creator.new.privacyLink": "プライバシー",
 
+  // 次の分析に渡るものを、渡る前に見せる。ここに出るのは本人が設定した内容と
+  // 本人が実際に選んだ結果だけで、「AI が学習したあなたの好み」ではない —
+  // Koqentra はそういう要約をまだ作っていないので、作ったように書かない。
+  "creator.learning.title": "今回の分析で参考にする内容",
+  "creator.learning.description":
+    "あなたが設定した発信の前提と、最近の回答を参考にします。",
+  "creator.learning.profileHeading": "発信の前提",
+  "creator.learning.audience": "届けたい相手",
+  "creator.learning.goals": "発信の目的",
+  "creator.learning.voice": "文体・書き方",
+  "creator.learning.notSet": "未設定",
+  "creator.learning.answersHeading": "最近の回答",
+  "creator.learning.answerCount": "{count} 件 / 最大 {limit} 件",
+  "creator.learning.noAnswers": "まだ回答履歴はありません。",
+  "creator.learning.youLabel": "あなた",
+  "creator.learning.untitled": "タイトルなし",
+  "creator.learning.detailNote":
+    "分析時には、過去の判断理由・提案された投稿文・あなたが編集した文章・元のコンテンツの短い抜粋も参考にすることがあります。",
+
+  // 保存値（approve / edit / reject）をそのまま出さない。同じ approve でも
+  // 「おすすめに従って投稿する」と「見送りに同意する」では意味が違い、
+  // 内部語を読み手に翻訳させることになる。skip + edit は repository が
+  // 弾くので存在しない。
+  "creator.learning.action.usedAsIs": "このまま採用",
+  "creator.learning.action.editedAndUsed": "編集して採用",
+  "creator.learning.action.rejected": "却下",
+  "creator.learning.action.agreedWithSkip": "見送りに同意",
+  "creator.learning.action.wouldPost": "投稿したい",
+
   "worker.detail.noDescription": "説明はありません。",
   "worker.detail.workerType": "Worker の種類",
   "worker.detail.unrecognised": "不明",

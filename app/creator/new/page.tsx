@@ -1,6 +1,11 @@
 import type { Metadata } from "next";
 import { CreatorAnalysisForm } from "@/components/creator-analysis-form";
+import { CreatorLearningContext } from "@/components/creator-learning-context";
 import { DashboardNav } from "@/components/dashboard-nav";
+import {
+  readCreatorProfile,
+  readRecentFeedbackContext,
+} from "@/lib/creator/repository";
 import { t } from "@/lib/i18n";
 import { requireUserId } from "@/lib/session";
 import { getUserLanguage } from "@/lib/users";
@@ -26,7 +31,17 @@ export const dynamic = "force-dynamic";
  */
 export default async function CreatorNewPage() {
   const userId = await requireUserId();
-  const language = await getUserLanguage(userId);
+
+  // **Three reads and no writes.** The same two functions the analyzer's
+  // context is built from, so what the panel shows and what the model is told
+  // cannot drift apart — `readCreatorProfile` answers with empty preferences
+  // rather than creating a row, which is what keeps looking at this page free
+  // of side effects.
+  const [language, profile, feedback] = await Promise.all([
+    getUserLanguage(userId),
+    readCreatorProfile(userId),
+    readRecentFeedbackContext(userId),
+  ]);
 
   return (
     <div className="flex flex-1 flex-col bg-background">
@@ -39,6 +54,17 @@ export default async function CreatorNewPage() {
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
           {t(language, "creator.new.description")}
         </p>
+
+        {/* **Beside the form, not inside it.** What the next analysis will
+            consider is worth being able to check before submitting — but it is
+            a preview, and nothing here reaches the request. The form still
+            submits a title and a body; the profile and the history are read
+            again, server-side, from the session that submits. */}
+        <CreatorLearningContext
+          profile={profile}
+          feedback={feedback}
+          language={language}
+        />
 
         <CreatorAnalysisForm language={language} />
       </main>
