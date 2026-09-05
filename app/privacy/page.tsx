@@ -121,6 +121,52 @@ export default function PrivacyPage() {
           </p>
         </Section>
 
+        {/* **Creator is a second thing Koqentra sends to a model, and it sends
+            something different.** A worker sends instructions somebody wrote to
+            be sent; Creator sends a piece of writing that has not been
+            published. Describing the first and not the second would leave this
+            page accurate about the smaller half. */}
+        <Section title="Analyzing your writing">
+          <p>
+            When you ask Koqentra to analyze a piece of writing, the title and
+            body you submit are sent to Anthropic, which decides — separately
+            for X, Reddit and long-form — whether it is worth posting there and
+            writes the post if it is.
+          </p>
+          <p>
+            That request also carries what you have told Koqentra about your
+            audience, goals and voice, together with your most recent answers to
+            earlier analyses — at most the last twelve, not your whole history.
+            Each of those answers can include the reason the AI gave, the post
+            it proposed, the version you wrote if you edited it, a reason you
+            gave if you gave one, and a short extract of the piece it was about.
+          </p>
+          <p>
+            When an analysis succeeds, Koqentra stores the title and body you
+            submitted, the decision for each of the three channels, the reason
+            for each decision, and the post text for the channels it
+            recommended.
+          </p>
+          <p>
+            When you answer one of those decisions, Koqentra stores whether you
+            agreed, rewrote it, or turned it down — along with your edited text
+            when you rewrote it, and a reason when you gave one. The post the AI
+            originally proposed is kept as it was written.
+          </p>
+        </Section>
+
+        <Section title="What Creator does not do">
+          <p>
+            <strong>Koqentra does not post anything anywhere.</strong> It is not
+            connected to X, Reddit, or any publishing service, and nothing it
+            writes leaves Koqentra unless you copy it out yourself.
+          </p>
+          <p>
+            What an AI writes may be wrong, and it may be wrong confidently.
+            Read it before you publish it.
+          </p>
+        </Section>
+
         <Section title="Where it is stored">
           <p>
             In a PostgreSQL database hosted on Railway, which also hosts the
@@ -151,6 +197,16 @@ export default function PrivacyPage() {
             Koqentra does not expire it, and there is no period after which it is
             removed automatically.
           </p>
+          <p>
+            The same is true of everything Creator stores — what you submitted,
+            the decisions, the post text, and your answers.{" "}
+            <strong>
+              There is currently no way to delete it from inside Koqentra
+            </strong>
+            , and nothing removes it after a period of time. Deleting a worker
+            does not touch it: the two are separate, and a worker knows nothing
+            about it.
+          </p>
         </Section>
 
         <Section title="Deleting a worker">
@@ -158,13 +214,18 @@ export default function PrivacyPage() {
             Deleting a worker also deletes every run recorded for it. This
             cannot be undone, and there is no archive to restore from.
           </p>
+          <p>
+            It does not delete anything from Creator. Those are kept under your
+            account rather than under any worker.
+          </p>
         </Section>
 
         <Section title="Deleting your account">
           <p>
             There is currently no way to delete your whole account from within
             Koqentra. Deleting each of your workers removes those workers and
-            their run history.
+            their run history. It does not remove anything Creator holds, and
+            there is no in-product way to remove that.
           </p>
         </Section>
 

@@ -25,12 +25,18 @@ export async function DashboardNav() {
 
   return (
     <header className="border-b border-border">
-      <div className="mx-auto flex w-full max-w-6xl items-center gap-4 px-6 py-4 sm:px-10">
+      {/* **Three links no longer fit beside an account name on a phone.**
+          Rather than hiding anything, the bar wraps: the brand and the account
+          controls keep the first row, and the links drop to a second one below
+          360px-ish. `order-last w-full` does that on small screens and is
+          undone from `sm` up, so the desktop bar is the single row it has
+          always been. Nothing is removed — sign out least of all. */}
+      <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 sm:flex-nowrap sm:px-10 sm:py-4">
         <Link href="/" className="text-lg font-semibold tracking-tight">
           Koqentra
         </Link>
 
-        <nav className="flex items-center gap-1">
+        <nav className="order-last flex w-full flex-wrap items-center gap-1 sm:order-none sm:w-auto sm:flex-nowrap">
           <Button
             variant="ghost"
             size="sm"
@@ -43,14 +49,24 @@ export async function DashboardNav() {
             variant="ghost"
             size="sm"
             nativeButton={false}
+            render={<Link href="/creator" />}
+          >
+            {t(language, "nav.creator")}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            nativeButton={false}
             render={<Link href="/dashboard/settings" />}
           >
             {t(language, "nav.settings")}
           </Button>
         </nav>
 
-        <div className="ml-auto flex items-center gap-3">
-          <span className="max-w-[12rem] truncate text-sm text-muted-foreground">
+        <div className="ml-auto flex items-center gap-2 sm:gap-3">
+          {/* Narrower before `sm`, so a long address cannot push sign out off
+              the edge on a phone. */}
+          <span className="max-w-[7rem] truncate text-sm text-muted-foreground sm:max-w-[12rem]">
             {userName}
           </span>
           <form

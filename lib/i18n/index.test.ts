@@ -39,14 +39,22 @@ describe("the dictionaries", () => {
   it("says something different in Japanese, apart from the words that do not translate", () => {
     const identical = keys.filter((key) => en[key] === ja[key]);
 
-    expect(identical).toEqual([
-      // The product's own noun, on the execution page.
-      "run.detail.worker",
-      // The same noun, labelling the same thing in an email.
-      "notify.email.worker",
-      // A language's own name for itself.
-      "settings.language.english",
-    ]);
+    expect(identical.slice().sort()).toEqual(
+      [
+        // The product's own noun, on the execution page.
+        "run.detail.worker",
+        // The same noun, labelling the same thing in an email.
+        "notify.email.worker",
+        // A language's own name for itself.
+        "settings.language.english",
+        // Two services' own names. Neither has a Japanese form — a Japanese
+        // reader looking for where a post goes is looking for "X" and
+        // "Reddit". `creator.channel.longform` is translated, because
+        // "long-form" describes a shape rather than naming a place.
+        "creator.channel.x",
+        "creator.channel.reddit",
+      ].sort(),
+    );
   });
 
   /**

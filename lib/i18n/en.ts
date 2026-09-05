@@ -23,6 +23,7 @@
  */
 export const en = {
   "nav.dashboard": "Dashboard",
+  "nav.creator": "Creator",
   "nav.settings": "Settings",
   "nav.signOut": "Sign out",
   /** Stands in for a name the provider did not give us. */
@@ -506,6 +507,68 @@ Write nothing that is not in the material. Where a section has nothing to draw o
   "creator.feedback.alreadyRecorded": "You have already answered this one.",
   "creator.feedback.invalid": "That answer does not fit this suggestion.",
   "creator.feedback.failed": "That could not be saved right now. Try again.",
+
+  /**
+   * The Creator screens.
+   *
+   * **Two words are deliberately absent from every string below.** "Draft"
+   * already means a proposal for a worker's settings, and "run" already means
+   * one execution of a worker; using either for what happens here would make
+   * every sentence about the other one ambiguous. What Koqentra produces on
+   * this side is a **post text**, and what it does is **analyse**.
+   */
+  "creator.inbox.title": "Review Inbox",
+  "creator.inbox.description":
+    "What Koqentra suggested, waiting for you to agree, rewrite, or turn down.",
+  "creator.inbox.analyzeCta": "Analyze content",
+  /** Nothing waiting is the ordinary state, not a failure. */
+  "creator.inbox.emptyTitle": "Nothing to review",
+  "creator.inbox.emptyBody":
+    "Analyze a piece of writing and its suggestions for X, Reddit and long-form will arrive here.",
+  "creator.inbox.untitled": "Untitled content",
+  "creator.inbox.pending": "{count} waiting",
+
+  "creator.channel.x": "X",
+  "creator.channel.reddit": "Reddit",
+  "creator.channel.longform": "Long-form",
+
+  "creator.verdict.recommend": "Recommended",
+  /** A decision in its own right — not an error, and not a failure to answer. */
+  "creator.verdict.skip": "Skip",
+
+  "creator.postText": "Post text",
+
+  /** What the buttons say depends on what is being answered. */
+  "creator.feedback.useAsIs": "Use as-is",
+  "creator.feedback.editAndUse": "Edit & use",
+  "creator.feedback.reject": "Reject",
+  "creator.feedback.agreeWithSkip": "Agree with skip",
+  "creator.feedback.wouldPost": "I would post this",
+  "creator.feedback.save": "Save",
+  "creator.feedback.cancel": "Cancel",
+  "creator.feedback.editLabel": "Your version",
+  "creator.feedback.sending": "Saving…",
+
+  "creator.new.title": "Analyze content",
+  "creator.new.description":
+    "Koqentra reads what you paste and says, for X, Reddit and long-form separately, whether it is worth posting there — and writes the post if it is. Deciding against a channel is a normal answer.",
+  "creator.new.titleLabel": "Title",
+  "creator.new.titleOptional": "Optional",
+  "creator.new.bodyLabel": "Your writing",
+  "creator.new.bodyPlaceholder": "Paste the piece you want read.",
+  "creator.new.submit": "Analyze",
+  "creator.new.submitting": "Analyzing…",
+  /**
+   * **Says what actually happens, and no more.** Past answers are read back as
+   * context on the next analysis; nothing summarises them into a stored profile
+   * of somebody, and claiming otherwise would describe a feature that does not
+   * exist.
+   */
+  "creator.new.learningNote":
+    "Your past approvals, edits, and rejections are used as context for future analyses.",
+  "creator.new.privacyNote":
+    "The content you submit is sent to Anthropic for analysis.",
+  "creator.new.privacyLink": "Privacy",
 
   "worker.detail.noDescription": "No description.",
   "worker.detail.workerType": "Worker type",

@@ -19,6 +19,7 @@ import type { TranslationKey } from "@/lib/i18n/en";
  */
 export const ja: Record<TranslationKey, string> = {
   "nav.dashboard": "ダッシュボード",
+  "nav.creator": "クリエイター",
   "nav.settings": "設定",
   "nav.signOut": "サインアウト",
   "nav.signedIn": "サインイン中",
@@ -335,6 +336,54 @@ export const ja: Record<TranslationKey, string> = {
   "creator.feedback.invalid": "この提案に対しては、その回答を記録できません。",
   "creator.feedback.failed":
     "現在は保存できませんでした。もう一度お試しください。",
+
+  // Creator 画面。「下書き」と「実行」はここでは使わない — 前者は Worker の
+  // 設定案、後者は Worker の1回の実行を既に指しており、同じ語を二重に使うと
+  // どちらの話か読み手に分からなくなる。ここで作るのは「投稿文」、行うのは
+  // 「分析」。
+  "creator.inbox.title": "レビュー待ち",
+  "creator.inbox.description":
+    "Koqentra からの提案です。このまま使うか、書き直すか、見送るかを選んでください。",
+  "creator.inbox.analyzeCta": "コンテンツを分析",
+  "creator.inbox.emptyTitle": "レビュー待ちはありません",
+  "creator.inbox.emptyBody":
+    "コンテンツを分析すると、X・Reddit・長文向けの提案がここに届きます。",
+  "creator.inbox.untitled": "タイトルなし",
+  "creator.inbox.pending": "{count} 件待ち",
+
+  "creator.channel.x": "X",
+  "creator.channel.reddit": "Reddit",
+  "creator.channel.longform": "長文",
+
+  "creator.verdict.recommend": "おすすめ",
+  "creator.verdict.skip": "見送り",
+
+  "creator.postText": "投稿文",
+
+  "creator.feedback.useAsIs": "このまま採用",
+  "creator.feedback.editAndUse": "編集して採用",
+  "creator.feedback.reject": "却下",
+  "creator.feedback.agreeWithSkip": "見送りに同意",
+  "creator.feedback.wouldPost": "投稿したい",
+  "creator.feedback.save": "保存",
+  "creator.feedback.cancel": "キャンセル",
+  "creator.feedback.editLabel": "あなたの文章",
+  "creator.feedback.sending": "保存中…",
+
+  "creator.new.title": "コンテンツを分析",
+  "creator.new.description":
+    "Koqentra が貼り付けた文章を読み、X・Reddit・長文それぞれについて投稿する価値があるかを判断し、ある場合は投稿文を作ります。見送りという答えも正常な結果です。",
+  "creator.new.titleLabel": "タイトル",
+  "creator.new.titleOptional": "任意",
+  "creator.new.bodyLabel": "本文",
+  "creator.new.bodyPlaceholder": "読み取ってほしい文章を貼り付けてください。",
+  "creator.new.submit": "分析する",
+  "creator.new.submitting": "分析中…",
+  "creator.new.learningNote":
+    "過去の採用・編集・却下は、次回以降の分析の参考として使われます。",
+  "creator.new.privacyNote":
+    "入力した内容は、分析のため Anthropic に送信されます。",
+  "creator.new.privacyLink": "プライバシー",
 
   "worker.detail.noDescription": "説明はありません。",
   "worker.detail.workerType": "Worker の種類",
