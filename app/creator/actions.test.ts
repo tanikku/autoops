@@ -23,8 +23,10 @@ const mocks = vi.hoisted(() => ({
   analyzeCreatorText: vi.fn(),
   recordCreatorFeedback: vi.fn(),
   notFound: vi.fn(),
+  revalidatePath: vi.fn(),
 }));
 
+vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("next/navigation", () => ({ notFound: mocks.notFound }));
 vi.mock("@/lib/session", () => ({
   requireUserId: mocks.requireUserId,
@@ -112,6 +114,7 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ contentItemId: "content-1", result: {} });
   mocks.recordCreatorFeedback.mockReset().mockResolvedValue({ id: "feedback-1" });
+  mocks.revalidatePath.mockReset();
   mocks.notFound.mockReset().mockImplementation(() => {
     throw new NotFoundSignal("NEXT_NOT_FOUND");
   });
@@ -556,6 +559,166 @@ describe("the model", () => {
     await analyzeCreatorTextAction(null, analysisForm());
 
     expect(analyzer.analyze).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * **What the inbox is told about a write that just happened.**
+ *
+ * The bug this fixes was visible in production: an analysis succeeded, the
+ * client navigated to `/creator`, and the page said there was nothing to
+ * review — while a refresh showed all three decisions. The write was fine and
+ * the read model was fine; the cached render of the route was from a moment
+ * before the analysis existed.
+ *
+ * **The invalidation belongs to the action that wrote**, not to the shared
+ * navigation hook, and it must not fire for work that was never saved.
+ */
+describe("keeping the inbox fresh", () => {
+  it("invalidates the inbox after a successful analysis", async () => {
+    await analyzeCreatorTextAction(null, analysisForm());
+
+    expect(mocks.revalidatePath).toHaveBeenCalledTimes(1);
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/creator");
+  });
+
+  /**
+   * Invalidating before the write would cache the same stale render again —
+   * the page would be re-fetched while the analysis was still in flight.
+   */
+  it("invalidates after the write, never before it", async () => {
+    await analyzeCreatorTextAction(null, analysisForm());
+
+    expect(mocks.analyzeCreatorText.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.revalidatePath.mock.invocationCallOrder[0],
+    );
+  });
+
+  /**
+   * **A route, and nothing about who asked or what they wrote.** The page
+   * behind this path fetches its own data under its own session; passing an
+   * owner or a title here would put account data into a cache key for no gain.
+   */
+  it("names a fixed route and passes nothing else", async () => {
+    await analyzeCreatorTextAction(null, analysisForm());
+
+    const [path, ...rest] = mocks.revalidatePath.mock.calls[0];
+
+    expect(path).toBe("/creator");
+    expect(rest).toEqual([]);
+    expect(JSON.stringify(mocks.revalidatePath.mock.calls)).not.toContain(USER);
+    expect(JSON.stringify(mocks.revalidatePath.mock.calls)).not.toContain(
+      SECRET_BODY,
+    );
+    expect(JSON.stringify(mocks.revalidatePath.mock.calls)).not.toContain(
+      SECRET_TITLE,
+    );
+  });
+
+  /**
+   * **Nothing was saved, so there is nothing to show differently.**
+   * Invalidating here would throw away a good cached page in exchange for a
+   * re-render of the same rows.
+   */
+  it.each([
+    ["an empty body", { body: "" }],
+    ["a whitespace body", { body: "   " }],
+    ["a body of newlines and tabs", { body: "\n\t" }],
+    [
+      "a body past the limit",
+      { body: "b".repeat(creatorAnalysisLimits.contentBody + 1) },
+    ],
+    [
+      "a title past the limit",
+      { title: "t".repeat(creatorAnalysisLimits.contentTitle + 1) },
+    ],
+  ])("does not invalidate after %s", async (_name, fields) => {
+    await analyzeCreatorTextAction(null, analysisForm(fields));
+
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("does not invalidate when no analyzer is configured", async () => {
+    mocks.createCreatorAnalyzer.mockReturnValue(null);
+
+    await analyzeCreatorTextAction(null, analysisForm());
+
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("does not invalidate when the allowance is spent", async () => {
+    mocks.consumeCreatorAnalysisQuota.mockResolvedValue(false);
+
+    await analyzeCreatorTextAction(null, analysisForm());
+
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("does not invalidate when the allowance cannot be read", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.consumeCreatorAnalysisQuota.mockRejectedValue(
+      new Error("connection terminated"),
+    );
+
+    await analyzeCreatorTextAction(null, analysisForm());
+
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+
+    spy.mockRestore();
+  });
+
+  /** Every way the analysis itself can fail. None of them wrote anything. */
+  it.each([
+    ["a provider timeout", new ProviderError("timeout", "slow")],
+    ["a provider outage", new ProviderError("unavailable", "down")],
+    ["a refusal", new ProviderError("refused", "declined")],
+    [
+      "an unusable answer",
+      new InvalidCreatorAnalysisResponseError("the answer was not an object"),
+    ],
+    [
+      "an unusable history",
+      new InvalidCreatorFeedbackHistoryError("decision-7", "unknown-channel"),
+    ],
+    ["a write that would not commit", new Error("connection terminated")],
+    ["the service refusing an empty body", new EmptyCreatorContentError()],
+    [
+      "the service refusing an oversized request",
+      new CreatorAnalysisRequestTooLargeError("content.body", 40_000, 40_001),
+    ],
+  ])("does not invalidate after %s", async (_name, thrown) => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.analyzeCreatorText.mockRejectedValue(thrown);
+
+    await analyzeCreatorTextAction(null, analysisForm());
+
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+
+    spy.mockRestore();
+  });
+
+  it("lets a sign-in redirect through without invalidating", async () => {
+    class RedirectSignal extends Error {}
+    mocks.requireProvisionedUserId.mockRejectedValue(
+      new RedirectSignal("NEXT_REDIRECT"),
+    );
+
+    await expect(
+      analyzeCreatorTextAction(null, analysisForm()),
+    ).rejects.toBeInstanceOf(RedirectSignal);
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **The feedback path is deliberately untouched.** Answering a decision
+   * already refreshes through `router.refresh()` in the card, and that was
+   * confirmed working in a real browser — adding a second mechanism here would
+   * be a fix for a bug nobody has.
+   */
+  it("does not invalidate when an answer is recorded", async () => {
+    await recordCreatorFeedbackAction(null, feedbackForm());
+
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
 });
 

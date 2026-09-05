@@ -1,5 +1,6 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { notFound } from "next/navigation";
 import { providerErrorKind } from "@/lib/ai/provider";
 import {
@@ -190,6 +191,24 @@ export async function analyzeCreatorTextAction(
       { title: rawTitle === "" ? null : rawTitle, body },
       analyzer,
     );
+
+    // **The write happened here, so the invalidation belongs here.** The inbox
+    // is a Server Component reading the database; after this action the cached
+    // render of `/creator` describes a moment before the analysis existed, and
+    // the client navigation that follows would show it. In production that read
+    // as "nothing to review" on a page that had three decisions waiting —
+    // correct on a refresh, wrong on arrival.
+    //
+    // **Not in the client, and not in the shared hook.** `useActionResult` is a
+    // navigation contract several features share; putting one feature's cache
+    // invalidation inside it would make every future caller inherit a rule that
+    // has nothing to do with them. A mutation invalidating what it changed is
+    // the mutation's own business.
+    //
+    // **A fixed path, and only on success.** Nothing about the account or the
+    // writing is passed here — the route is the same string for everybody, and
+    // the per-user data behind it is fetched by the page under its own session.
+    revalidatePath("/creator");
 
     // **Nothing about the writing comes back.** What a screen needs to render
     // is a question for the checkpoint that builds one; returning drafts here
