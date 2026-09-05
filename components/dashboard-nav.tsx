@@ -36,12 +36,20 @@ export async function DashboardNav() {
           Koqentra
         </Link>
 
+        {/* **No `aria-current` on any of these links.** It used to be
+            hard-coded on Dashboard, which told a screen reader that Dashboard
+            was the current page while somebody stood on `/creator` or Settings
+            — a wrong answer given confidently. Saying nothing is the accurate
+            state until the bar knows which route it is on, and knowing that
+            needs either the pathname or a prop from every page: a design
+            question for a UX checkpoint rather than something to guess at
+            here. */}
         <nav className="order-last flex w-full flex-wrap items-center gap-1 sm:order-none sm:w-auto sm:flex-nowrap">
           <Button
             variant="ghost"
             size="sm"
             nativeButton={false}
-            render={<Link href="/dashboard" aria-current="page" />}
+            render={<Link href="/dashboard" />}
           >
             {t(language, "nav.dashboard")}
           </Button>

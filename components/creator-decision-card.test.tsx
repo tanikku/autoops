@@ -150,6 +150,24 @@ describe("what a submission carries", () => {
     expect(render(recommended)).not.toContain('name="reason"');
     expect(render(skipped)).not.toContain('name="reason"');
   });
+
+  /**
+   * **One form, one submit button.** `FeedbackForm` used to append a button of
+   * its own on top of whatever `children` supplied, which meant any branch
+   * passing its own — the edit box does — rendered two. Counting them per form
+   * is what would have caught it, so it is counted here.
+   */
+  it.each([
+    ["a recommendation", recommended, 2],
+    ["a skip", skipped, 2],
+  ])("gives %s one submit button per form", (_name, decision, forms) => {
+    const html = render(decision as Decision);
+    const submits = html.match(/<button type="submit"/g) ?? [];
+    const openedForms = html.match(/<form /g) ?? [];
+
+    expect(openedForms).toHaveLength(forms);
+    expect(submits).toHaveLength(forms);
+  });
 });
 
 describe("the words this side of the product uses", () => {

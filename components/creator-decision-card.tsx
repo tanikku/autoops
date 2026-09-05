@@ -61,23 +61,25 @@ function ActionButton({
  * Each button submits its own `action` value, so nothing has to be held in
  * state to know which one was pressed — and `useFormStatus` can disable only
  * the button that is actually working.
+ *
+ * **It carries the two hidden fields and nothing else.** It used to append a
+ * submit button of its own as well, which read as a convenience and was a bug:
+ * the edit branch passes its own Save button in `children`, so that branch
+ * rendered two. A form component that quietly adds a control cannot be composed
+ * with one that supplies its own, and the three answers here genuinely differ —
+ * approve and reject are a lone button, edit is a textarea with Save and
+ * Cancel. **Every call site passes exactly one submit button.**
  */
 function FeedbackForm({
   decisionId,
   action,
-  language,
-  labelKey,
-  variant,
   formAction,
   children,
 }: {
   decisionId: string;
   action: FeedbackAction;
-  language: string;
-  labelKey: TranslationKey;
-  variant?: "default" | "outline" | "ghost";
   formAction: (payload: FormData) => void;
-  children?: React.ReactNode;
+  children: React.ReactNode;
 }) {
   return (
     <form action={formAction} className="contents">
@@ -87,7 +89,6 @@ function FeedbackForm({
       <input type="hidden" name="editorialDecisionId" value={decisionId} />
       <input type="hidden" name="action" value={action} />
       {children}
-      <ActionButton language={language} labelKey={labelKey} variant={variant} />
     </form>
   );
 }
@@ -174,8 +175,6 @@ export function CreatorDecisionCard({
         <FeedbackForm
           decisionId={decision.id}
           action="edit"
-          language={language}
-          labelKey="creator.feedback.save"
           formAction={formAction}
         >
           <div className="mt-4 w-full">
@@ -215,14 +214,17 @@ export function CreatorDecisionCard({
           <FeedbackForm
             decisionId={decision.id}
             action="approve"
-            language={language}
-            labelKey={
-              recommended
-                ? "creator.feedback.useAsIs"
-                : "creator.feedback.agreeWithSkip"
-            }
             formAction={formAction}
-          />
+          >
+            <ActionButton
+              language={language}
+              labelKey={
+                recommended
+                  ? "creator.feedback.useAsIs"
+                  : "creator.feedback.agreeWithSkip"
+              }
+            />
+          </FeedbackForm>
 
           {recommended ? (
             <Button
@@ -238,15 +240,18 @@ export function CreatorDecisionCard({
           <FeedbackForm
             decisionId={decision.id}
             action="reject"
-            language={language}
-            variant="ghost"
-            labelKey={
-              recommended
-                ? "creator.feedback.reject"
-                : "creator.feedback.wouldPost"
-            }
             formAction={formAction}
-          />
+          >
+            <ActionButton
+              language={language}
+              variant="ghost"
+              labelKey={
+                recommended
+                  ? "creator.feedback.reject"
+                  : "creator.feedback.wouldPost"
+              }
+            />
+          </FeedbackForm>
         </div>
       )}
     </div>
