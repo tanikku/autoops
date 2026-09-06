@@ -4,9 +4,10 @@ import { CreatorDecisionCard } from "@/components/creator-decision-card";
 import { DashboardNav } from "@/components/dashboard-nav";
 import { Button } from "@/components/ui/button";
 import { listCreatorReviewItems } from "@/lib/creator/review";
+import { formatDateTime } from "@/lib/datetime";
 import { t } from "@/lib/i18n";
 import { requireUserId } from "@/lib/session";
-import { getUserLanguage } from "@/lib/users";
+import { getUserLanguage, getUserTimezone } from "@/lib/users";
 
 export const metadata: Metadata = {
   title: "Review Inbox — Koqentra",
@@ -31,8 +32,11 @@ export const dynamic = "force-dynamic";
  */
 export default async function CreatorInboxPage() {
   const userId = await requireUserId();
-  const [language, items] = await Promise.all([
+  const [language, timezone, items] = await Promise.all([
     getUserLanguage(userId),
+    // Read so a timestamp reads in the account's own zone, the way every other
+    // one in the product does. Nothing here schedules anything.
+    getUserTimezone(userId),
     listCreatorReviewItems(userId),
   ]);
 
@@ -51,9 +55,21 @@ export default async function CreatorInboxPage() {
             </p>
           </div>
 
-          <Button nativeButton={false} render={<Link href="/creator/new" />}>
-            {t(language, "creator.inbox.analyzeCta")}
-          </Button>
+          {/* **Two ways on, and only one of them starts something.** The
+              record of what has been answered lives on its own screen, so this
+              one stays a queue. */}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              nativeButton={false}
+              render={<Link href="/creator/history" />}
+            >
+              {t(language, "creator.inbox.historyCta")}
+            </Button>
+            <Button nativeButton={false} render={<Link href="/creator/new" />}>
+              {t(language, "creator.inbox.analyzeCta")}
+            </Button>
+          </div>
         </div>
 
         {items.length === 0 ? (
@@ -90,6 +106,17 @@ export default async function CreatorInboxPage() {
                     })}
                   </span>
                 </div>
+
+                {/* **Which analysis this is.** Two submissions of the same
+                    piece are otherwise two identical headings; the exact
+                    moment, in the account's zone, is what tells them apart. A
+                    relative time would read better and would not answer the
+                    question. */}
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t(language, "creator.inbox.analyzedAt", {
+                    at: formatDateTime(item.analyzedAt, timezone),
+                  })}
+                </p>
 
                 {/* **An excerpt, not the piece.** Enough to recognise which
                     submission this is; the whole body never reaches a

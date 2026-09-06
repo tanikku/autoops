@@ -528,6 +528,37 @@ Write nothing that is not in the material. Where a section has nothing to draw o
   "creator.inbox.untitled": "Untitled content",
   "creator.inbox.pending": "{count} waiting",
 
+  /**
+   * Which analysis a heading belongs to.
+   *
+   * **Absolute, never relative.** "3 minutes ago" is friendlier and useless
+   * here: the reason a timestamp is on this screen at all is that two
+   * submissions of the same piece are otherwise two identical headings, and
+   * telling them apart is what the exact moment does.
+   */
+  "creator.inbox.analyzedAt": "Analyzed: {at}",
+  "creator.inbox.historyCta": "History",
+
+  /**
+   * What was already answered.
+   *
+   * **A record, and read-only.** Nothing on that screen changes an answer:
+   * feedback is append-only, and a history offering to rewrite itself would
+   * not be one. `creator.history.pendingNote` explains why a piece can be on
+   * both screens at once — the two show different halves of the same analysis.
+   */
+  "creator.history.title": "Answer history",
+  "creator.history.description":
+    "The judgements you have already answered, newest analysis first.",
+  "creator.history.pendingNote":
+    "An analysis with unanswered judgements also appears in the Review Inbox.",
+  "creator.history.answeredCount": "{count} answered",
+  "creator.history.answeredAt": "Answered: {at}",
+  "creator.history.yourPostText": "Your post text",
+  "creator.history.emptyTitle": "Nothing answered yet",
+  "creator.history.emptyBody":
+    "Answer something in the Review Inbox and it will be kept here.",
+
   "creator.channel.x": "X",
   "creator.channel.reddit": "Reddit",
   "creator.channel.longform": "Long-form",

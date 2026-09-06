@@ -4,9 +4,11 @@ import { creatorAnalysisLimits } from "@/lib/creator/analyzer";
 import { excerptForHistory } from "@/lib/creator/repository";
 import { type DbClient, prisma } from "@/lib/prisma";
 import {
+  type CreatorFeedbackAction,
   type CreatorTargetChannel,
   creatorTargetChannels,
   type EditorialVerdict,
+  isCreatorFeedbackAction,
   isCreatorTargetChannel,
   isEditorialVerdict,
 } from "@/types";
@@ -68,6 +70,16 @@ export type CreatorReviewItem = {
    * achieve that would put every stored word into a page's payload for no gain.
    */
   sourceExcerpt: string;
+  /**
+   * When the analysis that produced these judgements was stored.
+   *
+   * **`ContentItem.createdAt`, because that row is the analysis.** It is
+   * written once, inside the transaction that saves a successful analysis, so
+   * it dates the judgements rather than any later edit. Two submissions of the
+   * same piece are otherwise two identical headings, which is exactly the
+   * confusion this answers.
+   */
+  analyzedAt: Date;
   decisions: CreatorReviewDecision[];
 };
 
@@ -121,6 +133,7 @@ type ItemRow = {
   id: string;
   title: string | null;
   body: string;
+  createdAt: Date;
   userId: string;
   decisions: DecisionRow[];
 };
@@ -224,6 +237,7 @@ export async function listCreatorReviewItems(
       id: true,
       title: true,
       body: true,
+      createdAt: true,
       userId: true,
       decisions: {
         where: { userId, feedback: { is: null } },
@@ -267,6 +281,254 @@ export async function listCreatorReviewItems(
         row.body,
         creatorAnalysisLimits.feedbackContentExcerpt,
       ),
+      analyzedAt: row.createdAt,
+      decisions,
+    };
+  });
+}
+
+/**
+ * How many answered analyses the history shows at once.
+ *
+ * **A presentation bound, exactly like `CREATOR_REVIEW_ITEM_LIMIT`.** Nothing
+ * is deleted, nothing expires, and no account is refused anything because of
+ * it — it is what stops one screen from loading a year of work, and the number
+ * a "show more" would move. Larger than the inbox because the inbox is a queue
+ * somebody is working through, and this is a record they are looking back at.
+ */
+export const CREATOR_HISTORY_ITEM_LIMIT = 20;
+
+/** One judgement that has been answered, and what the answer was. */
+export type CreatorHistoryDecision = {
+  id: string;
+  targetChannel: CreatorTargetChannel;
+  verdict: EditorialVerdict;
+  reason: string;
+  /** What Koqentra proposed, when it proposed anything. */
+  postText: string | null;
+  /**
+   * The stored answer.
+   *
+   * **Not a label.** `approve` means "post this" against a recommendation and
+   * "yes, leave it" against a skip, so the pair is what a screen reads — the
+   * same mapping the learning panel uses. In particular it does **not** mean
+   * the post was copied: answers recorded before the clipboard handoff existed
+   * are `approve` too, and a history that called them "copied and used" would
+   * be inventing an event.
+   */
+  action: CreatorFeedbackAction;
+  /**
+   * What the person wrote instead, on an edit, and null on anything else.
+   *
+   * The proposal above is kept alongside it: the pair is the whole point of
+   * looking back, and it is what the next analysis is shown.
+   */
+  editedPostText: string | null;
+  answeredAt: Date;
+};
+
+/** One analysis, with the judgements somebody has already answered. */
+export type CreatorHistoryItem = {
+  contentItemId: string;
+  title: string | null;
+  sourceExcerpt: string;
+  analyzedAt: Date;
+  decisions: CreatorHistoryDecision[];
+};
+
+type HistoryDecisionRow = {
+  id: string;
+  targetChannel: string;
+  verdict: string;
+  reason: string;
+  userId: string;
+  draft: { body: string; userId: string } | null;
+  feedback: {
+    id: string;
+    userId: string;
+    action: string;
+    editedBody: string | null;
+    createdAt: Date;
+  } | null;
+};
+
+type HistoryItemRow = {
+  id: string;
+  title: string | null;
+  body: string;
+  createdAt: Date;
+  userId: string;
+  decisions: HistoryDecisionRow[];
+};
+
+/**
+ * Turns one answered judgement into something a screen may show, or refuses.
+ *
+ * **The same rules as the inbox, plus the answer's own.** A row describing
+ * something that cannot have happened — an edit with nothing written, an
+ * approval carrying a rewrite — is refused rather than rendered, because a
+ * history is a record and a plausible guess in one is worse than a blank page.
+ */
+function toHistoryDecision(
+  row: HistoryDecisionRow,
+  userId: string,
+): CreatorHistoryDecision {
+  const refuse = (reason: string): never => {
+    throw new InvalidCreatorReviewDataError(row.id, reason);
+  };
+
+  // Belt as well as braces, at every level the query already scopes.
+  if (row.userId !== userId) {
+    refuse("owner-mismatch");
+  }
+
+  if (row.draft !== null && row.draft.userId !== userId) {
+    refuse("draft-owner-mismatch");
+  }
+
+  // The query asks only for answered decisions, so an unanswered one arriving
+  // means the filter no longer means what it says.
+  if (row.feedback === null) {
+    refuse("not-answered");
+  }
+
+  const feedback = row.feedback as NonNullable<HistoryDecisionRow["feedback"]>;
+
+  if (feedback.userId !== userId) {
+    refuse("feedback-owner-mismatch");
+  }
+
+  if (!isCreatorTargetChannel(row.targetChannel)) {
+    refuse("unknown-channel");
+  }
+
+  if (!isEditorialVerdict(row.verdict)) {
+    refuse("unknown-verdict");
+  }
+
+  if (!isCreatorFeedbackAction(feedback.action)) {
+    refuse("unknown-feedback-action");
+  }
+
+  const targetChannel = row.targetChannel as CreatorTargetChannel;
+  const verdict = row.verdict as EditorialVerdict;
+  const action = feedback.action as CreatorFeedbackAction;
+
+  if (row.reason.trim() === "") {
+    refuse("empty-reason");
+  }
+
+  if (verdict === "recommend" && row.draft === null) {
+    refuse("recommend-without-post-text");
+  }
+
+  if (verdict === "skip" && row.draft !== null) {
+    refuse("skip-with-post-text");
+  }
+
+  // The three rules the service applies when an edit is recorded, read back.
+  if (action === "edit") {
+    if (verdict !== "recommend") {
+      refuse("edit-of-skip");
+    }
+
+    if (feedback.editedBody === null || feedback.editedBody.trim() === "") {
+      refuse("edit-without-edited-body");
+    }
+  } else if (feedback.editedBody !== null) {
+    // Approving *and* rewriting are two different answers, and the service
+    // stores null on everything that is not an edit.
+    refuse("edited-body-without-edit");
+  }
+
+  return {
+    id: row.id,
+    targetChannel,
+    verdict,
+    reason: row.reason,
+    postText: row.draft?.body ?? null,
+    action,
+    editedPostText: action === "edit" ? feedback.editedBody : null,
+    answeredAt: feedback.createdAt,
+  };
+}
+
+/**
+ * The analyses this account has already answered something about, newest first.
+ *
+ * **Answered decisions only, which is the mirror of the inbox.** A piece whose
+ * three judgements are half answered appears on both screens, showing different
+ * halves of itself — that is the two views working, not a duplicate.
+ *
+ * **Ordered by the analysis, not by the answer.** What somebody is looking for
+ * is *which analysis* a judgement came from, especially when two carry the same
+ * title; sorting by when each was answered would interleave them.
+ *
+ * **One bounded query.** Everything a card shows is selected here, so rendering
+ * twenty analyses costs one read rather than one per item.
+ */
+export async function listCreatorHistoryItems(
+  userId: string,
+  client: DbClient = prisma,
+): Promise<CreatorHistoryItem[]> {
+  const rows = (await client.contentItem.findMany({
+    where: {
+      userId,
+      decisions: { some: { userId, feedback: { isNot: null } } },
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: CREATOR_HISTORY_ITEM_LIMIT,
+    select: {
+      id: true,
+      title: true,
+      body: true,
+      createdAt: true,
+      userId: true,
+      decisions: {
+        where: { userId, feedback: { isNot: null } },
+        select: {
+          id: true,
+          targetChannel: true,
+          verdict: true,
+          reason: true,
+          userId: true,
+          draft: { select: { body: true, userId: true } },
+          feedback: {
+            select: {
+              id: true,
+              userId: true,
+              action: true,
+              editedBody: true,
+              createdAt: true,
+            },
+          },
+        },
+      },
+    },
+  })) as HistoryItemRow[];
+
+  return rows.map((row) => {
+    if (row.userId !== userId) {
+      throw new InvalidCreatorReviewDataError(row.id, "item-owner-mismatch");
+    }
+
+    const decisions = row.decisions
+      .map((decision) => toHistoryDecision(decision, userId))
+      .sort((a, b) => channelPosition(a.targetChannel) - channelPosition(b.targetChannel));
+
+    return {
+      contentItemId: row.id,
+      title:
+        row.title === null
+          ? null
+          : excerptForHistory(row.title, creatorAnalysisLimits.feedbackContentTitle),
+      // **An excerpt here too.** Looking back at a decision does not need the
+      // article that prompted it; the whole body never leaves the server.
+      sourceExcerpt: excerptForHistory(
+        row.body,
+        creatorAnalysisLimits.feedbackContentExcerpt,
+      ),
+      analyzedAt: row.createdAt,
       decisions,
     };
   });

@@ -19,8 +19,10 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 const {
+  CREATOR_HISTORY_ITEM_LIMIT,
   CREATOR_REVIEW_ITEM_LIMIT,
   isInvalidCreatorReviewData,
+  listCreatorHistoryItems,
   listCreatorReviewItems,
 } = await import("@/lib/creator/review");
 
@@ -41,15 +43,45 @@ function decision(overrides: Record<string, unknown> = {}) {
   };
 }
 
+const ANALYZED_AT = new Date("2026-09-06T03:34:00.000Z");
+const ANSWERED_AT = new Date("2026-09-06T03:45:00.000Z");
+
 function item(overrides: Record<string, unknown> = {}) {
   return {
     id: "content-1",
     title: "An earlier piece",
     body: "The body of an earlier piece.",
+    createdAt: ANALYZED_AT,
     userId: USER,
     decisions: [decision()],
     ...overrides,
   };
+}
+
+/** One stored answer, alongside the judgement it answers. */
+function answeredDecision(overrides: Record<string, unknown> = {}) {
+  const { feedback: feedbackOverride, ...rest } = overrides as {
+    feedback?: Record<string, unknown> | null;
+  } & Record<string, unknown>;
+
+  return decision({
+    feedback:
+      feedbackOverride === null
+        ? null
+        : {
+            id: "feedback-1",
+            userId: USER,
+            action: "approve",
+            editedBody: null,
+            createdAt: ANSWERED_AT,
+            ...(feedbackOverride ?? {}),
+          },
+    ...rest,
+  });
+}
+
+function answeredItem(overrides: Record<string, unknown> = {}) {
+  return item({ decisions: [answeredDecision()], ...overrides });
 }
 
 beforeEach(() => {
@@ -201,6 +233,9 @@ describe("what comes back", () => {
     const serialized = JSON.stringify(entry);
 
     expect(Object.keys(entry).sort()).toEqual([
+      // The moment of the analysis joined this list in C1.8B: two submissions
+      // of the same piece are otherwise indistinguishable on screen.
+      "analyzedAt",
       "contentItemId",
       "decisions",
       "sourceExcerpt",
@@ -275,5 +310,299 @@ describe("a row that cannot be shown", () => {
     expect(failure.decisionId).toBe("decision-1");
     expect(failure.message).not.toContain("SECRET UNPUBLISHED BODY");
     expect(failure.message).not.toContain("SECRET POST TEXT");
+  });
+});
+
+/**
+ * Which analysis a judgement came from.
+ *
+ * Two submissions of the same piece are two identical headings otherwise, which
+ * is the confusion this exists to answer — so the moment comes from the row
+ * that *is* the analysis rather than from anything written later.
+ */
+describe("when the analysis happened", () => {
+  it("dates an inbox item by its own row", async () => {
+    findMany.mockResolvedValue([item()]);
+
+    const [entry] = await listCreatorReviewItems(USER);
+
+    expect(entry.analyzedAt).toBe(ANALYZED_AT);
+  });
+
+  it("reads the column it needs to say so", async () => {
+    await listCreatorReviewItems(USER);
+
+    expect(findMany.mock.calls[0][0].select.createdAt).toBe(true);
+  });
+});
+
+describe("what the history asks for", () => {
+  it("asks only for this account's work, at every level", async () => {
+    await listCreatorHistoryItems(USER);
+
+    const query = findMany.mock.calls[0][0];
+
+    expect(query.where.userId).toBe(USER);
+    expect(query.where.decisions.some.userId).toBe(USER);
+    expect(query.select.decisions.where.userId).toBe(USER);
+  });
+
+  /** The mirror of the inbox: answered rather than waiting. */
+  it("asks only for decisions somebody has answered", async () => {
+    await listCreatorHistoryItems(USER);
+
+    const query = findMany.mock.calls[0][0];
+
+    expect(query.where.decisions.some.feedback).toEqual({ isNot: null });
+    expect(query.select.decisions.where.feedback).toEqual({ isNot: null });
+  });
+
+  /**
+   * **By the analysis, not by the answer.** What somebody is looking for is
+   * which analysis a judgement came from; ordering by when each was answered
+   * would interleave two analyses of the same piece.
+   */
+  it("reads newest analysis first, deterministically, and bounded", async () => {
+    await listCreatorHistoryItems(USER);
+
+    const query = findMany.mock.calls[0][0];
+
+    expect(query.orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
+    expect(query.take).toBe(CREATOR_HISTORY_ITEM_LIMIT);
+    expect(CREATOR_HISTORY_ITEM_LIMIT).toBe(20);
+  });
+
+  /** Everything a card shows comes back in this one read. */
+  it("takes one query, however many analyses come back", async () => {
+    findMany.mockResolvedValue([
+      answeredItem({ id: "content-1" }),
+      answeredItem({ id: "content-2" }),
+      answeredItem({ id: "content-3" }),
+    ]);
+
+    await listCreatorHistoryItems(USER);
+
+    expect(findMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("what the history shows", () => {
+  it("is empty when nothing has been answered", async () => {
+    await expect(listCreatorHistoryItems(USER)).resolves.toEqual([]);
+  });
+
+  it("carries the analysis, the excerpt and the answer", async () => {
+    findMany.mockResolvedValue([answeredItem()]);
+
+    const [entry] = await listCreatorHistoryItems(USER);
+
+    expect(entry.contentItemId).toBe("content-1");
+    expect(entry.title).toBe("An earlier piece");
+    expect(entry.analyzedAt).toBe(ANALYZED_AT);
+    expect(entry.decisions[0]).toEqual({
+      id: "decision-1",
+      targetChannel: "x",
+      verdict: "recommend",
+      reason: "It stands on its own.",
+      postText: "A short post.",
+      action: "approve",
+      editedPostText: null,
+      answeredAt: ANSWERED_AT,
+    });
+  });
+
+  /**
+   * **Both halves, kept apart.** The proposal is not overwritten by the
+   * rewrite; the pair is the whole reason to look back at one of these.
+   */
+  it("keeps the proposal and the rewrite side by side", async () => {
+    findMany.mockResolvedValue([
+      answeredItem({
+        decisions: [
+          answeredDecision({
+            feedback: { action: "edit", editedBody: "What I actually posted." },
+          }),
+        ],
+      }),
+    ]);
+
+    const [entry] = await listCreatorHistoryItems(USER);
+
+    expect(entry.decisions[0].postText).toBe("A short post.");
+    expect(entry.decisions[0].editedPostText).toBe("What I actually posted.");
+  });
+
+  it("puts the channels in the product's order", async () => {
+    findMany.mockResolvedValue([
+      answeredItem({
+        decisions: [
+          answeredDecision({ id: "d-longform", targetChannel: "longform" }),
+          answeredDecision({
+            id: "d-reddit",
+            targetChannel: "reddit",
+            verdict: "skip",
+            draft: null,
+          }),
+          answeredDecision({ id: "d-x", targetChannel: "x" }),
+        ],
+      }),
+    ]);
+
+    const [entry] = await listCreatorHistoryItems(USER);
+
+    expect(entry.decisions.map((d) => d.targetChannel)).toEqual([
+      "x",
+      "reddit",
+      "longform",
+    ]);
+  });
+
+  /** The article that prompted a decision is not what looking back needs. */
+  it("shows an excerpt of the piece and never the whole of it", async () => {
+    const body = "A sentence that goes on. ".repeat(4_000);
+
+    findMany.mockResolvedValue([answeredItem({ body })]);
+
+    const [entry] = await listCreatorHistoryItems(USER);
+
+    expect(entry.sourceExcerpt.length).toBeLessThanOrEqual(
+      creatorAnalysisLimits.feedbackContentExcerpt,
+    );
+    expect(entry.sourceExcerpt).not.toBe(body);
+  });
+
+  it("bounds a long title the same way", async () => {
+    findMany.mockResolvedValue([answeredItem({ title: "T".repeat(2_000) })]);
+
+    const [entry] = await listCreatorHistoryItems(USER);
+
+    expect(entry.title?.length).toBeLessThanOrEqual(
+      creatorAnalysisLimits.feedbackContentTitle,
+    );
+  });
+});
+
+/**
+ * A record with a guess in it is worse than a blank page: it is a claim about
+ * what Koqentra once decided, and about what somebody once chose, put in front
+ * of the person it was about.
+ */
+describe("what the history refuses to show", () => {
+  it.each([
+    ["an item belonging to somebody else", answeredItem({ userId: OTHER })],
+    [
+      "a decision belonging to somebody else",
+      answeredItem({ decisions: [answeredDecision({ userId: OTHER })] }),
+    ],
+    [
+      "post text belonging to somebody else",
+      answeredItem({
+        decisions: [
+          answeredDecision({ draft: { body: "A short post.", userId: OTHER } }),
+        ],
+      }),
+    ],
+    [
+      "an answer belonging to somebody else",
+      answeredItem({
+        decisions: [answeredDecision({ feedback: { userId: OTHER } })],
+      }),
+    ],
+    [
+      "a decision nobody answered",
+      answeredItem({ decisions: [answeredDecision({ feedback: null })] }),
+    ],
+    [
+      "a channel this version does not know",
+      answeredItem({
+        decisions: [answeredDecision({ targetChannel: "mastodon" })],
+      }),
+    ],
+    [
+      "a verdict this version does not know",
+      answeredItem({ decisions: [answeredDecision({ verdict: "maybe" })] }),
+    ],
+    [
+      "an answer this version does not know",
+      answeredItem({
+        decisions: [answeredDecision({ feedback: { action: "postpone" } })],
+      }),
+    ],
+    [
+      "a recommendation with nothing to publish",
+      answeredItem({ decisions: [answeredDecision({ draft: null })] }),
+    ],
+    [
+      "a skip carrying a post",
+      answeredItem({ decisions: [answeredDecision({ verdict: "skip" })] }),
+    ],
+    [
+      "an edit with nothing written",
+      answeredItem({
+        decisions: [
+          answeredDecision({ feedback: { action: "edit", editedBody: "   " } }),
+        ],
+      }),
+    ],
+    [
+      "an edit with no text at all",
+      answeredItem({
+        decisions: [answeredDecision({ feedback: { action: "edit" } })],
+      }),
+    ],
+    [
+      "an approval carrying a rewrite",
+      answeredItem({
+        decisions: [
+          answeredDecision({
+            feedback: { action: "approve", editedBody: "Something else." },
+          }),
+        ],
+      }),
+    ],
+    [
+      "an edit of a skip",
+      answeredItem({
+        decisions: [
+          answeredDecision({
+            verdict: "skip",
+            draft: null,
+            feedback: { action: "edit", editedBody: "Something else." },
+          }),
+        ],
+      }),
+    ],
+    [
+      "a judgement with no reason given",
+      answeredItem({ decisions: [answeredDecision({ reason: "  " })] }),
+    ],
+  ])("refuses %s", async (_name, row) => {
+    findMany.mockResolvedValue([row]);
+
+    await expect(listCreatorHistoryItems(USER)).rejects.toSatisfy(
+      isInvalidCreatorReviewData,
+    );
+  });
+
+  it("names an id but nothing that was written", async () => {
+    findMany.mockResolvedValue([
+      answeredItem({
+        body: "SECRET UNPUBLISHED BODY",
+        decisions: [
+          answeredDecision({
+            targetChannel: "mastodon",
+            draft: { body: "SECRET POST TEXT", userId: USER },
+            feedback: { action: "edit", editedBody: "SECRET EDIT" },
+          }),
+        ],
+      }),
+    ]);
+
+    const failure = await listCreatorHistoryItems(USER).catch((error) => error);
+
+    expect(failure.decisionId).toBe("decision-1");
+    expect(failure.message).not.toContain("SECRET UNPUBLISHED BODY");
+    expect(failure.message).not.toContain("SECRET POST TEXT");
+    expect(failure.message).not.toContain("SECRET EDIT");
   });
 });

@@ -351,6 +351,26 @@ export const ja: Record<TranslationKey, string> = {
   "creator.inbox.untitled": "タイトルなし",
   "creator.inbox.pending": "{count} 件待ち",
 
+  /**
+   * 同じタイトルの分析を見分けるための絶対時刻。
+   * 「3分前」のような相対表現は、識別の役に立たないため使わない。
+   */
+  "creator.inbox.analyzedAt": "分析: {at}",
+  "creator.inbox.historyCta": "履歴",
+
+  /** 回答済みの判断を見るだけの画面。書き換えの導線は置かない。 */
+  "creator.history.title": "回答履歴",
+  "creator.history.description":
+    "すでに回答した Koqentra の判断を、新しい分析から順に確認できます。",
+  "creator.history.pendingNote":
+    "未回答が残っている分析は、レビュー待ちにも表示されます。",
+  "creator.history.answeredCount": "回答済み {count} 件",
+  "creator.history.answeredAt": "回答: {at}",
+  "creator.history.yourPostText": "あなたの投稿文",
+  "creator.history.emptyTitle": "まだ回答履歴はありません",
+  "creator.history.emptyBody":
+    "レビュー待ちで回答すると、ここで確認できます。",
+
   "creator.channel.x": "X",
   "creator.channel.reddit": "Reddit",
   "creator.channel.longform": "長文",

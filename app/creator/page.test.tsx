@@ -16,13 +16,21 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 const mocks = vi.hoisted(() => ({
   requireUserId: vi.fn(),
+  requireProvisionedUserId: vi.fn(),
   getUserLanguage: vi.fn(),
+  getUserTimezone: vi.fn(),
   listCreatorReviewItems: vi.fn(),
 }));
 
 vi.mock("@/auth", () => ({ auth: vi.fn(), signIn: vi.fn(), signOut: vi.fn() }));
-vi.mock("@/lib/session", () => ({ requireUserId: mocks.requireUserId }));
-vi.mock("@/lib/users", () => ({ getUserLanguage: mocks.getUserLanguage }));
+vi.mock("@/lib/session", () => ({
+  requireUserId: mocks.requireUserId,
+  requireProvisionedUserId: mocks.requireProvisionedUserId,
+}));
+vi.mock("@/lib/users", () => ({
+  getUserLanguage: mocks.getUserLanguage,
+  getUserTimezone: mocks.getUserTimezone,
+}));
 vi.mock("@/lib/creator/review", () => ({
   listCreatorReviewItems: mocks.listCreatorReviewItems,
 }));
@@ -49,6 +57,7 @@ const item = {
   contentItemId: "content-1",
   title: "An earlier piece",
   sourceExcerpt: "The opening lines of an earlier piece…",
+  analyzedAt: new Date("2026-09-06T03:34:00.000Z"),
   decisions: [
     {
       id: "decision-1",
@@ -71,7 +80,9 @@ const render = async () => renderToStaticMarkup(await CreatorInboxPage());
 
 beforeEach(() => {
   mocks.requireUserId.mockReset().mockResolvedValue(USER);
+  mocks.requireProvisionedUserId.mockReset().mockResolvedValue(USER);
   mocks.getUserLanguage.mockReset().mockResolvedValue("en");
+  mocks.getUserTimezone.mockReset().mockResolvedValue("Asia/Tokyo");
   mocks.listCreatorReviewItems.mockReset().mockResolvedValue([]);
 });
 
@@ -84,13 +95,21 @@ describe("who it reads for", () => {
     expect(mocks.requireUserId).toHaveBeenCalledTimes(1);
   });
 
-  it("reads the list and the language for that account", async () => {
+  it("reads the list, the language and the zone for that account", async () => {
     mocks.requireUserId.mockResolvedValue("user-9");
 
     await render();
 
     expect(mocks.listCreatorReviewItems).toHaveBeenCalledWith("user-9");
     expect(mocks.getUserLanguage).toHaveBeenCalledWith("user-9");
+    expect(mocks.getUserTimezone).toHaveBeenCalledWith("user-9");
+  });
+
+  /** Looking at a queue must not be what creates an account row. */
+  it("never reaches the provisioning boundary", async () => {
+    await render();
+
+    expect(mocks.requireProvisionedUserId).not.toHaveBeenCalled();
   });
 });
 
@@ -173,5 +192,77 @@ describe("with something waiting", () => {
 
     expect(text).not.toMatch(/\bdrafts?\b/i);
     expect(text).not.toMatch(/\bruns?\b/i);
+  });
+});
+
+/**
+ * Which analysis a heading belongs to.
+ *
+ * **The problem this answers happened in Production**: two submissions of the
+ * same piece sat one above the other under identical titles, and nothing on the
+ * screen said which was the newer. The moment is absolute and in the account's
+ * own zone, because "3 minutes ago" reads better and does not tell them apart.
+ */
+describe("telling two analyses apart", () => {
+  beforeEach(() => {
+    mocks.listCreatorReviewItems.mockResolvedValue([item]);
+  });
+
+  it("dates the analysis in the account's zone", async () => {
+    expect(await render()).toContain("2026-09-06 12:34 Asia/Tokyo");
+  });
+
+  it("reads the same instant differently in another zone", async () => {
+    mocks.getUserTimezone.mockResolvedValue("UTC");
+
+    expect(await render()).toContain("2026-09-06 03:34 UTC");
+  });
+
+  it("distinguishes two submissions of the same title", async () => {
+    mocks.listCreatorReviewItems.mockResolvedValue([
+      {
+        ...item,
+        contentItemId: "content-2",
+        title: "テスト3",
+        analyzedAt: new Date("2026-09-06T05:00:00.000Z"),
+      },
+      {
+        ...item,
+        contentItemId: "content-1",
+        title: "テスト3",
+        analyzedAt: new Date("2026-09-06T03:34:00.000Z"),
+      },
+    ]);
+
+    const html = await render();
+
+    expect(html).toContain("2026-09-06 14:00 Asia/Tokyo");
+    expect(html).toContain("2026-09-06 12:34 Asia/Tokyo");
+  });
+
+  it.each(["en", "ja"])("uses no relative wording in %s", async (language) => {
+    mocks.getUserLanguage.mockResolvedValue(language);
+
+    const text = (await render()).replace(/<[^>]*>/g, " ");
+
+    expect(text).not.toMatch(/\bago\b/i);
+    expect(text).not.toContain("前");
+  });
+});
+
+describe("the way to the record", () => {
+  it("offers the history, without losing the way to start one", async () => {
+    mocks.listCreatorReviewItems.mockResolvedValue([item]);
+
+    const html = await render();
+
+    expect(html).toContain('href="/creator/history"');
+    expect(html).toContain('href="/creator/new"');
+    expect(html).toContain(t("en", "creator.inbox.historyCta"));
+  });
+
+  /** The queue being empty is not a reason to hide what was already answered. */
+  it("still offers a way to start one when nothing is waiting", async () => {
+    expect(await render()).toContain('href="/creator/new"');
   });
 });
