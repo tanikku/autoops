@@ -67,6 +67,7 @@ const {
   readDecisionForFeedback,
   readRecentFeedbackContext,
   saveCreatorAnalysis,
+  saveCreatorProfile,
 } = await import("@/lib/creator/repository");
 
 const USER = "google-sub-1";
@@ -727,5 +728,78 @@ describe("recording an answer", () => {
         reason: null,
       }),
     ).rejects.toThrow("connection terminated");
+  });
+});
+
+/**
+ * Somebody stating what they want, which is the one thing allowed to change
+ * these three columns — an analysis writes `update: {}` so that it cannot.
+ */
+describe("saving a stated profile", () => {
+  it("creates the row with the session owner and all three values", async () => {
+    await saveCreatorProfile(USER, {
+      audience: "Solo founders",
+      goals: "Be useful",
+      voiceInstructions: "Plain sentences",
+    });
+
+    expect(profileUpsert).toHaveBeenCalledTimes(1);
+    expect(profileUpsert.mock.calls[0][0].create).toEqual({
+      userId: USER,
+      audience: "Solo founders",
+      goals: "Be useful",
+      voiceInstructions: "Plain sentences",
+    });
+  });
+
+  it("updates an existing row by the same account, and only these columns", async () => {
+    await saveCreatorProfile(USER, {
+      audience: "Solo founders",
+      goals: "Be useful",
+      voiceInstructions: "Plain sentences",
+    });
+
+    const call = profileUpsert.mock.calls[0][0];
+
+    expect(call.where).toEqual({ userId: USER });
+    expect(call.update).toEqual({
+      audience: "Solo founders",
+      goals: "Be useful",
+      voiceInstructions: "Plain sentences",
+    });
+  });
+
+  /**
+   * **A row cannot nominate whose preferences it is.** `userId` is the whole
+   * of the addressing, so no id from a form or a page reaches this query.
+   */
+  it("never accepts a profile id from its caller", async () => {
+    await saveCreatorProfile(USER, EMPTY_CREATOR_PROFILE);
+
+    const call = profileUpsert.mock.calls[0][0];
+
+    expect(call.where).not.toHaveProperty("id");
+    expect(call.create).not.toHaveProperty("id");
+    expect(call.update).not.toHaveProperty("id");
+    // Two required arguments: the owner and the three values. The third is the
+    // client, which defaults, so it does not count towards `length`.
+    expect(saveCreatorProfile.length).toBe(2);
+  });
+
+  /** Clearing all three is withdrawing what was stated. The row stays. */
+  it("stores empty preferences rather than deleting anything", async () => {
+    await saveCreatorProfile(USER, EMPTY_CREATOR_PROFILE);
+
+    expect(profileUpsert.mock.calls[0][0].update).toEqual({
+      audience: "",
+      goals: "",
+      voiceInstructions: "",
+    });
+  });
+
+  it("writes for the account it was handed and no other", async () => {
+    await saveCreatorProfile(OTHER, EMPTY_CREATOR_PROFILE);
+
+    expect(profileUpsert.mock.calls[0][0].where).toEqual({ userId: OTHER });
   });
 });

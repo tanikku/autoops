@@ -127,6 +127,38 @@ export async function readCreatorProfile(
 }
 
 /**
+ * The owner's stated preferences, as they wrote them.
+ *
+ * **The only place a profile is written from what somebody typed.** The row is
+ * also created by `saveCreatorAnalysis`, but that one writes `update: {}` on
+ * purpose — an analysis must never rewrite a stated preference. This is the
+ * other direction: a person saying what they want, which is the one thing
+ * allowed to change these three columns.
+ *
+ * **`userId` decides the row, and it is an argument.** No profile id is
+ * accepted from anywhere; `where: { userId }` is the whole of the addressing,
+ * so there is no shape of call that reaches somebody else's preferences.
+ *
+ * **Empty strings are a saved preference, not a missing one.** Clearing all
+ * three is somebody withdrawing what they had stated, and the row stays —
+ * nothing here deletes.
+ */
+export async function saveCreatorProfile(
+  userId: string,
+  profile: CreatorAnalysisProfile,
+  client: DbClient = prisma,
+): Promise<void> {
+  const { audience, goals, voiceInstructions } = profile;
+
+  await client.creatorProfile.upsert({
+    where: { userId },
+    create: { userId, audience, goals, voiceInstructions },
+    update: { audience, goals, voiceInstructions },
+    select: { id: true },
+  });
+}
+
+/**
  * Shortens a stored value for use as historical context, deterministically.
  *
  * **This is not the truncation the analyzer refuses to do.** That rule is about

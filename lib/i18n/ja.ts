@@ -551,6 +551,29 @@ export const ja: Record<TranslationKey, string> = {
   "settings.language.invalid": "一覧から言語を選んでください。",
   "settings.language.failed": "言語を保存できませんでした。",
 
+  /**
+   * 本人が明示する発信の前提。
+   *
+   * 推測して保存されるものは一つもない。`settings.creator.priorityNote` は
+   * 現在の Analyzer contract(明示した内容が過去の回答より優先される)を
+   * そのまま述べるだけで、**「必ず従う」「結果を保証する」とは書かない**。
+   */
+  "settings.creator.title": "クリエイター設定",
+  "settings.creator.description":
+    "Koqentra が投稿先や投稿文を判断するときの前提を設定します。",
+  "settings.creator.audience": "届けたい相手",
+  "settings.creator.audiencePlaceholder": "例：地域の子育て世代",
+  "settings.creator.goals": "発信の目的",
+  "settings.creator.goalsPlaceholder": "例：必要な情報をわかりやすく届ける",
+  "settings.creator.voice": "文体・書き方",
+  "settings.creator.voicePlaceholder": "例：簡潔で事実中心。煽らない。",
+  "settings.creator.priorityNote":
+    "ここで設定した内容は、過去の回答より優先して、Koqentra が分析するときの前提として使われます。",
+  "settings.creator.saved": "クリエイター設定を保存しました。",
+  "settings.creator.failed": "クリエイター設定を保存できませんでした。",
+  "settings.creator.tooLong":
+    "「{field}」が長すぎます。{limit} 文字以内にしてください。",
+
   /** 問い合わせ先が未設定の deployment では、この節ごと表示されない。 */
   "settings.support.title": "サポート",
   "settings.support.description":

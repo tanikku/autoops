@@ -880,6 +880,38 @@ Write nothing that is not in the material. Where a section has nothing to draw o
   "settings.language.failed": "Could not save your language.",
 
   /**
+   * What Koqentra is told before it judges anything.
+   *
+   * **Stated by a person, not inferred from one.** These three lines are the
+   * only preferences the product has; nothing watches somebody and writes a
+   * profile for them. That is why the section says what it will be used for
+   * rather than what has been noticed.
+   *
+   * `settings.creator.priorityNote` describes the analyzer's actual ordering —
+   * stated preferences sit above patterns in past answers — and stops there.
+   * **It must not promise obedience or a result**, because neither is
+   * something a model call can be held to.
+   */
+  "settings.creator.title": "Creator preferences",
+  "settings.creator.description":
+    "What Koqentra should assume about your writing when it decides where a piece belongs and drafts a post.",
+  "settings.creator.audience": "Who you want to reach",
+  "settings.creator.audiencePlaceholder":
+    "e.g. Parents of young children in my area",
+  "settings.creator.goals": "What you want your content to achieve",
+  "settings.creator.goalsPlaceholder":
+    "e.g. Get the information they need to them clearly",
+  "settings.creator.voice": "Writing style and voice",
+  "settings.creator.voicePlaceholder":
+    "e.g. Short and factual. No hype.",
+  "settings.creator.priorityNote":
+    "What you set here takes priority over patterns in your recent answers when Koqentra analyses a piece.",
+  "settings.creator.saved": "Creator preferences saved.",
+  "settings.creator.failed": "Could not save your creator preferences.",
+  "settings.creator.tooLong":
+    "\u201c{field}\u201d is too long. Keep it to {limit} characters or fewer.",
+
+  /**
    * How somebody reaches a person.
    *
    * **Settings is where it sits because that is the one page inside the

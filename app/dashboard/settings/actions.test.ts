@@ -18,11 +18,15 @@ const mocks = vi.hoisted(() => ({
   setUserLanguage: vi.fn(),
   revalidatePath: vi.fn(),
   redirect: vi.fn(),
+  saveCreatorProfile: vi.fn(),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 vi.mock("@/auth", () => ({ auth: mocks.auth }));
+vi.mock("@/lib/creator/repository", () => ({
+  saveCreatorProfile: mocks.saveCreatorProfile,
+}));
 vi.mock("@/lib/users", () => ({
   ensureUser: mocks.ensureUser,
   setUserTimezone: mocks.setUserTimezone,
@@ -30,9 +34,12 @@ vi.mock("@/lib/users", () => ({
   setUserLanguage: mocks.setUserLanguage,
 }));
 
-const { updateTimezoneAction, updateLanguageAction } = await import(
-  "@/app/dashboard/settings/actions"
-);
+const {
+  updateTimezoneAction,
+  updateLanguageAction,
+  updateCreatorPreferencesAction,
+} = await import("@/app/dashboard/settings/actions");
+const { creatorAnalysisLimits } = await import("@/lib/creator/analyzer");
 const { en } = await import("@/lib/i18n/en");
 const { ja } = await import("@/lib/i18n/ja");
 
@@ -61,6 +68,7 @@ beforeEach(() => {
   // The timezone save reads this for the wording of its answer. English by
   // default, so the existing assertions keep describing what they described.
   mocks.getUserLanguage.mockReset().mockResolvedValue("en");
+  mocks.saveCreatorProfile.mockReset().mockResolvedValue(undefined);
   mocks.revalidatePath.mockReset();
   mocks.redirect.mockReset().mockImplementation((to: string) => {
     throw new RedirectSignal(to);
@@ -387,5 +395,242 @@ describe("updateTimezoneAction — the words it answers in", () => {
       expect.anything(),
       "Asia/Tokyo",
     );
+  });
+});
+
+/**
+ * Stating what Koqentra should assume about somebody's writing.
+ *
+ * **The same order the other two saves keep**, exercised for real: only `auth`
+ * and the repository are stood in for. What is fixed here is that a submission
+ * too long to be analysed never reaches the provisioning boundary, that the
+ * account written to is the session's, and that nothing anybody typed leaves
+ * this file in a message or a log.
+ */
+describe("updateCreatorPreferencesAction", () => {
+  function preferences(values: Record<string, string> = {}) {
+    const data = new FormData();
+    data.set("audience", values.audience ?? "Solo founders");
+    data.set("goals", values.goals ?? "Be useful");
+    data.set("voiceInstructions", values.voiceInstructions ?? "Plain sentences");
+    return data;
+  }
+
+  it("identifies, reads the language, provisions, saves, then revalidates", async () => {
+    const result = await updateCreatorPreferencesAction(null, preferences());
+
+    expect(result).toEqual({
+      status: "success",
+      message: "Creator preferences saved.",
+    });
+
+    const order = [
+      mocks.auth.mock.invocationCallOrder[0],
+      mocks.getUserLanguage.mock.invocationCallOrder[0],
+      mocks.ensureUser.mock.invocationCallOrder[0],
+      mocks.saveCreatorProfile.mock.invocationCallOrder[0],
+      mocks.revalidatePath.mock.invocationCallOrder[0],
+    ];
+
+    expect(order.slice().sort((a, b) => a - b)).toEqual(order);
+  });
+
+  /** The owner comes from the session. No form field names one. */
+  it("writes for the provisioned session account", async () => {
+    await updateCreatorPreferencesAction(
+      null,
+      preferences({ audience: "Solo founders" }),
+    );
+
+    expect(mocks.saveCreatorProfile).toHaveBeenCalledWith("google-sub-1", {
+      audience: "Solo founders",
+      goals: "Be useful",
+      voiceInstructions: "Plain sentences",
+    });
+  });
+
+  it("ignores an owner somebody put in the form", async () => {
+    const data = preferences();
+    data.set("userId", "google-sub-2");
+    data.set("creatorProfileId", "profile-9");
+
+    await updateCreatorPreferencesAction(null, data);
+
+    expect(mocks.saveCreatorProfile.mock.calls[0][0]).toBe("google-sub-1");
+    expect(mocks.saveCreatorProfile.mock.calls[0][1]).toEqual({
+      audience: "Solo founders",
+      goals: "Be useful",
+      voiceInstructions: "Plain sentences",
+    });
+  });
+
+  /**
+   * Trimmed at the ends and left alone in the middle: whitespace is not a
+   * preference, and the paragraphs somebody wrote are.
+   */
+  it("trims the ends and keeps the newlines inside", async () => {
+    await updateCreatorPreferencesAction(
+      null,
+      preferences({
+        audience: "   Solo founders  ",
+        goals: "\n Be useful.\nBe brief.\n",
+        voiceInstructions: "\t",
+      }),
+    );
+
+    expect(mocks.saveCreatorProfile).toHaveBeenCalledWith("google-sub-1", {
+      audience: "Solo founders",
+      goals: "Be useful.\nBe brief.",
+      voiceInstructions: "",
+    });
+  });
+
+  /** Clearing everything is a legitimate save, not an invalid one. */
+  it("saves three empty preferences", async () => {
+    const result = await updateCreatorPreferencesAction(
+      null,
+      preferences({ audience: "", goals: "", voiceInstructions: "" }),
+    );
+
+    expect(result?.status).toBe("success");
+    expect(mocks.saveCreatorProfile).toHaveBeenCalledWith("google-sub-1", {
+      audience: "",
+      goals: "",
+      voiceInstructions: "",
+    });
+  });
+
+  /**
+   * **Refused above the analyzer's ceiling, and refused before the row is
+   * provisioned.** A submission that cannot be saved must not create the
+   * account row that saving it would have needed.
+   */
+  it.each([
+    ["audience", "profileAudience", "Who you want to reach"],
+    ["goals", "profileGoals", "What you want your content to achieve"],
+    ["voiceInstructions", "profileVoiceInstructions", "Writing style and voice"],
+  ] as const)(
+    "refuses an oversized %s without provisioning",
+    async (field, limit, label) => {
+      const result = await updateCreatorPreferencesAction(
+        null,
+        preferences({ [field]: "x".repeat(creatorAnalysisLimits[limit] + 1) }),
+      );
+
+      expect(result?.status).toBe("error");
+      expect(result?.message).toContain(label);
+      expect(result?.message).toContain(String(creatorAnalysisLimits[limit]));
+      expect(mocks.ensureUser).not.toHaveBeenCalled();
+      expect(mocks.saveCreatorProfile).not.toHaveBeenCalled();
+      expect(mocks.revalidatePath).not.toHaveBeenCalled();
+    },
+  );
+
+  it("accepts a value exactly at the ceiling", async () => {
+    const result = await updateCreatorPreferencesAction(
+      null,
+      preferences({
+        audience: "x".repeat(creatorAnalysisLimits.profileAudience),
+      }),
+    );
+
+    expect(result?.status).toBe("success");
+  });
+
+  /** What was written is nobody's diagnostic: not in the answer, not in a log. */
+  it("keeps the text out of the refusal", async () => {
+    const secret = "SECRET-AUDIENCE-".repeat(200);
+
+    const result = await updateCreatorPreferencesAction(
+      null,
+      preferences({ audience: secret }),
+    );
+
+    expect(result?.message).not.toContain("SECRET-AUDIENCE");
+  });
+
+  it("reports a safe error and writes nothing when the row cannot be provisioned", async () => {
+    mocks.ensureUser.mockRejectedValue(new Error("connection lost"));
+
+    const result = await updateCreatorPreferencesAction(null, preferences());
+
+    expect(result).toEqual({
+      status: "error",
+      message: "Could not save your creator preferences.",
+    });
+    expect(mocks.saveCreatorProfile).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  /** A redirect leaves by being thrown too, and has to carry on out of here. */
+  it("lets a redirect through", async () => {
+    mocks.auth.mockResolvedValue(null);
+
+    await expect(
+      updateCreatorPreferencesAction(null, preferences()),
+    ).rejects.toBeInstanceOf(RedirectSignal);
+    expect(mocks.saveCreatorProfile).not.toHaveBeenCalled();
+  });
+
+  it("reports a safe error when the write fails, and revalidates nothing", async () => {
+    mocks.saveCreatorProfile.mockRejectedValue(new Error("connection lost"));
+
+    const result = await updateCreatorPreferencesAction(null, preferences());
+
+    expect(result).toEqual({
+      status: "error",
+      message: "Could not save your creator preferences.",
+    });
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("keeps the preferences out of the log when the write fails", async () => {
+    mocks.saveCreatorProfile.mockRejectedValue(new Error("connection lost"));
+
+    await updateCreatorPreferencesAction(
+      null,
+      preferences({ audience: "SECRET-AUDIENCE" }),
+    );
+
+    const logged = JSON.stringify(
+      (console.error as unknown as { mock: { calls: unknown[][] } }).mock.calls,
+    );
+
+    expect(logged).toContain("[settings] creator preferences update failed");
+    expect(logged).not.toContain("SECRET-AUDIENCE");
+  });
+
+  /**
+   * Two screens read this row: this page, and the panel on the Creator page
+   * that shows what the next analysis will be told. Nothing else is
+   * invalidated.
+   */
+  it("revalidates the two screens that read the profile, once each", async () => {
+    await updateCreatorPreferencesAction(null, preferences());
+
+    expect(mocks.revalidatePath.mock.calls).toEqual([
+      ["/dashboard/settings"],
+      ["/creator/new"],
+    ]);
+  });
+
+  it("says nothing about what was stored in its answer", async () => {
+    const result = await updateCreatorPreferencesAction(
+      null,
+      preferences({ audience: "SECRET-AUDIENCE" }),
+    );
+
+    expect(JSON.stringify(result)).not.toContain("SECRET-AUDIENCE");
+  });
+
+  it("answers in the account's language", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+
+    const result = await updateCreatorPreferencesAction(null, preferences());
+
+    expect(result).toEqual({
+      status: "success",
+      message: ja["settings.creator.saved"],
+    });
   });
 });

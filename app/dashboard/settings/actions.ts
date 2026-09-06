@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { creatorAnalysisLimits } from "@/lib/creator/analyzer";
+import { saveCreatorProfile } from "@/lib/creator/repository";
 import { isSupportedLanguage, t } from "@/lib/i18n";
 import {
   isUserProvisioningError,
@@ -150,4 +152,119 @@ export async function updateLanguageAction(
   revalidatePath("/dashboard", "layout");
 
   return { status: "success", message: t(language, "settings.language.saved") };
+}
+
+export type UpdateCreatorPreferencesState = ActionResult | null;
+
+/**
+ * One stated preference, trimmed at the ends and left alone in the middle.
+ *
+ * **Whitespace is not a preference.** The learning panel already reads a value
+ * of only spaces as nothing set, and a save that stored one would leave the
+ * two screens disagreeing about the same row. Newlines inside are somebody's
+ * paragraphs, and stay.
+ */
+function statedPreference(value: FormDataEntryValue | null): string {
+  return String(value ?? "").trim();
+}
+
+/**
+ * What Koqentra should assume about somebody's writing before it judges any.
+ *
+ * **Its own save, beside the timezone and the language.** Three settings that
+ * share a page are still three settings, and a single result describing two
+ * writes has nothing sensible to say when one lands and the other does not.
+ *
+ * **Nothing here is inferred.** These are the three columns a person states,
+ * and the only path that writes them from typed text — an analysis writes
+ * `update: {}` precisely so that it cannot rewrite them.
+ *
+ * The order the other two keep is kept: authenticate, validate, provision,
+ * write. A submission that is refused must not create the account row that
+ * saving it would have needed.
+ */
+export async function updateCreatorPreferencesAction(
+  _prevState: UpdateCreatorPreferencesState,
+  formData: FormData,
+): Promise<UpdateCreatorPreferencesState> {
+  // Who is asking, and only as a question — this writes nothing.
+  const userId = await requireUserId();
+
+  // Read for the wording of the answer. What gets written does not depend on
+  // it, and neither does whether the submission is accepted.
+  const language = await getUserLanguage(userId);
+
+  const profile = {
+    audience: statedPreference(formData.get("audience")),
+    goals: statedPreference(formData.get("goals")),
+    voiceInstructions: statedPreference(formData.get("voiceInstructions")),
+  };
+
+  // **The analyzer's limits, not a second set.** The request these values end
+  // up in is refused above them, so a save that accepted more would store
+  // preferences that quietly break every later analysis. The browser stops
+  // typing at the same numbers; this is the check that decides.
+  //
+  // All three empty is valid — that is somebody withdrawing what they stated.
+  const tooLong = (
+    [
+      ["audience", "settings.creator.audience", creatorAnalysisLimits.profileAudience],
+      ["goals", "settings.creator.goals", creatorAnalysisLimits.profileGoals],
+      [
+        "voiceInstructions",
+        "settings.creator.voice",
+        creatorAnalysisLimits.profileVoiceInstructions,
+      ],
+    ] as const
+  ).find(([field, , limit]) => profile[field].length > limit);
+
+  // **Nothing has been written above this line**, so a rejected submission
+  // leaves an account exactly as it found it — without a row, if it had none.
+  // The message names the field and the number and carries none of the text.
+  if (tooLong) {
+    const [, labelKey, limit] = tooLong;
+
+    return {
+      status: "error",
+      message: t(language, "settings.creator.tooLong", {
+        field: t(language, labelKey),
+        limit,
+      }),
+    };
+  }
+
+  // The owner comes from the session, never from the form. The row it names
+  // may not exist yet — sessions are JWT-only — and `CreatorProfile.userId`
+  // points at it.
+  let provisionedUserId: string;
+  try {
+    provisionedUserId = await requireProvisionedUserId();
+  } catch (error) {
+    // A redirect leaves by being thrown too, so anything that is not a
+    // provisioning failure carries on out of here.
+    if (!isUserProvisioningError(error)) {
+      throw error;
+    }
+
+    console.error("[settings] could not provision the account row", error);
+    return { status: "error", message: t(language, "settings.creator.failed") };
+  }
+
+  try {
+    await saveCreatorProfile(provisionedUserId, profile);
+  } catch (error) {
+    // **The preferences themselves are not in the log.** A field name and a
+    // limit are diagnostics; what somebody wrote about their own audience is
+    // not, and this is the same text the analyzer treats as private.
+    console.error("[settings] creator preferences update failed", error);
+    return { status: "error", message: t(language, "settings.creator.failed") };
+  }
+
+  // Two screens read this row: the section below, and the learning panel on
+  // the Creator page that shows what the next analysis will be told. Nothing
+  // else does, so nothing else is invalidated.
+  revalidatePath("/dashboard/settings");
+  revalidatePath("/creator/new");
+
+  return { status: "success", message: t(language, "settings.creator.saved") };
 }

@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
+import { CreatorPreferencesForm } from "@/components/creator-preferences-form";
 import { DashboardNav } from "@/components/dashboard-nav";
 import { LanguageForm } from "@/components/language-form";
 import { TimezoneForm } from "@/components/timezone-form";
+import { readCreatorProfile } from "@/lib/creator/repository";
 import { t } from "@/lib/i18n";
 import { requireUserId } from "@/lib/session";
 import { supportMailtoHref } from "@/lib/support";
@@ -17,9 +19,14 @@ export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
   const userId = await requireUserId();
-  const [timezone, language] = await Promise.all([
+  // **Read for the signed-in account, and read-only.** Opening this page must
+  // not bring a profile row into being: an account that has never analysed
+  // anything gets `EMPTY_CREATOR_PROFILE` back and sees an empty form, which
+  // is exactly right. The row is created by the save below it, or by an analysis.
+  const [timezone, language, creatorProfile] = await Promise.all([
     getUserTimezone(userId),
     getUserLanguage(userId),
+    readCreatorProfile(userId),
   ]);
 
   // Read after the language, because the subject line is one of the words the
@@ -48,6 +55,22 @@ export default async function SettingsPage() {
           </h2>
 
           <LanguageForm language={language} />
+        </section>
+
+        {/* **Beside the two account settings rather than on the Creator
+            screens**, because this is something stated once about an account
+            and then left alone — not part of handing a piece of writing over.
+            The panel on `/creator/new` shows the same three values back at the
+            moment they are about to be used. */}
+        <section className="mt-12 border-t border-border pt-8">
+          <h2 className="text-lg font-medium tracking-tight">
+            {t(language, "settings.creator.title")}
+          </h2>
+          <p className="mt-3 max-w-2xl text-sm text-muted-foreground">
+            {t(language, "settings.creator.description")}
+          </p>
+
+          <CreatorPreferencesForm profile={creatorProfile} language={language} />
         </section>
 
         {/* **The one page behind sign-in that is about the account rather than
