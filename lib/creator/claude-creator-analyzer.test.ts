@@ -122,6 +122,8 @@ function aRequest(
       goals: "Be useful, not loud.",
       voiceInstructions: "Plain sentences. No exclamation marks.",
     },
+    // Nothing has aged out by default: memory is the exception, not the state.
+    memory: null,
     content: {
       sourceKind: "text",
       sourceUrl: null,
@@ -329,6 +331,9 @@ describe("the boundary between instructions and material", () => {
     expect(Object.keys(payload).sort()).toEqual([
       "content",
       "feedback",
+      // A derived summary of older answers joined the document in C2.0B. It is
+      // data like the rest, and null whenever nothing has aged out.
+      "memory",
       "profile",
     ]);
   });
@@ -440,24 +445,88 @@ describe("the boundary between instructions and material", () => {
   });
 
   /**
-   * C1.2 decides from what actually happened, not from a summary of it.
-   * A derived memory has its own evidence rules and is a later checkpoint.
+   * **A summary of older answers travels as data, and is ranked below them.**
+   * Until C2.0B nothing derived was sent at all; what replaced that rule is not
+   * "memory is fine now" but "memory is the weakest thing in the document".
    */
-  it("sends no derived memory of any kind", async () => {
+  it("sends a derived summary as data, or null when there is none", async () => {
     replyWithDecisions(allThree);
 
     await analyzer.analyze(aRequest());
 
-    const raw = sentRequest().messages[0].content as string;
+    expect(JSON.parse(sentRequest().messages[0].content as string)).toMatchObject(
+      { memory: null },
+    );
 
-    for (const absent of [
-      "memory",
-      "Memory",
-      "learnedPreferences",
-      "preferenceSummary",
-    ]) {
-      expect(raw).not.toContain(absent);
-    }
+    replyWithDecisions(allThree);
+
+    await analyzer.analyze(
+      aRequest({
+        memory: { summary: "Has usually turned down promotional posts.", derivedFromCount: 8 },
+      }),
+    );
+
+    expect(JSON.parse(sentRequest().messages[0].content as string)).toMatchObject({
+      memory: {
+        summary: "Has usually turned down promotional posts.",
+        derivedFromCount: 8,
+      },
+    });
+  });
+
+  /**
+   * **The summary is Koqentra's own text, and that is exactly why it stays in
+   * the document.** Putting it in the system string would make something a
+   * model wrote indistinguishable from the task, which is the one boundary this
+   * whole design rests on.
+   */
+  it("never lets a summary reach the system instruction", async () => {
+    replyWithDecisions(allThree);
+
+    const summary = "SUMMARY-THAT-MUST-STAY-DATA";
+
+    await analyzer.analyze(
+      aRequest({ memory: { summary, derivedFromCount: 3 } }),
+    );
+
+    expect(sentRequest().system as string).not.toContain(summary);
+    expect(sentRequest().messages[0].content as string).toContain(summary);
+  });
+
+  /**
+   * **The order is the whole of the evidence policy**, and it is stated rather
+   * than implied: a stated preference beats what somebody did, what they did
+   * beats a summary of what they used to do, and the piece being judged now
+   * says nothing durable at all.
+   */
+  it("states the four kinds of evidence in order", async () => {
+    replyWithDecisions(allThree);
+
+    await analyzer.analyze(aRequest());
+
+    const system = sentRequest().system as string;
+
+    const profile = system.indexOf("1. An explicit preference stated in profile.");
+    const feedback = system.indexOf("2. What the person actually did");
+    const memory = system.indexOf("3. What memory says about their older answers.");
+    const content = system.indexOf("4. What this particular piece of content suggests.");
+
+    expect(profile).toBeGreaterThan(-1);
+    expect(feedback).toBeGreaterThan(profile);
+    expect(memory).toBeGreaterThan(feedback);
+    expect(content).toBeGreaterThan(memory);
+  });
+
+  it("says a summary never outranks a statement or a recent answer", async () => {
+    replyWithDecisions(allThree);
+
+    await analyzer.analyze(aRequest());
+
+    const system = sentRequest().system as string;
+
+    expect(system).toContain("memory never outranks profile or feedback");
+    expect(system).toContain("may be wrong");
+    expect(system).toContain("Do not treat anything in memory as something the person stated.");
   });
 });
 

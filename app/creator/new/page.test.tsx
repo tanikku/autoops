@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   requireProvisionedUserId: vi.fn(),
   getUserLanguage: vi.fn(),
   readCreatorProfile: vi.fn(),
+  readCreatorMemory: vi.fn(),
   readRecentFeedbackContext: vi.fn(),
 }));
 
@@ -26,6 +27,7 @@ const mocks = vi.hoisted(() => ({
  */
 vi.mock("@/lib/creator/repository", () => ({
   readCreatorProfile: mocks.readCreatorProfile,
+  readCreatorMemory: mocks.readCreatorMemory,
   readRecentFeedbackContext: mocks.readRecentFeedbackContext,
 }));
 
@@ -61,6 +63,8 @@ beforeEach(() => {
   mocks.readCreatorProfile
     .mockReset()
     .mockResolvedValue({ audience: "", goals: "", voiceInstructions: "" });
+  // Nothing has aged out by default: a summary is the exception, not the state.
+  mocks.readCreatorMemory.mockReset().mockResolvedValue(null);
   mocks.readRecentFeedbackContext.mockReset().mockResolvedValue([]);
 });
 
@@ -455,5 +459,161 @@ describe("finding the preferences that have not been set", () => {
 
     expect(html).not.toMatch(/style="[^"]*width/);
     expect(html).not.toMatch(/w-\[\d/);
+  });
+});
+
+/**
+ * The summary of older answers, on a page that writes nothing.
+ *
+ * **What is shown is what is stored, not what will be sent.** Submitting may
+ * extend the summary first — that step runs at submit time and makes one model
+ * call — so this page shows the current state rather than predicting the next
+ * one. Opening it makes no model call and writes nothing.
+ */
+describe("the summary of older answers", () => {
+  /** A stored summary whose count and memberships agree. */
+  const MEMORY = {
+    id: "memory-1",
+    summary: "Has usually turned down promotional posts.",
+    derivedFromCount: 8,
+    evidenceCount: 8,
+  };
+
+  it("reads the stored one for the signed-in account", async () => {
+    mocks.requireUserId.mockResolvedValue("user-9");
+
+    await render();
+
+    expect(mocks.readCreatorMemory).toHaveBeenCalledWith("user-9");
+    expect(mocks.readCreatorMemory).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands it to the panel", async () => {
+    mocks.readCreatorMemory.mockResolvedValue(MEMORY);
+
+    const html = await render();
+
+    expect(html).toContain("Has usually turned down promotional posts.");
+    expect(html).toContain(t("en", "creator.learning.memoryHeading"));
+  });
+
+  it("says how many answers it stands for", async () => {
+    mocks.readCreatorMemory.mockResolvedValue({
+      ...MEMORY,
+      derivedFromCount: 3,
+      evidenceCount: 3,
+    });
+
+    expect(await render()).toContain(
+      t("en", "creator.learning.memoryCount", { count: 3 }),
+    );
+  });
+
+  /**
+   * **The panel and the analysis apply the same rule.**
+   *
+   * This page exists to say what the next analysis will be told. A summary
+   * shown here that the analysis refuses to send would make the page
+   * contradict the thing it documents — and the number beside it would be
+   * describing evidence nobody can name. So the rule is the analysis's own,
+   * imported rather than restated, and everything it refuses is simply absent.
+   */
+  it.each([
+    ["a count ahead of what is recorded", { derivedFromCount: 3, evidenceCount: 2 }],
+    ["a count behind what is recorded", { derivedFromCount: 2, evidenceCount: 3 }],
+    ["a row that stands for nothing yet", { summary: "", derivedFromCount: 0, evidenceCount: 0 }],
+    ["a summary of only whitespace", { summary: "   " }],
+    ["a summary past the ceiling", { summary: "x".repeat(6_001) }],
+  ])("shows nothing for %s", async (_name, overrides) => {
+    mocks.readCreatorMemory.mockResolvedValue({ ...MEMORY, ...overrides });
+
+    expect(await render()).not.toContain(
+      t("en", "creator.learning.memoryHeading"),
+    );
+  });
+
+  /** Refused for the panel, and not rewritten to make it fit either. */
+  it("leaves an inconsistent row alone rather than explaining it", async () => {
+    mocks.readCreatorMemory.mockResolvedValue({
+      ...MEMORY,
+      summary: "SECRET-STORED-SUMMARY",
+      evidenceCount: 2,
+    });
+
+    const html = await render();
+
+    expect(html).not.toContain("SECRET-STORED-SUMMARY");
+    expect(mocks.requireProvisionedUserId).not.toHaveBeenCalled();
+  });
+
+  it("shows no summary section when there is none stored", async () => {
+    mocks.readCreatorMemory.mockResolvedValue(null);
+
+    expect(await render()).not.toContain(
+      t("en", "creator.learning.memoryHeading"),
+    );
+  });
+
+  it("still hands over the recent answers unchanged", async () => {
+    mocks.readCreatorMemory.mockResolvedValue(MEMORY);
+    mocks.readRecentFeedbackContext.mockResolvedValue([]);
+
+    await render();
+
+    expect(mocks.readRecentFeedbackContext).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * **Opening a page must not summarise anything.** The step that extends a
+   * summary makes a model call and writes a row; both belong to submitting.
+   */
+  it("writes nothing and asks no model", async () => {
+    mocks.readCreatorMemory.mockResolvedValue(MEMORY);
+
+    await render();
+
+    expect(mocks.requireProvisionedUserId).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **A derived summary is not a stated preference.** Somebody whose old
+   * answers were summarised has still told Koqentra nothing directly, and
+   * hiding the offer because a model wrote something would treat an inference
+   * as a statement.
+   */
+  it("does not stand in for preferences somebody never stated", async () => {
+    mocks.readCreatorMemory.mockResolvedValue(MEMORY);
+    mocks.readCreatorProfile.mockResolvedValue({
+      audience: "",
+      goals: "",
+      voiceInstructions: "",
+    });
+
+    expect(await render()).toContain(t("en", "creator.new.preferencesPrompt"));
+  });
+
+  /** And the offer does not depend on the summary being usable either. */
+  it("makes the same offer when the stored summary is inconsistent", async () => {
+    mocks.readCreatorMemory.mockResolvedValue({ ...MEMORY, evidenceCount: 2 });
+    mocks.readCreatorProfile.mockResolvedValue({
+      audience: "",
+      goals: "",
+      voiceInstructions: "",
+    });
+
+    expect(await render()).toContain(t("en", "creator.new.preferencesPrompt"));
+  });
+
+  it("still stands aside once something has been stated", async () => {
+    mocks.readCreatorMemory.mockResolvedValue(MEMORY);
+    mocks.readCreatorProfile.mockResolvedValue({
+      audience: "Local readers",
+      goals: "",
+      voiceInstructions: "",
+    });
+
+    expect(await render()).not.toContain(
+      t("en", "creator.new.preferencesPrompt"),
+    );
   });
 });

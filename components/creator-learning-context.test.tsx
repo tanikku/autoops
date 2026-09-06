@@ -58,6 +58,7 @@ function render(
   return renderToStaticMarkup(
     <CreatorLearningContext
       profile={EMPTY_PROFILE}
+      memory={null}
       feedback={[]}
       language={language}
       {...overrides}
@@ -372,5 +373,136 @@ describe("in Japanese", () => {
     const html = render({ profile: EMPTY_PROFILE }, "ja");
 
     expect(html).toContain(t("ja", "creator.learning.notSet"));
+  });
+});
+
+/**
+ * What Koqentra concluded from answers it no longer lists one by one.
+ *
+ * **Shown as a derivation, never as a fact about somebody.** Koqentra does not
+ * know what this person prefers; a model wrote a summary from answers that
+ * scrolled out of the list, and that summary can be wrong. The panel says so,
+ * and says which evidence outranks it — which is the order the analyzer
+ * actually applies.
+ *
+ * **The count is what the summary was built from**, not how many old answers
+ * exist. Catching up happens a batch at a time, so the two differ while it is
+ * in progress; "based on N" is accurate at every step and "all of them" would
+ * not be.
+ */
+describe("the summary of older answers", () => {
+  const MEMORY = {
+    summary: "Has usually turned down promotional posts.",
+    derivedFromCount: 8,
+  };
+
+  it("says nothing at all when there is none", () => {
+    const html = render({ memory: null, feedback: [answer()] });
+
+    expect(html).not.toContain(t("en", "creator.learning.memoryHeading"));
+    expect(html).not.toContain(t("en", "creator.learning.memoryNote"));
+  });
+
+  it("shows the summary, what it was built from, and its standing", () => {
+    const html = render({ memory: MEMORY });
+
+    expect(html).toContain(t("en", "creator.learning.memoryHeading"));
+    expect(html).toContain("Has usually turned down promotional posts.");
+    expect(html).toContain(
+      t("en", "creator.learning.memoryCount", { count: "8" }),
+    );
+    expect(html).toContain(t("en", "creator.learning.memoryNote"));
+  });
+
+  /**
+   * **Between the two things it is ranked against.** Above it is what the
+   * person stated; below it is what they did recently. Both outrank it, and the
+   * order on screen is the order the analyzer applies.
+   */
+  it("sits below the stated preferences and above the recent answers", () => {
+    const html = render({ profile: PROFILE, memory: MEMORY, feedback: [answer()] });
+
+    const preferences = html.indexOf(t("en", "creator.learning.profileHeading"));
+    const memory = html.indexOf(t("en", "creator.learning.memoryHeading"));
+    const answers = html.indexOf(t("en", "creator.learning.answersHeading"));
+
+    expect(preferences).toBeGreaterThan(-1);
+    expect(memory).toBeGreaterThan(preferences);
+    expect(answers).toBeGreaterThan(memory);
+  });
+
+  it("leaves the recent answers exactly where they were", () => {
+    const html = render({ memory: MEMORY, feedback: [answer(), answer()] });
+
+    expect(html).toContain(
+      t("en", "creator.learning.answerCount", {
+        count: "2",
+        limit: String(creatorAnalysisLimits.feedbackItems),
+      }),
+    );
+  });
+
+  /**
+   * **Nothing to act on.** The stated preferences above are where somebody says
+   * what they want; a second editable place would blur which of the two the
+   * analyzer treats as a statement.
+   */
+  it("offers no way to change it", () => {
+    const html = render({ memory: MEMORY });
+
+    expect(html.match(/<button/g) ?? []).toHaveLength(0);
+    expect(html.match(/<form/g) ?? []).toHaveLength(0);
+    expect(html).not.toContain("<input");
+    expect(html).not.toContain("<textarea");
+    expect(html).not.toContain('href="/dashboard/settings');
+  });
+
+  /** Still one collapsed panel, and still bounded by the column it sits in. */
+  it("stays inside the collapsed panel", () => {
+    const html = render({ memory: MEMORY });
+
+    expect(html).toContain("<details");
+    expect(html).toContain("<summary");
+    expect(html).not.toMatch(/style="[^"]*width/);
+    expect(html).not.toMatch(/w-\[\d/);
+    expect(html).toContain("break-words");
+  });
+
+  it("speaks Japanese when the account does", () => {
+    const html = render({ memory: MEMORY }, "ja");
+
+    expect(html).toContain(t("ja", "creator.learning.memoryHeading"));
+    expect(html).toContain(
+      t("ja", "creator.learning.memoryCount", { count: "8" }),
+    );
+    expect(html).not.toContain(t("en", "creator.learning.memoryHeading"));
+  });
+
+  /**
+   * **It may not be stated as knowledge.** Koqentra derives this; it does not
+   * know it. The wording has to keep saying so in both languages, because the
+   * panel is the only place the difference is visible.
+   */
+  it.each(["en", "ja"] as const)("says it is derived and may be wrong, in %s", (language) => {
+    const note = t(language, "creator.learning.memoryNote");
+
+    expect(note).toContain(language === "ja" ? "AI" : "AI-generated");
+    expect(note).toContain(language === "ja" ? "正確でない場合があります" : "may be imperfect");
+    expect(note).toContain(language === "ja" ? "優先" : "take priority");
+  });
+
+  it.each([
+    ["en", ["Koqentra knows", "Koqentra remembers", "You prefer", "we learned"]],
+    ["ja", ["あなたは", "覚えて", "把握して"]],
+  ] as const)("claims nothing it cannot, in %s", (language, phrases) => {
+    const copy = [
+      t(language, "creator.learning.memoryHeading"),
+      t(language, "creator.learning.memoryNote"),
+      t(language, "creator.learning.memoryCount", { count: "8" }),
+    ].join(" ");
+
+    for (const phrase of phrases) {
+      expect(copy).not.toContain(phrase);
+    }
   });
 });

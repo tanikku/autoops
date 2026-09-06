@@ -3,7 +3,9 @@ import Link from "next/link";
 import { CreatorAnalysisForm } from "@/components/creator-analysis-form";
 import { CreatorLearningContext } from "@/components/creator-learning-context";
 import { DashboardNav } from "@/components/dashboard-nav";
+import { isUsableStoredMemory } from "@/lib/creator/memory";
 import {
+  readCreatorMemory,
   readCreatorProfile,
   readRecentFeedbackContext,
 } from "@/lib/creator/repository";
@@ -33,22 +35,43 @@ export const dynamic = "force-dynamic";
 export default async function CreatorNewPage() {
   const userId = await requireUserId();
 
-  // **Three reads and no writes.** The same two functions the analyzer's
-  // context is built from, so what the panel shows and what the model is told
-  // cannot drift apart — `readCreatorProfile` answers with empty preferences
-  // rather than creating a row, which is what keeps looking at this page free
-  // of side effects.
-  const [language, profile, feedback] = await Promise.all([
+  // **Four reads and no writes.** The same functions the analyzer's context is
+  // built from, so what the panel shows and what the model is told cannot drift
+  // apart — `readCreatorProfile` answers with empty preferences rather than
+  // creating a row, and `readCreatorMemory` with null rather than synthesising
+  // one, which is what keeps looking at this page free of side effects.
+  const [language, profile, memory, feedback] = await Promise.all([
     getUserLanguage(userId),
     readCreatorProfile(userId),
+    // **The stored summary, read like everything else here.** Extending it is
+    // something submitting does; opening this page makes no model call and
+    // writes nothing.
+    readCreatorMemory(userId),
     readRecentFeedbackContext(userId),
   ]);
+
+  // **Shown only if the next analysis would actually be given it.** This panel
+  // says what the model will be told; a summary displayed here that the
+  // analysis refuses to send would make the page contradict the thing it
+  // documents. The rule is the analysis's own — a row whose count disagrees
+  // with what is recorded against it, or that stands for nothing yet, is not
+  // this account's memory and there is nothing here to show.
+  //
+  // **Not repaired and not explained.** Nothing is written from this page, and
+  // an inconsistency in derived context is not somebody's problem to read
+  // about; the operator's log already carries it.
+  const usableMemory = isUsableStoredMemory(memory) ? memory : null;
 
   // **Read from the values, never from the row.** A profile that was never
   // created and one saved empty are the same answer to the only question that
   // matters here, and asking the database to tell them apart would mean writing
   // a row to find out. Whitespace counts as nothing said, the same way the
   // panel below already reads it.
+  //
+  // **A derived summary is not a stated preference and does not count here.**
+  // Somebody whose old answers have been summarised has still told Koqentra
+  // nothing directly, and hiding the offer because a model wrote something
+  // would be treating an inference as a statement.
   const hasStatedPreferences = [
     profile.audience,
     profile.goals,
@@ -112,6 +135,7 @@ export default async function CreatorNewPage() {
             again, server-side, from the session that submits. */}
         <CreatorLearningContext
           profile={profile}
+          memory={usableMemory}
           feedback={feedback}
           language={language}
         />

@@ -717,6 +717,25 @@ Write nothing that is not in the material. Where a section has nothing to draw o
   "creator.learning.description":
     "The preferences you have set, and how you answered recently.",
   "creator.learning.profileHeading": "Publishing preferences",
+
+  /**
+   * What Koqentra concluded from answers it no longer shows one by one.
+   *
+   * **Said as a derivation, never as a fact about somebody.** Koqentra does not
+   * know what this person prefers; it has a summary a model wrote from answers
+   * that scrolled out of the recent list, and that summary can be wrong. The
+   * description says so, and says which evidence outranks it — that is the same
+   * order the analyzer actually applies.
+   *
+   * **The count is what the summary was built from, not how many old answers
+   * exist.** Catching up on a long history happens a batch at a time, so the
+   * two can differ while it is in progress. Saying "based on {count}" is
+   * accurate at every step; saying "all of them" would not be.
+   */
+  "creator.learning.memoryHeading": "Summary from older answers",
+  "creator.learning.memoryNote":
+    "This is an AI-generated summary of older answers that are no longer shown individually below. It may be imperfect. Your stated preferences and newer answers take priority.",
+  "creator.learning.memoryCount": "Based on {count} older answers",
   "creator.learning.audience": "Who you are writing for",
   "creator.learning.goals": "What you are trying to achieve",
   "creator.learning.voice": "How it should sound",

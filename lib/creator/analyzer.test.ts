@@ -7,8 +7,10 @@ import {
   creatorDraftLimits,
   isCreatorAnalysisRequestTooLarge,
   isInvalidCreatorAnalysisResponse,
+  CreatorAnalysisRequestTooLargeError,
   readCreatorAnalysis,
 } from "@/lib/creator/analyzer";
+import { creatorMemoryLimits } from "@/lib/creator/memory";
 import { creatorTargetChannels, editorialVerdicts } from "@/types";
 
 /**
@@ -25,6 +27,8 @@ const request = (
   overrides: Partial<CreatorAnalysisRequest> = {},
 ): CreatorAnalysisRequest => ({
   profile: { audience: "a", goals: "g", voiceInstructions: "v" },
+  // Nothing has aged out by default: memory is the exception, not the state.
+  memory: null,
   content: { sourceKind: "text", sourceUrl: null, title: null, body: "b" },
   feedback: [],
   ...overrides,
@@ -364,5 +368,111 @@ describe("what may be sent", () => {
         }),
       ),
     ).not.toThrow();
+  });
+});
+
+/**
+ * A derived summary, checked on the way in like everything else.
+ *
+ * **The stored row is read back, not trusted.** It was written by an earlier
+ * run of a summariser that has since changed; a summary past the ceiling or a
+ * count that is not a whole number describes a state nothing here can reason
+ * about, and sending it would be sending something nobody can call correct.
+ */
+describe("the summary of older answers", () => {
+  it("is allowed to be absent", () => {
+    expect(() =>
+      assertCreatorAnalysisRequestWithinLimits(request({ memory: null })),
+    ).not.toThrow();
+  });
+
+  it("is accepted when both halves are usable", () => {
+    expect(() =>
+      assertCreatorAnalysisRequestWithinLimits(
+        request({ memory: { summary: "A conclusion.", derivedFromCount: 8 } }),
+      ),
+    ).not.toThrow();
+  });
+
+  it("is accepted at exactly the ceiling", () => {
+    expect(() =>
+      assertCreatorAnalysisRequestWithinLimits(
+        request({
+          memory: {
+            summary: "x".repeat(creatorMemoryLimits.summary),
+            derivedFromCount: 0,
+          },
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  /** Refused before a byte is sent, and named without quoting any of it. */
+  it("is refused one character past the ceiling", () => {
+    const tooLong = request({
+      memory: {
+        summary: "x".repeat(creatorMemoryLimits.summary + 1),
+        derivedFromCount: 0,
+      },
+    });
+
+    expect(() => assertCreatorAnalysisRequestWithinLimits(tooLong)).toThrow(
+      CreatorAnalysisRequestTooLargeError,
+    );
+
+    const error = (() => {
+      try {
+        assertCreatorAnalysisRequestWithinLimits(tooLong);
+      } catch (thrown) {
+        return thrown as InstanceType<typeof CreatorAnalysisRequestTooLargeError>;
+      }
+      return null;
+    })();
+
+    expect(error?.field).toBe("memory.summary");
+    expect(error?.message).not.toContain("xxxx");
+  });
+
+  it.each([-1, 1.5, Number.NaN])("is refused when the count is %o", (derivedFromCount) => {
+    expect(() =>
+      assertCreatorAnalysisRequestWithinLimits(
+        request({ memory: { summary: "A conclusion.", derivedFromCount } }),
+      ),
+    ).toThrow();
+  });
+
+  it.each(["", "   "])("is refused when the summary is %o", (summary) => {
+    expect(() =>
+      assertCreatorAnalysisRequestWithinLimits(
+        request({ memory: { summary, derivedFromCount: 3 } }),
+      ),
+    ).toThrow();
+  });
+
+  /** A summary does not buy any extra room for the raw answers. */
+  it("changes nothing about how many recent answers may be sent", () => {
+    const feedback = Array.from(
+      { length: creatorAnalysisLimits.feedbackItems + 1 },
+      () => ({
+        targetChannel: "x" as const,
+        verdict: "skip" as const,
+        decisionReason: "No.",
+        draftBody: null,
+        action: "approve" as const,
+        editedBody: null,
+        feedbackReason: null,
+        contentTitle: "An earlier piece",
+        contentExcerpt: "Its opening lines.",
+      }),
+    );
+
+    expect(() =>
+      assertCreatorAnalysisRequestWithinLimits(
+        request({
+          memory: { summary: "A conclusion.", derivedFromCount: 8 },
+          feedback,
+        }),
+      ),
+    ).toThrow(CreatorAnalysisRequestTooLargeError);
   });
 });

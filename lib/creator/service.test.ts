@@ -25,6 +25,10 @@ import { ProviderError } from "@/lib/ai/provider";
 const {
   profileFindUnique,
   feedbackFindMany,
+  memoryFindFirst,
+  evidenceCreateMany,
+  memoryCreate,
+  memoryUpdateMany,
   feedbackCreate,
   decisionFindFirst,
   decisionCreate,
@@ -34,6 +38,10 @@ const {
 } = vi.hoisted(() => ({
   profileFindUnique: vi.fn(),
   feedbackFindMany: vi.fn(),
+  memoryFindFirst: vi.fn(),
+  evidenceCreateMany: vi.fn(),
+  memoryCreate: vi.fn(),
+  memoryUpdateMany: vi.fn(),
   feedbackCreate: vi.fn(),
   decisionFindFirst: vi.fn(),
   decisionCreate: vi.fn(),
@@ -45,16 +53,24 @@ const {
 const profileUpsert = vi.fn();
 
 const tx = {
-  creatorProfile: { upsert: profileUpsert },
+  creatorProfile: { upsert: profileUpsert, findUnique: profileFindUnique },
   contentItem: { create: contentItemCreate },
   editorialDecision: { create: decisionCreate },
   contentDraft: { create: draftCreate },
+  creatorMemory: { create: memoryCreate, updateMany: memoryUpdateMany },
+  creatorMemoryEvidence: { createMany: evidenceCreateMany },
 };
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     creatorProfile: { findUnique: profileFindUnique, upsert: profileUpsert },
     creatorFeedback: { findMany: feedbackFindMany, create: feedbackCreate },
+    creatorMemory: {
+      findFirst: memoryFindFirst,
+      create: memoryCreate,
+      updateMany: memoryUpdateMany,
+    },
+    creatorMemoryEvidence: { createMany: evidenceCreateMany },
     editorialDecision: { findFirst: decisionFindFirst, create: decisionCreate },
     contentItem: { create: contentItemCreate },
     contentDraft: { create: draftCreate },
@@ -73,6 +89,18 @@ const {
 const { isCreatorDecisionNotFound } = await import("@/lib/creator/repository");
 
 const USER = "google-sub-1";
+
+/**
+ * One mock serves two reads with different `select`s — the profile the analyzer
+ * is given, and the id a first memory row hangs off — so the fixture satisfies
+ * both rather than whichever ran last.
+ */
+const PROFILE_ROW = {
+  id: "profile-1",
+  audience: "",
+  goals: "",
+  voiceInstructions: "",
+};
 
 const recommend = (draft: string) => ({
   verdict: "recommend" as const,
@@ -138,6 +166,10 @@ beforeEach(() => {
   transaction.mockReset().mockImplementation((run: (client: unknown) => unknown) => run(tx));
   profileFindUnique.mockResolvedValue(null);
   feedbackFindMany.mockResolvedValue([]);
+  memoryFindFirst.mockReset().mockResolvedValue(null);
+  memoryCreate.mockReset().mockResolvedValue({ id: "memory-1" });
+  memoryUpdateMany.mockReset().mockResolvedValue({ count: 1 });
+  evidenceCreateMany.mockReset().mockResolvedValue({ count: 0 });
   profileUpsert.mockResolvedValue({ id: "profile-1" });
   contentItemCreate.mockResolvedValue({ id: "content-1" });
   decisionCreate.mockResolvedValue({ id: "decision-1" });
@@ -802,5 +834,513 @@ describe("analysing a page that was read from an address", () => {
 
     expect(transaction).not.toHaveBeenCalled();
     expect(contentItemCreate).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What the analyzer is told about answers too old to send one by one.
+ *
+ * **Two properties carry the whole design.** The summary and the recent twelve
+ * never describe the same answer — the split is taken from one read and both
+ * halves are measured against it — and nothing here can turn into a failed
+ * analysis. A provider that times out, a row this version cannot read, a race
+ * lost to another analysis and a batch too large to send all resolve to *less*
+ * memory, never to less analysis.
+ *
+ * **At most one synthesis per analysis.** Catching up on a long history happens
+ * across later analyses; making one of them pay for all of it would put the
+ * slowest possible request in front of the call somebody is waiting for.
+ */
+describe("the summary of older answers", () => {
+  const SUMMARY = "Has usually turned down promotional posts.";
+
+  /** One stored row, as the database hands it back. */
+  function storedRow(index: number, overrides: Record<string, unknown> = {}) {
+    return {
+      id: `f-${index}`,
+      createdAt: new Date(2026, 0, index + 1),
+      action: "approve",
+      editedBody: null,
+      reason: null,
+      editorialDecision: {
+        id: `d-${index}`,
+        targetChannel: "x",
+        verdict: "recommend",
+        reason: "It stands on its own.",
+        userId: USER,
+        draft: { body: "A short post.", userId: USER },
+        contentItem: {
+          title: `Piece ${index}`,
+          body: "The body.",
+          userId: USER,
+        },
+      },
+      ...overrides,
+    };
+  }
+
+  /** A history of `total` answers, newest first, as the partition read sees it. */
+  function historyOf(total: number) {
+    return Array.from({ length: Math.min(total, 13) }, (_, offset) =>
+      storedRow(total - 1 - offset),
+    );
+  }
+
+  /** A stored summary whose count and memberships agree, unless told otherwise. */
+  function memoryRow(
+    summary: string,
+    derivedFromCount: number,
+    evidence: number = derivedFromCount,
+  ) {
+    return {
+      id: "memory-1",
+      summary,
+      derivedFromCount,
+      _count: { evidence },
+    };
+  }
+
+  function fakeSynthesizer(summary: string = SUMMARY) {
+    const requests: unknown[] = [];
+
+    return {
+      requests,
+      synthesizer: {
+        synthesize: async (request: unknown) => {
+          requests.push(structuredClone(request));
+          return summary;
+        },
+      },
+    };
+  }
+
+  /** What the memberships written in this analysis actually name. */
+  function recordedFeedbackIds(): string[] {
+    return evidenceCreateMany.mock.calls.flatMap((call: unknown[]) =>
+      (call[0] as { data: { creatorFeedbackId: string }[] }).data.map(
+        (row) => row.creatorFeedbackId,
+      ),
+    );
+  }
+
+  beforeEach(() => {
+    memoryFindFirst.mockReset().mockResolvedValue(null);
+    memoryCreate.mockReset().mockResolvedValue({ id: "memory-1" });
+    memoryUpdateMany.mockReset().mockResolvedValue({ count: 1 });
+    evidenceCreateMany.mockReset().mockResolvedValue({ count: 0 });
+    profileFindUnique.mockResolvedValue(null);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  /** Nothing has aged out, so there is nothing for a summary to stand for. */
+  it.each([0, 12])("asks for none at %i answers", async (total) => {
+    feedbackFindMany.mockResolvedValue(historyOf(total));
+
+    const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
+    const { synthesizer, requests: synthesised } = fakeSynthesizer();
+
+    await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
+
+    expect(requests[0].memory).toBeNull();
+    expect(requests[0].feedback).toHaveLength(total);
+    expect(synthesised).toHaveLength(0);
+  });
+
+  /**
+   * **The thirteenth answer is the first thing a summary is for.** It has just
+   * left the window, and it is the only thing summarised — not the twelve that
+   * are still being sent in full.
+   */
+  it("summarises only what has aged out", async () => {
+    feedbackFindMany
+      .mockResolvedValueOnce(historyOf(13))
+      .mockResolvedValueOnce([storedRow(0)]);
+    profileFindUnique.mockResolvedValue(PROFILE_ROW);
+
+    const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
+    const { synthesizer, requests: synthesised } = fakeSynthesizer();
+
+    await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
+
+    expect(synthesised).toHaveLength(1);
+    expect((synthesised[0] as { previousSummary: unknown }).previousSummary).toBeNull();
+    expect((synthesised[0] as { feedback: unknown[] }).feedback).toHaveLength(1);
+
+    expect(requests[0].memory).toEqual({ summary: SUMMARY, derivedFromCount: 1 });
+    expect(requests[0].feedback).toHaveLength(12);
+    expect(recordedFeedbackIds()).toEqual(["f-0"]);
+  });
+
+  /**
+   * **Which answers are outstanding is a question for the database, not for
+   * arithmetic here.** The candidates are asked for by membership; nothing is
+   * skipped, so nothing depends on an ordering staying put.
+   */
+  it("extends what is stored with the answers no membership names", async () => {
+    feedbackFindMany
+      .mockResolvedValueOnce(historyOf(20))
+      .mockResolvedValueOnce([storedRow(6), storedRow(7)]);
+    memoryFindFirst.mockResolvedValue(memoryRow("What was concluded before.", 6));
+
+    const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
+    const { synthesizer, requests: synthesised } = fakeSynthesizer();
+
+    await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
+
+    const candidateQuery = feedbackFindMany.mock.calls[1][0];
+
+    expect(candidateQuery.skip).toBeUndefined();
+    expect(candidateQuery.where.memoryEvidence).toEqual({ is: null });
+
+    expect((synthesised[0] as { previousSummary: unknown }).previousSummary).toBe(
+      "What was concluded before.",
+    );
+    expect(memoryUpdateMany.mock.calls[0][0].where.derivedFromCount).toBe(6);
+    expect(memoryUpdateMany.mock.calls[0][0].data.derivedFromCount).toBe(8);
+    expect(recordedFeedbackIds()).toEqual(["f-6", "f-7"]);
+    expect(requests[0].memory).toEqual({ summary: SUMMARY, derivedFromCount: 8 });
+  });
+
+  /**
+   * **Scenario B, which the offset lost an answer to.**
+   *
+   * Two answers are already incorporated. A third, recorded in the same
+   * millisecond range but committed late, becomes visible sorting *before* both
+   * of them. Under the offset it was skipped over — permanently absent from the
+   * summary and already gone from the recent twelve — and the answer after it
+   * was summarised a second time. Membership has no position to be wrong about:
+   * the late answer is exactly the one with no evidence, so it is the one that
+   * gets sent, and the count moves by the one membership written.
+   */
+  it("picks up an answer that became visible after the ones already covered", async () => {
+    const late = storedRow(0, { id: "f-a", createdAt: new Date(2026, 0, 1) });
+
+    feedbackFindMany
+      .mockResolvedValueOnce(historyOf(20))
+      // What the database returns for "older side, and no membership": only the
+      // late answer. The two already incorporated are excluded by their
+      // evidence rows, not by counting past them.
+      .mockResolvedValueOnce([late]);
+    memoryFindFirst.mockResolvedValue(memoryRow("Covers b and c.", 2));
+
+    const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
+    const { synthesizer, requests: synthesised } = fakeSynthesizer();
+
+    await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
+
+    expect((synthesised[0] as { feedback: unknown[] }).feedback).toHaveLength(1);
+    expect(recordedFeedbackIds()).toEqual(["f-a"]);
+    expect(memoryUpdateMany.mock.calls[0][0].data.derivedFromCount).toBe(3);
+    expect(requests[0].memory).toEqual({ summary: SUMMARY, derivedFromCount: 3 });
+  });
+
+  /** Already covered: nothing to add, and nothing to pay for. */
+  it("asks for nothing when no answer is outstanding", async () => {
+    feedbackFindMany
+      .mockResolvedValueOnce(historyOf(20))
+      .mockResolvedValueOnce([]);
+    memoryFindFirst.mockResolvedValue(memoryRow(SUMMARY, 8));
+
+    const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
+    const { synthesizer, requests: synthesised } = fakeSynthesizer();
+
+    await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
+
+    expect(synthesised).toHaveLength(0);
+    expect(memoryUpdateMany).not.toHaveBeenCalled();
+    expect(requests[0].memory).toEqual({ summary: SUMMARY, derivedFromCount: 8 });
+  });
+
+  /**
+   * **The count advances by the memberships written beside it, never by what
+   * was outstanding.** Setting it to the full backlog would claim a summary
+   * covers evidence the model never saw, and nothing afterwards could tell.
+   */
+  it("advances by the batch, leaving the rest for later", async () => {
+    const batch = Array.from({ length: 12 }, (_, index) => storedRow(index));
+
+    feedbackFindMany
+      .mockResolvedValueOnce(historyOf(100))
+      .mockResolvedValueOnce(batch);
+    profileFindUnique.mockResolvedValue(PROFILE_ROW);
+
+    const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
+    const { synthesizer, requests: synthesised } = fakeSynthesizer();
+
+    await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
+
+    expect((synthesised[0] as { feedback: unknown[] }).feedback).toHaveLength(12);
+    expect(memoryCreate.mock.calls[0][0].data.derivedFromCount).toBe(12);
+    expect(recordedFeedbackIds()).toHaveLength(12);
+    expect(requests[0].memory).toEqual({ summary: SUMMARY, derivedFromCount: 12 });
+  });
+
+  /** The count and the memberships are written together or not at all. */
+  it("records exactly the answers it sent, and no others", async () => {
+    const batch = Array.from({ length: 12 }, (_, index) => storedRow(index));
+
+    feedbackFindMany
+      .mockResolvedValueOnce(historyOf(100))
+      .mockResolvedValueOnce(batch);
+    profileFindUnique.mockResolvedValue(PROFILE_ROW);
+
+    const { analyzer } = fakeAnalyzer(threeRecommendations);
+    const { synthesizer } = fakeSynthesizer();
+
+    await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
+
+    expect(recordedFeedbackIds()).toEqual(batch.map((row) => row.id));
+    expect(new Set(recordedFeedbackIds()).size).toBe(12);
+  });
+
+  it("makes at most one synthesis call", async () => {
+    feedbackFindMany
+      .mockResolvedValueOnce(historyOf(100))
+      .mockResolvedValueOnce(Array.from({ length: 12 }, (_, i) => storedRow(i)));
+    profileFindUnique.mockResolvedValue(PROFILE_ROW);
+
+    const { analyzer } = fakeAnalyzer(threeRecommendations);
+    const { synthesizer, requests: synthesised } = fakeSynthesizer();
+
+    await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
+
+    expect(synthesised).toHaveLength(1);
+  });
+});
+
+/**
+ * Every way the summary can go wrong, and the analysis surviving all of them.
+ */
+describe("when the summary cannot be brought up to date", () => {
+  function historyOf(total: number) {
+    return Array.from({ length: Math.min(total, 13) }, (_, offset) => ({
+      id: `f-${total - 1 - offset}`,
+      createdAt: new Date(2026, 0, total - offset),
+      action: "approve",
+      editedBody: null,
+      reason: null,
+      editorialDecision: {
+        id: `d-${offset}`,
+        targetChannel: "x",
+        verdict: "recommend",
+        reason: "It stands on its own.",
+        userId: USER,
+        draft: { body: "A short post.", userId: USER },
+        contentItem: { title: "A piece", body: "The body.", userId: USER },
+      },
+    }));
+  }
+
+  function memoryRow(
+    summary: string,
+    derivedFromCount: number,
+    evidence: number = derivedFromCount,
+  ) {
+    return { id: "memory-1", summary, derivedFromCount, _count: { evidence } };
+  }
+
+  beforeEach(() => {
+    feedbackFindMany.mockResolvedValue(historyOf(20));
+    memoryFindFirst.mockReset().mockResolvedValue(null);
+    memoryCreate.mockReset().mockResolvedValue({ id: "memory-1" });
+    memoryUpdateMany.mockReset().mockResolvedValue({ count: 1 });
+    evidenceCreateMany.mockReset().mockResolvedValue({ count: 0 });
+    profileFindUnique.mockResolvedValue(PROFILE_ROW);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  const failing = { synthesize: async () => { throw new ProviderError("timeout", "slow"); } };
+
+  it("keeps what was stored and analyses anyway", async () => {
+    memoryFindFirst.mockResolvedValue(memoryRow("An older conclusion.", 4));
+
+    const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
+
+    await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, failing);
+
+    expect(requests[0].memory).toEqual({
+      summary: "An older conclusion.",
+      derivedFromCount: 4,
+    });
+    expect(requests[0].feedback).toHaveLength(12);
+  });
+
+  it("sends none when there was none, and analyses anyway", async () => {
+    const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
+
+    await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, failing);
+
+    expect(requests[0].memory).toBeNull();
+    expect(requests[0].feedback).toHaveLength(12);
+  });
+
+  it("analyses without one when the deployment cannot summarise", async () => {
+    const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
+
+    await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, null);
+
+    expect(requests[0].memory).toBeNull();
+    expect(memoryCreate).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **The loser keeps what it validated, and does not adopt the winner's.**
+   *
+   * The winner's row was written after the only read this analysis did: its
+   * count and its memberships have never been read together here, so sending it
+   * would mean putting a number in front of somebody on the strength of a write
+   * nothing checked. What *was* checked is still true, so that is what gets
+   * used, and the next analysis reads the winner properly.
+   */
+  it("keeps its own validated summary rather than adopting the winner's", async () => {
+    memoryUpdateMany.mockResolvedValue({ count: 0 });
+    memoryFindFirst.mockResolvedValue(memoryRow("Mine.", 4));
+    feedbackFindMany
+      .mockResolvedValueOnce(historyOf(20))
+      .mockResolvedValueOnce([
+        {
+          id: "f-5",
+          createdAt: new Date(2026, 0, 1),
+          action: "approve",
+          editedBody: null,
+          reason: null,
+          editorialDecision: {
+            id: "d-5",
+            targetChannel: "x",
+            verdict: "recommend",
+            reason: "It stands on its own.",
+            userId: USER,
+            draft: { body: "A short post.", userId: USER },
+            contentItem: { title: "A piece", body: "The body.", userId: USER },
+          },
+        },
+      ]);
+
+    let calls = 0;
+    const counting = {
+      synthesize: async () => {
+        calls += 1;
+        return "A conclusion.";
+      },
+    };
+
+    const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
+
+    await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, counting);
+
+    expect(calls).toBe(1);
+    expect(memoryFindFirst).toHaveBeenCalledTimes(1);
+    expect(requests[0].memory).toEqual({ summary: "Mine.", derivedFromCount: 4 });
+  });
+
+  /**
+   * **A count that disagrees with its memberships describes evidence nobody can
+   * name.** One of the two is wrong and there is no way to tell which, so the
+   * summary is left out of this analysis rather than sent with a number that
+   * may not mean what it says.
+   */
+  it.each([
+    ["more than the memberships", 8, 5],
+    ["fewer than the memberships", 5, 8],
+  ])("leaves out a summary counting %s", async (_name, count, evidence) => {
+    memoryFindFirst.mockResolvedValue(memoryRow("A conclusion.", count, evidence));
+
+    const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
+    let calls = 0;
+
+    await analyzeCreatorText(
+      USER,
+      { title: null, body: "b" },
+      analyzer,
+      { synthesize: async () => { calls += 1; return "x"; } },
+    );
+
+    expect(requests[0].memory).toBeNull();
+    expect(calls).toBe(0);
+  });
+
+  /**
+   * **Nothing is repaired and nothing is rewritten downward.** The summary
+   * really was built from whatever it was built from; adjusting the count to
+   * match would erase the disagreement without explaining it.
+   */
+  it("neither repairs nor rewrites a summary whose count disagrees", async () => {
+    memoryFindFirst.mockResolvedValue(memoryRow("A conclusion.", 8, 5));
+
+    const { analyzer } = fakeAnalyzer(threeRecommendations);
+
+    await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, null);
+
+    expect(memoryUpdateMany).not.toHaveBeenCalled();
+    expect(memoryCreate).not.toHaveBeenCalled();
+    expect(evidenceCreateMany).not.toHaveBeenCalled();
+  });
+
+  /** The column defaults: a row that exists but stands for nothing yet. */
+  it("leaves out a summary that is still empty", async () => {
+    memoryFindFirst.mockResolvedValue(memoryRow("", 0, 0));
+
+    const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
+
+    await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, null);
+
+    expect(requests[0].memory).toBeNull();
+    expect(memoryUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("leaves out a stored summary it cannot read", async () => {
+    memoryFindFirst.mockResolvedValue(memoryRow("   ", 4));
+
+    const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
+
+    await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, null);
+
+    expect(requests[0].memory).toBeNull();
+  });
+
+  it("analyses anyway when the memory read itself fails", async () => {
+    memoryFindFirst.mockRejectedValue(new Error("connection lost"));
+
+    const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
+
+    await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, null);
+
+    expect(requests[0].memory).toBeNull();
+    expect(contentItemCreate).toHaveBeenCalled();
+  });
+
+  it("analyses anyway when the summary cannot be written", async () => {
+    memoryUpdateMany.mockRejectedValue(new Error("connection lost"));
+    memoryFindFirst.mockResolvedValue(memoryRow("Before.", 4));
+    feedbackFindMany
+      .mockResolvedValueOnce(historyOf(20))
+      .mockResolvedValueOnce([]);
+
+    const { analyzer } = fakeAnalyzer(threeRecommendations);
+
+    await analyzeCreatorText(
+      USER,
+      { title: null, body: "b" },
+      analyzer,
+      { synthesize: async () => "A conclusion." },
+    );
+
+    expect(contentItemCreate).toHaveBeenCalled();
+  });
+
+  /** Nothing about anybody's writing reaches a log line. */
+  it("logs a category and never any of the writing", async () => {
+    memoryFindFirst.mockResolvedValue(memoryRow("SECRET-STORED-SUMMARY", 8, 5));
+
+    const { analyzer } = fakeAnalyzer(threeRecommendations);
+
+    await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, null);
+
+    const logged = JSON.stringify(
+      (console.error as unknown as { mock: { calls: unknown[][] } }).mock.calls,
+    );
+
+    expect(logged).toContain("[creator] memory");
+    expect(logged).not.toContain("SECRET-STORED-SUMMARY");
   });
 });

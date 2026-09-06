@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { CreatorMemoryRecord } from "@/lib/creator/memory";
 import {
   type CreatorAnalysisProfile,
   type CreatorAnalysisResult,
@@ -264,6 +265,354 @@ export async function readRecentFeedbackContext(
 
   // Newest first out of the database, oldest first into the analyzer.
   return rows.reverse().map((row) => toFeedbackContext(row, userId));
+}
+
+/**
+ * One analysis's view of the history, split at a boundary that cannot move.
+ *
+ * **The partition is the whole safety argument.** Recent raw answers and the
+ * answers a summary stands for must never be the same answers, or one person's
+ * opinion gets counted twice — once in full and once in prose — and the model
+ * has no way to tell. Both sides here are defined against a single boundary
+ * taken from one read, so an answer recorded while the analysis is running is
+ * newer than the boundary and belongs to neither side of *this* analysis. It is
+ * picked up by the next one.
+ *
+ * `olderBoundary` is null when nothing has aged out: there are twelve or fewer
+ * answers, every one of them is in `recent`, and there is no older side at all.
+ */
+export type CreatorFeedbackPartition = {
+  /** The newest answers, oldest first — exactly what the analyzer receives. */
+  recent: CreatorFeedbackContext[];
+  /**
+   * The newest answer on the older side, as a cursor.
+   *
+   * Not a count and not an id alone: `createdAt` with `id` breaking ties is the
+   * ordering the whole history is read in, and a boundary expressed any other
+   * way would drift when two answers share a millisecond.
+   */
+  olderBoundary: { createdAt: Date; id: string } | null;
+};
+
+/** Every answer at or before the boundary — the older side, as a filter. */
+function olderThanBoundary(
+  userId: string,
+  boundary: { createdAt: Date; id: string },
+) {
+  return {
+    userId,
+    editorialDecision: { userId, contentItem: { userId } },
+    OR: [
+      { createdAt: { lt: boundary.createdAt } },
+      { createdAt: boundary.createdAt, id: { lte: boundary.id } },
+    ],
+  };
+}
+
+/**
+ * The recent answers and the boundary behind them, from one read.
+ *
+ * **Thirteen rows, not twelve.** The extra one is not shown to anybody; it is
+ * how the older side gets a first member to be defined against. Reading it in
+ * the same query as the twelve is what makes the split atomic — two separate
+ * reads could see different histories and put the same answer on both sides.
+ */
+export async function readCreatorFeedbackPartition(
+  userId: string,
+  client: DbClient = prisma,
+): Promise<CreatorFeedbackPartition> {
+  const rows = await client.creatorFeedback.findMany({
+    where: {
+      userId,
+      editorialDecision: { userId, contentItem: { userId } },
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: HISTORY_LIMIT + 1,
+    select: {
+      id: true,
+      createdAt: true,
+      action: true,
+      editedBody: true,
+      reason: true,
+      editorialDecision: {
+        select: {
+          id: true,
+          targetChannel: true,
+          verdict: true,
+          reason: true,
+          userId: true,
+          draft: { select: { body: true, userId: true } },
+          contentItem: { select: { title: true, body: true, userId: true } },
+        },
+      },
+    },
+  });
+
+  const recent = rows.slice(0, HISTORY_LIMIT);
+  const boundaryRow = rows[HISTORY_LIMIT];
+
+  return {
+    // Newest first out of the database, oldest first into the analyzer.
+    recent: recent.reverse().map((row) => toFeedbackContext(row, userId)),
+    olderBoundary:
+      boundaryRow === undefined
+        ? null
+        : { createdAt: boundaryRow.createdAt, id: boundaryRow.id },
+  };
+}
+
+/** One answer on the older side, with the identity a membership row needs. */
+export type CreatorFeedbackCandidate = {
+  /**
+   * The row a membership would be recorded against.
+   *
+   * **Identity, not position.** What a summary covers is recorded per answer;
+   * an offset into an ordering would say "the oldest N", which is only the same
+   * set for as long as the oldest N do not change, and nothing makes that true.
+   */
+  feedbackId: string;
+  context: CreatorFeedbackContext;
+};
+
+/**
+ * Older answers no summary has been shown yet, oldest first.
+ *
+ * **Membership, not an offset.** A row is a candidate when it sits on the older
+ * side of this analysis's boundary and no `CreatorMemoryEvidence` points at it.
+ * The previous version skipped as many rows as the summary claimed to stand
+ * for, which assumed the ordering it skipped through was stable: `createdAt`
+ * has millisecond resolution and `id` is a client-generated cuid, so a row can
+ * become visible after another and still sort before it, and the offset then
+ * pointed past an answer nobody had summarised — lost from the summary and from
+ * the recent twelve at once. Asking for the rows with no membership cannot land
+ * in the wrong place. An answer is either recorded as incorporated or it is not.
+ *
+ * `take` is one batch and no more — catching up on a long history is something
+ * later analyses do, not something one of them pays for.
+ */
+export async function readUnsummarizedOlderFeedback(
+  userId: string,
+  boundary: { createdAt: Date; id: string },
+  take: number,
+  client: DbClient = prisma,
+): Promise<CreatorFeedbackCandidate[]> {
+  const rows = await client.creatorFeedback.findMany({
+    where: {
+      ...olderThanBoundary(userId, boundary),
+      memoryEvidence: { is: null },
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    take,
+    select: {
+      id: true,
+      action: true,
+      editedBody: true,
+      reason: true,
+      editorialDecision: {
+        select: {
+          id: true,
+          targetChannel: true,
+          verdict: true,
+          reason: true,
+          userId: true,
+          draft: { select: { body: true, userId: true } },
+          contentItem: { select: { title: true, body: true, userId: true } },
+        },
+      },
+    },
+  });
+
+  return rows.map((row) => ({
+    feedbackId: row.id,
+    context: toFeedbackContext(row, userId),
+  }));
+}
+
+/**
+ * A stored summary, with what it is supposed to stand for.
+ *
+ * `evidenceCount` is how many answers are actually recorded against it, which
+ * `derivedFromCount` claims to equal. They are read together so a caller can
+ * check rather than assume: the count is the displayed and locking value, and
+ * the memberships are what it is a count of.
+ */
+export type StoredCreatorMemory = CreatorMemoryRecord & {
+  id: string;
+};
+
+/**
+ * The stored summary for this account, or null.
+ *
+ * **Scoped by the owner at both levels.** `CreatorMemory` carries a `userId` of
+ * its own and hangs off a `CreatorProfile` that carries another; a row whose
+ * two disagree describes something that cannot have happened, and reading it
+ * would mean deciding which of the two to believe. There is no answer to that,
+ * so the query requires both to be this account and a row that does not satisfy
+ * it simply is not found.
+ */
+export async function readCreatorMemory(
+  userId: string,
+  client: DbClient = prisma,
+): Promise<StoredCreatorMemory | null> {
+  const row = await client.creatorMemory.findFirst({
+    where: { userId, creatorProfile: { userId } },
+    select: {
+      id: true,
+      summary: true,
+      derivedFromCount: true,
+      _count: { select: { evidence: true } },
+    },
+  });
+
+  if (row === null) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    summary: row.summary,
+    derivedFromCount: row.derivedFromCount,
+    evidenceCount: row._count.evidence,
+  };
+}
+
+/**
+ * Records a synthesis: the summary, the count, and which answers it covers.
+ *
+ * **The three are one write or none of them.** A summary stored without its
+ * memberships would be re-derived from the same answers forever; memberships
+ * stored without the summary would hide answers from every later synthesis with
+ * nothing standing for them. Either half alone is worse than neither, so they
+ * go in a single short transaction — opened *after* the provider has answered,
+ * never around it.
+ *
+ * **`derivedFromCount` is still the version.** Two analyses that both read a
+ * summary standing for five answers will both try to extend it; whichever
+ * writes first has produced a summary the other has not seen, and overwriting
+ * it would throw away a synthesis. The conditional update is the same shape
+ * `claimRoutineSlot` and the execution lease use — the winner is whoever the
+ * database says it is.
+ *
+ * **The unique index on `creatorFeedbackId` is the second lock.** Two analyses
+ * that agree on the memory row but not on the batch collide there, and the
+ * loser rolls the whole thing back rather than incorporating an answer twice.
+ *
+ * Returns whether this caller was the one that wrote.
+ */
+export async function saveCreatorMemory(
+  {
+    userId,
+    memoryId,
+    summary,
+    expectedCount,
+    feedbackIds,
+  }: {
+    userId: string;
+    /** The row to extend, or null when this account has no summary yet. */
+    memoryId: string | null;
+    summary: string;
+    expectedCount: number;
+    feedbackIds: string[];
+  },
+  client: DbClient = prisma,
+): Promise<boolean> {
+  if (feedbackIds.length === 0) {
+    // Nothing was summarised, so there is nothing to record. Storing a summary
+    // here would move a count past evidence no membership names.
+    return false;
+  }
+
+  const newCount = expectedCount + feedbackIds.length;
+
+  const run = async (tx: DbClient): Promise<boolean> => {
+    const creatorMemoryId = await claimCreatorMemoryRow(
+      { userId, memoryId, summary, expectedCount, newCount },
+      tx,
+    );
+
+    if (creatorMemoryId === null) {
+      return false;
+    }
+
+    await tx.creatorMemoryEvidence.createMany({
+      data: feedbackIds.map((creatorFeedbackId) => ({
+        userId,
+        creatorMemoryId,
+        creatorFeedbackId,
+      })),
+    });
+
+    return true;
+  };
+
+  try {
+    // A `false` from `run` has written nothing, so there is nothing to undo;
+    // what has to roll back is a collision on the memberships, and that throws.
+    return client === prisma ? await prisma.$transaction(run) : await run(client);
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      // Somebody else incorporated one of these answers, or created the first
+      // summary. Their write stands and this whole transaction is undone.
+      return false;
+    }
+
+    throw error;
+  }
+}
+
+/** The memory row this synthesis may write to, or null if it lost the race. */
+async function claimCreatorMemoryRow(
+  {
+    userId,
+    memoryId,
+    summary,
+    expectedCount,
+    newCount,
+  }: {
+    userId: string;
+    memoryId: string | null;
+    summary: string;
+    expectedCount: number;
+    newCount: number;
+  },
+  tx: DbClient,
+): Promise<string | null> {
+  if (memoryId === null) {
+    const profile = await tx.creatorProfile.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+
+    if (profile === null) {
+      // No profile means no analysis has ever been stored, which means there is
+      // no older side to summarise. Nothing to write, and nothing wrong.
+      return null;
+    }
+
+    const created = await tx.creatorMemory.create({
+      data: {
+        userId,
+        creatorProfileId: profile.id,
+        summary,
+        derivedFromCount: newCount,
+      },
+      select: { id: true },
+    });
+
+    return created.id;
+  }
+
+  const { count } = await tx.creatorMemory.updateMany({
+    where: {
+      id: memoryId,
+      userId,
+      creatorProfile: { userId },
+      derivedFromCount: expectedCount,
+    },
+    data: { summary, derivedFromCount: newCount },
+  });
+
+  return count === 1 ? memoryId : null;
 }
 
 type FeedbackRow = {

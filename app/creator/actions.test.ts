@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   requireProvisionedUserId: vi.fn(),
   getUserLanguage: vi.fn(),
   createCreatorAnalyzer: vi.fn(),
+  createCreatorMemorySynthesizer: vi.fn(),
   consumeCreatorAnalysisQuota: vi.fn(),
   analyzeCreatorText: vi.fn(),
   analyzeCreatorUrl: vi.fn(),
@@ -37,6 +38,7 @@ vi.mock("@/lib/session", () => ({
 vi.mock("@/lib/users", () => ({ getUserLanguage: mocks.getUserLanguage }));
 vi.mock("@/lib/creator/creator-analyzer-factory", () => ({
   createCreatorAnalyzer: mocks.createCreatorAnalyzer,
+  createCreatorMemorySynthesizer: mocks.createCreatorMemorySynthesizer,
 }));
 vi.mock("@/lib/rate-limit", () => ({
   consumeCreatorAnalysisQuota: mocks.consumeCreatorAnalysisQuota,
@@ -90,6 +92,9 @@ const SECRET_TITLE = "UNPUBLISHED-TITLE-abc123";
 /** A stand-in analyzer. It is never called: the service is replaced too. */
 const analyzer = { analyze: vi.fn() };
 
+/** The same, for the optional half that summarises older answers. */
+const synthesizer = { synthesize: vi.fn() };
+
 class NotFoundSignal extends Error {}
 
 function analysisForm(fields: Record<string, string> = {}) {
@@ -124,6 +129,7 @@ beforeEach(() => {
   mocks.requireProvisionedUserId.mockReset().mockResolvedValue(USER);
   mocks.getUserLanguage.mockReset().mockResolvedValue("en");
   mocks.createCreatorAnalyzer.mockReset().mockReturnValue(analyzer);
+  mocks.createCreatorMemorySynthesizer.mockReset().mockReturnValue(synthesizer);
   mocks.consumeCreatorAnalysisQuota.mockReset().mockResolvedValue(true);
   mocks.analyzeCreatorText
     .mockReset()
@@ -1025,6 +1031,7 @@ describe("analyzeCreatorUrlAction", () => {
       USER,
       { title: SECRET_TITLE, sourceUrl: FINAL_URL, body: "The page text." },
       analyzer,
+      synthesizer,
     );
     // The typed title stands; the page named itself nothing here anyway.
   });
@@ -1300,5 +1307,91 @@ describe("the title an URL analysis is filed under", () => {
     expect(mocks.loadCreatorUrlSource.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.analyzeCreatorUrl.mock.invocationCallOrder[0],
     );
+  });
+});
+
+/**
+ * The optional half of an analysis, and the guards it must not move.
+ *
+ * **Summarising older answers happens inside an attempt somebody is already
+ * authorised to make.** It is not a second thing to be allowed, so it changes
+ * nothing about who is asked, what is validated, when the account row is
+ * created, or when the allowance moves.
+ */
+describe("the summariser of older answers", () => {
+  it("is handed to the service alongside the analyzer", async () => {
+    await analyzeCreatorTextAction(null, analysisForm());
+
+    expect(mocks.analyzeCreatorText).toHaveBeenCalledWith(
+      USER,
+      { title: SECRET_TITLE, body: SECRET_BODY },
+      analyzer,
+      synthesizer,
+    );
+  });
+
+  /**
+   * **Absent is an ordinary state.** Without one the summary of older answers
+   * stays where it was; the analysis this person asked for still happens.
+   */
+  it("lets the analysis happen when there is none", async () => {
+    mocks.createCreatorMemorySynthesizer.mockReturnValue(null);
+
+    const result = await analyzeCreatorTextAction(null, analysisForm());
+
+    expect(result).toEqual({
+      status: "success",
+      message: en["creator.analysis.done"],
+    });
+    expect(mocks.analyzeCreatorText.mock.calls[0][3]).toBeNull();
+  });
+
+  /**
+   * **The other way round is not symmetric.** No analyzer means there is
+   * nothing to say, and a summariser cannot stand in for it.
+   */
+  it("is not asked for when there is no analyzer to run", async () => {
+    mocks.createCreatorAnalyzer.mockReturnValue(null);
+
+    const result = await analyzeCreatorTextAction(null, analysisForm());
+
+    expect(result).toEqual({
+      status: "error",
+      message: en["creator.analysis.notConfigured"],
+    });
+    expect(mocks.analyzeCreatorText).not.toHaveBeenCalled();
+  });
+
+  /** The guards that decide whether an attempt may happen at all do not move. */
+  it("changes nothing about when the allowance is spent", async () => {
+    await analyzeCreatorTextAction(null, analysisForm());
+
+    expect(
+      mocks.consumeCreatorAnalysisQuota.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.analyzeCreatorText.mock.invocationCallOrder[0]);
+    expect(
+      mocks.requireProvisionedUserId.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.consumeCreatorAnalysisQuota.mock.invocationCallOrder[0]);
+  });
+
+  it("spends nothing for a submission that was refused", async () => {
+    await analyzeCreatorTextAction(null, analysisForm({ body: "" }));
+
+    expect(mocks.createCreatorMemorySynthesizer).not.toHaveBeenCalled();
+    expect(mocks.consumeCreatorAnalysisQuota).not.toHaveBeenCalled();
+  });
+
+  /** The URL path keeps its own ordering too: the page is read after the quota. */
+  it("leaves the URL path's guards where they were", async () => {
+    const data = new FormData();
+    data.set("title", "");
+    data.set("url", "https://example.com/article");
+
+    await analyzeCreatorUrlAction(null, data);
+
+    expect(
+      mocks.consumeCreatorAnalysisQuota.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.loadCreatorUrlSource.mock.invocationCallOrder[0]);
+    expect(mocks.analyzeCreatorUrl.mock.calls[0][3]).toBe(synthesizer);
   });
 });

@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { creatorAnalysisLimits } from "@/lib/creator/analyzer";
 
+/** Twelve shown, plus the one that defines the older side. */
+const HISTORY_READ = creatorAnalysisLimits.feedbackItems + 1;
+
 /**
  * Turning rows into evidence, and a finished analysis into rows.
  *
@@ -21,6 +24,10 @@ const {
   profileFindUnique,
   profileUpsert,
   feedbackFindMany,
+  memoryFindFirst,
+  evidenceCreateMany,
+  memoryCreate,
+  memoryUpdateMany,
   feedbackCreate,
   decisionFindFirst,
   decisionCreate,
@@ -31,6 +38,10 @@ const {
   profileFindUnique: vi.fn(),
   profileUpsert: vi.fn(),
   feedbackFindMany: vi.fn(),
+  memoryFindFirst: vi.fn(),
+  evidenceCreateMany: vi.fn(),
+  memoryCreate: vi.fn(),
+  memoryUpdateMany: vi.fn(),
   feedbackCreate: vi.fn(),
   decisionFindFirst: vi.fn(),
   decisionCreate: vi.fn(),
@@ -40,15 +51,23 @@ const {
 }));
 
 const tx = {
-  creatorProfile: { upsert: profileUpsert },
+  creatorProfile: { upsert: profileUpsert, findUnique: profileFindUnique },
   contentItem: { create: contentItemCreate },
   editorialDecision: { create: decisionCreate },
   contentDraft: { create: draftCreate },
+  creatorMemory: { create: memoryCreate, updateMany: memoryUpdateMany },
+  creatorMemoryEvidence: { createMany: evidenceCreateMany },
 };
 
 const prismaMock = {
   creatorProfile: { findUnique: profileFindUnique, upsert: profileUpsert },
   creatorFeedback: { findMany: feedbackFindMany, create: feedbackCreate },
+  creatorMemory: {
+    findFirst: memoryFindFirst,
+    create: memoryCreate,
+    updateMany: memoryUpdateMany,
+  },
+  creatorMemoryEvidence: { createMany: evidenceCreateMany },
   editorialDecision: { findFirst: decisionFindFirst, create: decisionCreate },
   contentItem: { create: contentItemCreate },
   contentDraft: { create: draftCreate },
@@ -63,10 +82,14 @@ const {
   excerptForHistory,
   isCreatorFeedbackAlreadyRecorded,
   isInvalidCreatorFeedbackHistory,
+  readCreatorFeedbackPartition,
+  readCreatorMemory,
   readCreatorProfile,
   readDecisionForFeedback,
+  readUnsummarizedOlderFeedback,
   readRecentFeedbackContext,
   saveCreatorAnalysis,
+  saveCreatorMemory,
   saveCreatorProfile,
 } = await import("@/lib/creator/repository");
 
@@ -78,6 +101,10 @@ beforeEach(() => {
     profileFindUnique,
     profileUpsert,
     feedbackFindMany,
+    memoryFindFirst,
+    evidenceCreateMany,
+    memoryCreate,
+    memoryUpdateMany,
     feedbackCreate,
     decisionFindFirst,
     decisionCreate,
@@ -912,5 +939,486 @@ describe("recording where the material came from", () => {
     });
 
     expect(profileUpsert.mock.calls[0][0].update).toEqual({});
+  });
+});
+
+/**
+ * Splitting one history into what is shown and what is summarised.
+ *
+ * **The split is the safety argument.** An answer that appeared in both halves
+ * would be the same opinion counted twice — once in full and once in prose —
+ * and the model has no way to tell. Both halves are defined against a boundary
+ * taken from a single read, so an answer recorded while an analysis is running
+ * is newer than that boundary and belongs to neither half of it.
+ */
+describe("splitting the history at a boundary", () => {
+  /** Thirteen rows: twelve to show, and one to define the older side. */
+  it("reads one more row than it shows", async () => {
+    feedbackFindMany.mockResolvedValue([]);
+
+    await readCreatorFeedbackPartition(USER);
+
+    const query = feedbackFindMany.mock.calls[0][0];
+
+    expect(query.take).toBe(creatorAnalysisLimits.feedbackItems + 1);
+    expect(query.orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
+  });
+
+  it("asks only for this account, at every level", async () => {
+    feedbackFindMany.mockResolvedValue([]);
+
+    await readCreatorFeedbackPartition(USER);
+
+    const { where } = feedbackFindMany.mock.calls[0][0];
+
+    expect(where.userId).toBe(USER);
+    expect(where.editorialDecision.userId).toBe(USER);
+    expect(where.editorialDecision.contentItem.userId).toBe(USER);
+  });
+
+  it.each([0, 1, 11, 12])(
+    "has no older side at %i answers",
+    async (total) => {
+      feedbackFindMany.mockResolvedValue(
+        Array.from({ length: total }, (_, index) =>
+          storedFeedback({ id: `f-${index}`, createdAt: new Date(2026, 0, index + 1) }),
+        ),
+      );
+
+      const partition = await readCreatorFeedbackPartition(USER);
+
+      expect(partition.recent).toHaveLength(total);
+      expect(partition.olderBoundary).toBeNull();
+    },
+  );
+
+  it("names a boundary once something has aged out", async () => {
+    feedbackFindMany.mockResolvedValue(
+      Array.from({ length: 13 }, (_, index) =>
+        storedFeedback({
+          id: `f-${index}`,
+          createdAt: new Date(2026, 0, 13 - index),
+        }),
+      ),
+    );
+
+    const partition = await readCreatorFeedbackPartition(USER);
+
+    expect(partition.recent).toHaveLength(12);
+    // Rows arrive newest first; the thirteenth is the newest of the older side.
+    expect(partition.olderBoundary).toEqual({
+      id: "f-12",
+      createdAt: new Date(2026, 0, 1),
+    });
+  });
+
+  /** Newest first out of the database, oldest first into the analyzer. */
+  it("hands the recent answers over oldest first", async () => {
+    feedbackFindMany.mockResolvedValue([
+      storedFeedback({ id: "newest", contentItem: { title: "NEWEST" } }),
+      storedFeedback({ id: "oldest", contentItem: { title: "OLDEST" } }),
+    ]);
+
+    const partition = await readCreatorFeedbackPartition(USER);
+
+    expect(partition.recent.map((f) => f.contentTitle)).toEqual([
+      "OLDEST",
+      "NEWEST",
+    ]);
+  });
+
+  /** Two answers in the same millisecond must not swap places between reads. */
+  it("breaks a tie on the same instant with the id", async () => {
+    const sameInstant = new Date("2026-01-01T00:00:00.000Z");
+
+    feedbackFindMany.mockResolvedValue(
+      Array.from({ length: 13 }, (_, index) =>
+        storedFeedback({ id: `f-${index}`, createdAt: sameInstant }),
+      ),
+    );
+
+    const partition = await readCreatorFeedbackPartition(USER);
+
+    expect(partition.olderBoundary).toEqual({
+      id: "f-12",
+      createdAt: sameInstant,
+    });
+  });
+
+  it("refuses a stored answer it cannot read, exactly as before", async () => {
+    feedbackFindMany.mockResolvedValue([
+      storedFeedback({ decision: { targetChannel: "mastodon" } }),
+    ]);
+
+    await expect(readCreatorFeedbackPartition(USER)).rejects.toSatisfy(
+      isInvalidCreatorFeedbackHistory,
+    );
+  });
+
+  /**
+   * **The boundary only ever moves forward, which is why a summarised answer
+   * can never come back.**
+   *
+   * A membership is only recorded for an answer already on the older side of
+   * some boundary. If a later analysis could show that answer among its recent
+   * twelve, the same opinion would reach the model twice — once in prose and
+   * once in full — and nothing downstream could tell. It cannot: answers are
+   * only ever appended, the twelve shown are always the newest twelve, and a
+   * row that has been pushed out of that window has strictly more rows after it
+   * than before, forever.
+   */
+  it("never shows an answer again once it has aged out", async () => {
+    /** `total` answers, newest first, exactly as the read sees them. */
+    const history = (total: number) =>
+      Array.from({ length: Math.min(total, HISTORY_READ) }, (_, offset) => {
+        const index = total - 1 - offset;
+
+        return storedFeedback({
+          id: `f-${index}`,
+          createdAt: new Date(2026, 0, index + 1),
+          contentItem: { title: `f-${index}` },
+        });
+      });
+
+    const agedOut = new Set<string>();
+    let previousBoundary = -1;
+
+    for (const total of [13, 14, 20, 60]) {
+      feedbackFindMany.mockResolvedValue(history(total));
+
+      const partition = await readCreatorFeedbackPartition(USER);
+      const boundary = partition.olderBoundary;
+
+      expect(boundary).not.toBeNull();
+
+      const boundaryIndex = Number((boundary as { id: string }).id.slice(2));
+
+      // Appending moved it forward, never back.
+      expect(boundaryIndex).toBeGreaterThan(previousBoundary);
+      previousBoundary = boundaryIndex;
+
+      // Nothing that had aged out before is being shown in full now.
+      for (const shown of partition.recent) {
+        expect(agedOut.has(shown.contentTitle ?? "")).toBe(false);
+      }
+
+      for (let index = 0; index <= boundaryIndex; index += 1) {
+        agedOut.add(`f-${index}`);
+      }
+    }
+  });
+});
+
+/**
+ * **Membership decides what is a candidate, never a position.**
+ *
+ * The version this replaced skipped as many rows as the summary claimed to
+ * stand for. That is only the same set of rows while the ordering it skips
+ * through is stable, and nothing makes it stable: an answer can become visible
+ * after another and still sort before it, and the offset then steps over an
+ * answer nobody summarised. Asking for rows that no evidence points at has no
+ * position in it to be wrong about.
+ */
+describe("reading the answers no summary has covered", () => {
+  const boundary = { createdAt: new Date("2026-01-01T00:00:00.000Z"), id: "f-12" };
+
+  it("asks for the older side, oldest first, bounded, and nothing else", async () => {
+    feedbackFindMany.mockResolvedValue([]);
+
+    await readUnsummarizedOlderFeedback(USER, boundary, 12);
+
+    const query = feedbackFindMany.mock.calls[0][0];
+
+    expect(query.take).toBe(12);
+    expect(query.orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
+    expect(query.where.OR).toEqual([
+      { createdAt: { lt: boundary.createdAt } },
+      { createdAt: boundary.createdAt, id: { lte: boundary.id } },
+    ]);
+  });
+
+  /** The whole point of the revision, as a query shape. */
+  it("asks only for answers no evidence points at", async () => {
+    feedbackFindMany.mockResolvedValue([]);
+
+    await readUnsummarizedOlderFeedback(USER, boundary, 12);
+
+    expect(feedbackFindMany.mock.calls[0][0].where.memoryEvidence).toEqual({
+      is: null,
+    });
+  });
+
+  it("never offsets by how much is already summarised", async () => {
+    feedbackFindMany.mockResolvedValue([]);
+
+    await readUnsummarizedOlderFeedback(USER, boundary, 12);
+
+    expect(feedbackFindMany.mock.calls[0][0].skip).toBeUndefined();
+  });
+
+  it("asks only for this account, at every level", async () => {
+    feedbackFindMany.mockResolvedValue([]);
+
+    await readUnsummarizedOlderFeedback(USER, boundary, 12);
+
+    const { where } = feedbackFindMany.mock.calls[0][0];
+
+    expect(where.userId).toBe(USER);
+    expect(where.editorialDecision.userId).toBe(USER);
+    expect(where.editorialDecision.contentItem.userId).toBe(USER);
+  });
+
+  /** A membership names a row, so the row's identity has to come back with it. */
+  it("hands back each answer with the id a membership would name", async () => {
+    feedbackFindMany.mockResolvedValue([
+      storedFeedback({ id: "f-1", contentItem: { title: "FIRST" } }),
+      storedFeedback({ id: "f-2", contentItem: { title: "SECOND" } }),
+    ]);
+
+    const candidates = await readUnsummarizedOlderFeedback(USER, boundary, 12);
+
+    expect(candidates.map((candidate) => candidate.feedbackId)).toEqual([
+      "f-1",
+      "f-2",
+    ]);
+    expect(candidates.map((candidate) => candidate.context.contentTitle)).toEqual([
+      "FIRST",
+      "SECOND",
+    ]);
+  });
+
+  it("refuses a stored answer it cannot read, exactly as before", async () => {
+    feedbackFindMany.mockResolvedValue([
+      storedFeedback({ decision: { targetChannel: "mastodon" } }),
+    ]);
+
+    await expect(
+      readUnsummarizedOlderFeedback(USER, boundary, 12),
+    ).rejects.toSatisfy(isInvalidCreatorFeedbackHistory);
+  });
+});
+
+/**
+ * **Ownership proved at both levels.** The row carries a `userId` of its own and
+ * hangs off a profile carrying another; a row whose two disagree describes
+ * something that cannot have happened, and reading it would mean choosing which
+ * to believe.
+ */
+describe("reading a stored summary", () => {
+  const storedRow = {
+    id: "memory-1",
+    summary: "A conclusion.",
+    derivedFromCount: 8,
+    _count: { evidence: 8 },
+  };
+
+  it("answers with null when there is none", async () => {
+    memoryFindFirst.mockResolvedValue(null);
+
+    await expect(readCreatorMemory(USER)).resolves.toBeNull();
+  });
+
+  /** The count and the memberships come back together so a caller can compare. */
+  it("answers with the summary, its count, and how much evidence there is", async () => {
+    memoryFindFirst.mockResolvedValue(storedRow);
+
+    await expect(readCreatorMemory(USER)).resolves.toEqual({
+      id: "memory-1",
+      summary: "A conclusion.",
+      derivedFromCount: 8,
+      evidenceCount: 8,
+    });
+  });
+
+  it("reports the memberships as they are, disagreement and all", async () => {
+    memoryFindFirst.mockResolvedValue({ ...storedRow, _count: { evidence: 5 } });
+
+    await expect(readCreatorMemory(USER)).resolves.toMatchObject({
+      derivedFromCount: 8,
+      evidenceCount: 5,
+    });
+  });
+
+  it("requires the owner on the row and on its profile", async () => {
+    memoryFindFirst.mockResolvedValue(null);
+
+    await readCreatorMemory(USER);
+
+    expect(memoryFindFirst.mock.calls[0][0].where).toEqual({
+      userId: USER,
+      creatorProfile: { userId: USER },
+    });
+  });
+
+  it("selects nothing but what it hands over", async () => {
+    memoryFindFirst.mockResolvedValue(null);
+
+    await readCreatorMemory(USER);
+
+    expect(memoryFindFirst.mock.calls[0][0].select).toEqual({
+      id: true,
+      summary: true,
+      derivedFromCount: true,
+      _count: { select: { evidence: true } },
+    });
+  });
+});
+
+/**
+ * Storing a synthesis: the summary, the count, and which answers it covers.
+ *
+ * **The count is the version and the memberships are the record.** Two analyses
+ * that read a summary standing for five answers will both try to extend it;
+ * whichever writes first has produced something the other has not seen, and
+ * overwriting it would throw away a synthesis. That the three writes are one
+ * transaction is PostgreSQL's job — what is fixed here is that they all go
+ * through the transaction handle rather than the client, which is where a
+ * mistake would live.
+ */
+describe("storing a summary", () => {
+  const extending = {
+    userId: USER,
+    memoryId: "memory-1",
+    summary: "An updated conclusion.",
+    expectedCount: 5,
+    feedbackIds: ["f-6", "f-7", "f-8", "f-9"],
+  };
+
+  it("extends the row it read, and only at the count it read", async () => {
+    memoryUpdateMany.mockResolvedValue({ count: 1 });
+    evidenceCreateMany.mockResolvedValue({ count: 4 });
+
+    await expect(saveCreatorMemory(extending)).resolves.toBe(true);
+
+    const call = memoryUpdateMany.mock.calls[0][0];
+
+    expect(call.where).toEqual({
+      id: "memory-1",
+      userId: USER,
+      creatorProfile: { userId: USER },
+      derivedFromCount: 5,
+    });
+    expect(call.data).toEqual({
+      summary: "An updated conclusion.",
+      derivedFromCount: 9,
+    });
+  });
+
+  /** The count moves by exactly the memberships written beside it. */
+  it("records one membership per answer, under the same owner and summary", async () => {
+    memoryUpdateMany.mockResolvedValue({ count: 1 });
+    evidenceCreateMany.mockResolvedValue({ count: 4 });
+
+    await saveCreatorMemory(extending);
+
+    expect(evidenceCreateMany.mock.calls[0][0].data).toEqual([
+      { userId: USER, creatorMemoryId: "memory-1", creatorFeedbackId: "f-6" },
+      { userId: USER, creatorMemoryId: "memory-1", creatorFeedbackId: "f-7" },
+      { userId: USER, creatorMemoryId: "memory-1", creatorFeedbackId: "f-8" },
+      { userId: USER, creatorMemoryId: "memory-1", creatorFeedbackId: "f-9" },
+    ]);
+  });
+
+  it("writes both halves through the transaction handle", async () => {
+    memoryUpdateMany.mockResolvedValue({ count: 1 });
+    evidenceCreateMany.mockResolvedValue({ count: 4 });
+
+    await saveCreatorMemory(extending);
+
+    expect(transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("says so when somebody else moved it first, and records nothing", async () => {
+    memoryUpdateMany.mockResolvedValue({ count: 0 });
+
+    await expect(saveCreatorMemory(extending)).resolves.toBe(false);
+    expect(evidenceCreateMany).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **The unique index on the answer is the second lock.** Two analyses that
+   * agree on the memory row but not on the batch collide there, and the loser
+   * takes nothing with it — the summary it had already written is rolled back.
+   */
+  it("stands down when another analysis already incorporated an answer", async () => {
+    memoryUpdateMany.mockResolvedValue({ count: 1 });
+    evidenceCreateMany.mockRejectedValue({ code: "P2002" });
+
+    await expect(saveCreatorMemory(extending)).resolves.toBe(false);
+  });
+
+  const creating = {
+    userId: USER,
+    memoryId: null,
+    summary: "A first conclusion.",
+    expectedCount: 0,
+    feedbackIds: ["f-1", "f-2", "f-3", "f-4"],
+  };
+
+  it("creates the first one under the account's own profile", async () => {
+    profileFindUnique.mockResolvedValue({ id: "profile-1" });
+    memoryCreate.mockResolvedValue({ id: "memory-1" });
+    evidenceCreateMany.mockResolvedValue({ count: 4 });
+
+    await expect(saveCreatorMemory(creating)).resolves.toBe(true);
+
+    expect(profileFindUnique.mock.calls[0][0].where).toEqual({ userId: USER });
+    expect(memoryCreate.mock.calls[0][0].data).toEqual({
+      userId: USER,
+      creatorProfileId: "profile-1",
+      summary: "A first conclusion.",
+      derivedFromCount: 4,
+    });
+  });
+
+  it("points the first memberships at the summary it just created", async () => {
+    profileFindUnique.mockResolvedValue({ id: "profile-1" });
+    memoryCreate.mockResolvedValue({ id: "memory-1" });
+    evidenceCreateMany.mockResolvedValue({ count: 4 });
+
+    await saveCreatorMemory(creating);
+
+    for (const row of evidenceCreateMany.mock.calls[0][0].data) {
+      expect(row.creatorMemoryId).toBe("memory-1");
+    }
+  });
+
+  /** Two first analyses race on the unique index instead. One wins. */
+  it("stands down when another first analysis created it", async () => {
+    profileFindUnique.mockResolvedValue({ id: "profile-1" });
+    memoryCreate.mockRejectedValue({ code: "P2002" });
+
+    await expect(saveCreatorMemory(creating)).resolves.toBe(false);
+    expect(evidenceCreateMany).not.toHaveBeenCalled();
+  });
+
+  it("writes nothing when the account has no profile yet", async () => {
+    profileFindUnique.mockResolvedValue(null);
+
+    await expect(saveCreatorMemory(creating)).resolves.toBe(false);
+
+    expect(memoryCreate).not.toHaveBeenCalled();
+    expect(evidenceCreateMany).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A summary covering nothing would move a count past evidence no membership
+   * names — the exact thing the memberships exist to make impossible.
+   */
+  it("refuses to store a summary that covers no answers", async () => {
+    await expect(
+      saveCreatorMemory({ ...extending, feedbackIds: [] }),
+    ).resolves.toBe(false);
+
+    expect(memoryUpdateMany).not.toHaveBeenCalled();
+    expect(evidenceCreateMany).not.toHaveBeenCalled();
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it("lets a failure that is not a race through", async () => {
+    profileFindUnique.mockResolvedValue({ id: "profile-1" });
+    memoryCreate.mockRejectedValue(new Error("connection lost"));
+
+    await expect(saveCreatorMemory(creating)).rejects.toThrow("connection lost");
   });
 });

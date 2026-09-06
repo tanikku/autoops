@@ -4,6 +4,7 @@ import {
   creatorAnalysisLimits,
   type CreatorFeedbackContext,
 } from "@/lib/creator/analyzer";
+import type { CreatorAnalysisMemory } from "@/lib/creator/memory";
 import { t, type TranslationKey } from "@/lib/i18n";
 
 /**
@@ -15,11 +16,15 @@ import { t, type TranslationKey } from "@/lib/i18n";
  * derive a preference — a panel saying "we have learned you like short posts"
  * would describe a feature that does not exist, and would be believed.
  *
- * **The same values the analyzer receives.** They come from
- * `readCreatorProfile` and `readRecentFeedbackContext`, read once by the page
- * and passed down — not rebuilt here from a second query. A preview assembled
- * by different code could disagree with what is actually sent, which is the one
- * way a transparency panel can be worse than none.
+ * **The same values the analyzer receives, read once by the page** — not
+ * rebuilt here from a second query. A preview assembled by different code could
+ * disagree with what is actually sent, which is the one way a transparency
+ * panel can be worse than none.
+ *
+ * **The summary shown is the stored one, not a prediction.** Submitting an
+ * analysis may extend it first, a batch of older answers at a time, so what
+ * goes with the next request can be slightly further along than what is here.
+ * Rendering this page makes no model call and writes nothing.
  *
  * **A Server Component with no state.** `<details>` collapses it natively, so
  * nothing here needs hydration, a client bundle, or a `"use client"` boundary
@@ -86,10 +91,21 @@ function ProfileRow({
 
 export function CreatorLearningContext({
   profile,
+  memory,
   feedback,
   language,
 }: {
   profile: CreatorAnalysisProfile;
+  /**
+   * What Koqentra concluded from answers that have scrolled out of the list
+   * below, or null when there is nothing usable.
+   *
+   * **The stored summary as it is right now**, not a preview of what the next
+   * analysis will send. Submitting may extend it first — that step runs at
+   * submit time and makes one model call — so this is the current state rather
+   * than a promise about the next one.
+   */
+  memory: CreatorAnalysisMemory | null;
   /**
    * Oldest first, exactly as the analyzer receives it.
    *
@@ -135,6 +151,43 @@ export function CreatorLearningContext({
             />
           </dl>
         </section>
+
+        {/* **An inference, and it says so.** Koqentra does not know what this
+            person prefers — it has a summary a model wrote from answers that
+            are no longer listed individually, and that summary can be wrong.
+            The note says which evidence outranks it, which is the same order
+            the analyzer applies.
+
+            **Nothing to act on.** No edit, no clear, no settings link: the
+            explicit preferences above are where somebody states what they
+            want, and a second editable place would blur which of the two the
+            analyzer treats as a statement.
+
+            **Absent rather than empty when there is none.** A blank panel
+            saying nothing has been summarised yet would describe a process
+            somebody is waiting on; there is no process, only answers that have
+            not aged out yet. */}
+        {memory === null ? null : (
+          <section className="mt-5">
+            <h3 className="text-xs font-semibold">
+              {t(language, "creator.learning.memoryHeading")}
+            </h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {/* The count is what the summary was built from, not how many old
+                  answers exist — catching up happens a batch at a time, and the
+                  two differ while that is in progress. */}
+              {t(language, "creator.learning.memoryCount", {
+                count: String(memory.derivedFromCount),
+              })}
+            </p>
+            <p className="mt-2 text-sm break-words whitespace-pre-wrap">
+              {memory.summary}
+            </p>
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+              {t(language, "creator.learning.memoryNote")}
+            </p>
+          </section>
+        )}
 
         <section className="mt-5">
           <div className="flex flex-wrap items-baseline justify-between gap-2">

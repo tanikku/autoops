@@ -8,7 +8,10 @@ import {
   isCreatorAnalysisRequestTooLarge,
   isInvalidCreatorAnalysisResponse,
 } from "@/lib/creator/analyzer";
-import { createCreatorAnalyzer } from "@/lib/creator/creator-analyzer-factory";
+import {
+  createCreatorAnalyzer,
+  createCreatorMemorySynthesizer,
+} from "@/lib/creator/creator-analyzer-factory";
 import {
   isCreatorDecisionNotFound,
   isCreatorFeedbackAlreadyRecorded,
@@ -214,6 +217,11 @@ export async function analyzeCreatorTextAction(
       provisionedUserId,
       { title: rawTitle === "" ? null : rawTitle, body },
       analyzer,
+      // **Asked for separately from the analyzer, and allowed to be absent.**
+      // Summarising older answers is the optional half of this call; a
+      // deployment that can judge writing is never stopped from doing so
+      // because the summariser is unavailable.
+      createCreatorMemorySynthesizer(),
     );
 
     // **The write happened here, so the invalidation belongs here.** The inbox
@@ -352,6 +360,7 @@ export async function analyzeCreatorUrlAction(
         body: source.body,
       },
       analyzer,
+      createCreatorMemorySynthesizer(),
     );
 
     // The same invalidation the paste path does, for the same reason: the inbox

@@ -474,6 +474,16 @@ export const ja: Record<TranslationKey, string> = {
   "creator.learning.description":
     "あなたが設定した発信の前提と、最近の回答を参考にします。",
   "creator.learning.profileHeading": "発信の前提",
+
+  /**
+   * 個別表示されなくなった過去の回答から AI が導いた要約。
+   * 事実としてではなく推論として述べる。件数は「反映済みの件数」であって
+   * 「古い回答の総数」ではない — 追いつきは分割して進むため、途中では両者が異なる。
+   */
+  "creator.learning.memoryHeading": "過去の回答からの要約",
+  "creator.learning.memoryNote":
+    "下に個別表示されない過去の回答を AI が要約したものです。正確でない場合があります。明示した設定と新しい回答が優先されます。",
+  "creator.learning.memoryCount": "過去の回答 {count} 件を反映",
   "creator.learning.audience": "届けたい相手",
   "creator.learning.goals": "発信の目的",
   "creator.learning.voice": "文体・書き方",

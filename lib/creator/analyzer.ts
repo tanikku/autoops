@@ -1,4 +1,9 @@
 import {
+  assertUsableMemory,
+  type CreatorAnalysisMemory,
+  creatorMemoryLimits,
+} from "@/lib/creator/memory";
+import {
   type CreatorFeedbackAction,
   type CreatorSourceKind,
   type CreatorTargetChannel,
@@ -23,11 +28,12 @@ import {
  * becoming a fact without checking it first. `lib/ai/worker-draft.ts` draws the
  * same line for the same reason.
  *
- * **Nothing here produces or consumes a derived memory.** The analyzer reads
- * the human feedback that actually happened and decides from that; summarising
- * a history into a durable preference is a separate act with its own evidence
- * rules, and mixing it in would let the material currently being judged become
- * part of what the account is assumed to prefer forever.
+ * **Nothing here produces a derived memory, though a request may carry one.**
+ * Summarising a history into a durable preference is a separate act with its
+ * own evidence rules — `lib/creator/memory.ts` — and doing it here would let the
+ * material currently being judged become part of what the account is assumed to
+ * prefer forever. What arrives is a value like any other, ranked below the raw
+ * answers it stands in for.
  */
 
 /**
@@ -150,6 +156,21 @@ export type CreatorFeedbackContext = {
 
 export type CreatorAnalysisRequest = {
   profile: CreatorAnalysisProfile;
+  /**
+   * What was inferred from answers too old to be sent individually, or null.
+   *
+   * **The weakest of the three kinds of evidence, and deliberately so.** It is
+   * Koqentra's own conclusion rather than something the person said or did, it
+   * was written by a model that may have got it wrong, and it stands for
+   * answers nobody can check from here. `profile` outranks it because that is a
+   * statement; `feedback` outranks it because that is what actually happened,
+   * in full, recently.
+   *
+   * **It never overlaps `feedback`.** The two describe different answers — the
+   * ones summarised here have aged out of the window below — so nothing is
+   * counted twice, and the caller is what guarantees that.
+   */
+  memory: CreatorAnalysisMemory | null;
   content: CreatorAnalysisContent;
   /**
    * Past decisions **oldest first, newest last**. Empty on somebody's first
@@ -264,7 +285,22 @@ function requireWithin(field: string, value: string, limit: number): void {
 export function assertCreatorAnalysisRequestWithinLimits(
   request: CreatorAnalysisRequest,
 ): void {
-  const { profile, content, feedback } = request;
+  const { profile, memory, content, feedback } = request;
+
+  // **A stored inference is checked before it is sent, not trusted.** The row
+  // was written by an earlier run, and a summary past the ceiling or a count
+  // that is not a whole number describes a state nothing here can reason about.
+  if (memory !== null) {
+    if (memory.summary.length > creatorMemoryLimits.summary) {
+      throw new CreatorAnalysisRequestTooLargeError(
+        "memory.summary",
+        creatorMemoryLimits.summary,
+        memory.summary.length,
+      );
+    }
+
+    assertUsableMemory(memory);
+  }
 
   requireWithin(
     "profile.audience",
