@@ -16,10 +16,17 @@ import {
 } from "@/lib/creator/repository";
 import {
   analyzeCreatorText,
+  analyzeCreatorUrl,
   isEmptyCreatorContent,
   isInvalidCreatorFeedback,
   recordCreatorFeedback,
 } from "@/lib/creator/service";
+import {
+  type CreatorUrlFailure,
+  isCreatorUrlSourceError,
+  loadCreatorUrlSource,
+  validateCreatorSourceUrl,
+} from "@/lib/creator/url-source";
 import { t, type TranslationKey } from "@/lib/i18n";
 import { consumeCreatorAnalysisQuota } from "@/lib/rate-limit";
 import { requireProvisionedUserId, requireUserId } from "@/lib/session";
@@ -62,6 +69,23 @@ const ANALYSIS_MESSAGE_KEYS = {
   failed: "creator.analysis.failed",
   done: "creator.analysis.done",
 } as const satisfies Record<string, TranslationKey>;
+
+/**
+ * What a reader is told when a page could not be used.
+ *
+ * **One sentence per thing they could do about it.** The fetch boundary names
+ * seventeen kinds and every one of them can quote a host, a status or a
+ * charset; those stay in the log. What reaches a screen is which of six
+ * situations this was.
+ */
+const URL_MESSAGE_KEYS = {
+  "invalid-url": "creator.analysis.urlInvalid",
+  blocked: "creator.analysis.urlBlocked",
+  unavailable: "creator.analysis.urlUnavailable",
+  unreadable: "creator.analysis.urlUnreadable",
+  "too-large": "creator.analysis.urlTooLarge",
+  empty: "creator.analysis.urlEmpty",
+} as const satisfies Record<CreatorUrlFailure, TranslationKey>;
 
 const FEEDBACK_MESSAGE_KEYS = {
   saved: "creator.feedback.saved",
@@ -221,6 +245,140 @@ export async function analyzeCreatorTextAction(
       message: analysisMessage(language, analysisFailure(error)),
     };
   }
+}
+
+/**
+ * Asks Koqentra to read a public page and say where its writing belongs.
+ *
+ * **Its own action rather than a mode flag on the one above.** A hidden field
+ * saying which kind of source this is would be a claim about provenance that
+ * nothing checks — and it is provenance that decides what gets stored and what
+ * the analyzer is told. Two entry points means the server, not the form, is
+ * what knows.
+ *
+ * **The client sends an address and nothing else.** The body is what Koqentra
+ * read; a form supplying one would let somebody attribute any text at all to
+ * any URL at all.
+ *
+ * **The allowance is spent before the page is fetched, deliberately.** Reading
+ * somebody else's site is part of the attempt, not a free preliminary to it —
+ * if the quota came afterwards, a stream of addresses that fail would cost
+ * nothing to send and the account-level bound would not be one. It is not
+ * refunded when the fetch fails, for the same reason a failed model call is
+ * not: what is bounded is attempts.
+ */
+export async function analyzeCreatorUrlAction(
+  _prevState: CreatorAnalysisState,
+  formData: FormData,
+): Promise<CreatorAnalysisState> {
+  const rawTitle = field(formData, "title");
+  const url = field(formData, "url");
+
+  // Who is asking, without writing anything down — the same read-only identity
+  // the paste path takes, and for the same reason.
+  const userId = await requireUserId();
+  const language = await getUserLanguage(userId);
+
+  if (rawTitle.trim().length > creatorAnalysisLimits.contentTitle) {
+    return { status: "error", message: analysisMessage(language, "tooLong") };
+  }
+
+  // **Settled without touching the network.** A typo, an `ftp://`, a port or an
+  // address carrying credentials are all refused before an account row exists,
+  // before the allowance moves, and before anybody's server is contacted.
+  try {
+    validateCreatorSourceUrl(url);
+  } catch (error) {
+    return urlFailureResult(language, error);
+  }
+
+  // The first write of the request, and everything that could reject it cheaply
+  // has already happened.
+  const provisionedUserId = await requireProvisionedUserId();
+
+  const analyzer = createCreatorAnalyzer();
+
+  if (analyzer === null) {
+    // **Before the allowance moves, and before anything is fetched.** A
+    // deployment that cannot analyse has no business reading a third party's
+    // page on somebody's behalf.
+    return {
+      status: "error",
+      message: analysisMessage(language, "notConfigured"),
+    };
+  }
+
+  let allowed: boolean;
+  try {
+    allowed = await consumeCreatorAnalysisQuota(provisionedUserId);
+  } catch (error) {
+    // Fail closed: not knowing how much allowance is left is not knowing there
+    // is some. Nothing has been fetched at this point.
+    console.error("[creator] the rate limit could not be read", error);
+    return { status: "error", message: analysisMessage(language, "failed") };
+  }
+
+  if (!allowed) {
+    return {
+      status: "error",
+      message: analysisMessage(language, "limitReached"),
+    };
+  }
+
+  let source: Awaited<ReturnType<typeof loadCreatorUrlSource>>;
+  try {
+    source = await loadCreatorUrlSource(url);
+  } catch (error) {
+    // The allowance stays spent. See the note above the function.
+    return urlFailureResult(language, error);
+  }
+
+  try {
+    await analyzeCreatorUrl(
+      provisionedUserId,
+      {
+        title: rawTitle === "" ? null : rawTitle,
+        // **The address the body came from**, which is not always the one that
+        // was typed. Storing the submitted one would name a page that may never
+        // have been read.
+        sourceUrl: source.sourceUrl,
+        body: source.body,
+      },
+      analyzer,
+    );
+
+    // The same invalidation the paste path does, for the same reason: the inbox
+    // is a Server Component and its cached render predates this analysis.
+    revalidatePath("/creator");
+
+    return { status: "success", message: analysisMessage(language, "done") };
+  } catch (error) {
+    return {
+      status: "error",
+      message: analysisMessage(language, analysisFailure(error)),
+    };
+  }
+}
+
+/**
+ * Turns a source failure into something safe to read, or defers.
+ *
+ * **Nothing about the page or the address is quoted.** `CreatorUrlSourceError`
+ * carries only a category, and the fetch-layer error it came from — which can
+ * name a host, a status or a charset — was already logged by kind and dropped.
+ * Anything that is not one of these is Koqentra's own fault and gets the
+ * general wording.
+ */
+function urlFailureResult(language: string, error: unknown): ActionResult {
+  if (isCreatorUrlSourceError(error)) {
+    return {
+      status: "error",
+      message: t(language, URL_MESSAGE_KEYS[error.failure]),
+    };
+  }
+
+  console.error("[creator] the URL source could not be read", error);
+  return { status: "error", message: analysisMessage(language, "failed") };
 }
 
 /**

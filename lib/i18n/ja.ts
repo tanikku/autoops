@@ -331,6 +331,22 @@ export const ja: Record<TranslationKey, string> = {
     "現在この処理を実行できません。しばらくしてからもう一度お試しください。",
   "creator.analysis.done": "文章を読み取りました。",
 
+  /**
+   * URLを読み取れなかった理由。利用者が次に取れる行動ごとに6種類。
+   * ホスト名・ステータス・charset等はログに留め、画面には出さない。
+   */
+  "creator.analysis.urlInvalid":
+    "アドレスを確認してください。Koqentra が読み取れるのは、通常のポートで公開されている http / https のページです。",
+  "creator.analysis.urlBlocked": "このアドレスは取得できません。",
+  "creator.analysis.urlUnavailable":
+    "ページを取得できませんでした。しばらくしてからもう一度お試しください。",
+  "creator.analysis.urlUnreadable":
+    "このページを HTML として読み取れませんでした。PDF や、本文をブラウザ側で組み立てるページには対応していません。文章を貼り付けてください。",
+  "creator.analysis.urlTooLarge":
+    "このページは一度に読み取るには大きすぎます。必要な部分を文章として貼り付けてください。",
+  "creator.analysis.urlEmpty":
+    "このページから分析できる本文を読み取れませんでした。文章を貼り付けてください。",
+
   "creator.feedback.saved": "ご回答を記録しました。",
   "creator.feedback.alreadyRecorded": "この提案にはすでに回答済みです。",
   "creator.feedback.invalid": "この提案に対しては、その回答を記録できません。",
@@ -411,6 +427,22 @@ export const ja: Record<TranslationKey, string> = {
   "creator.new.privacyNote":
     "入力した内容は、分析のため Anthropic に送信されます。",
   "creator.new.privacyLink": "プライバシー",
+
+  /**
+   * 貼り付けと URL 指定の切り替え。
+   * 「どんな URL でも読める」と誤解させないため、対応していないものを明記する。
+   * privacy note は貼り付け時と別文 — URL では Koqentra のサーバーが
+   * 第三者のサイトへリクエストするという、貼り付けには無い事実が増えるため。
+   */
+  "creator.new.sourceText": "文章",
+  "creator.new.sourceUrl": "URLを指定",
+  "creator.new.sourceLabel": "何を読み取りますか",
+  "creator.new.urlLabel": "ページのアドレス",
+  "creator.new.urlPlaceholder": "https://example.com/blog/post",
+  "creator.new.urlHelp":
+    "Koqentra が読み取れるのは、公開されている HTML ページだけです。ログインが必要なページや PDF には対応していません。",
+  "creator.new.urlPrivacyNote":
+    "指定したページは Koqentra のサーバーから取得され、アドレスと読み取った本文が分析のため Anthropic に送信されます。",
 
   // 次の分析に渡るものを、渡る前に見せる。ここに出るのは本人が設定した内容と
   // 本人が実際に選んだ結果だけで、「AI が学習したあなたの好み」ではない —

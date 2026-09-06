@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   createCreatorAnalyzer: vi.fn(),
   consumeCreatorAnalysisQuota: vi.fn(),
   analyzeCreatorText: vi.fn(),
+  analyzeCreatorUrl: vi.fn(),
+  loadCreatorUrlSource: vi.fn(),
   recordCreatorFeedback: vi.fn(),
   notFound: vi.fn(),
   revalidatePath: vi.fn(),
@@ -46,13 +48,26 @@ vi.mock("@/lib/rate-limit", () => ({
 vi.mock("@/lib/creator/service", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/creator/service")>()),
   analyzeCreatorText: mocks.analyzeCreatorText,
+  analyzeCreatorUrl: mocks.analyzeCreatorUrl,
   recordCreatorFeedback: mocks.recordCreatorFeedback,
 }));
 
-const { analyzeCreatorTextAction, recordCreatorFeedbackAction } = await import(
-  "@/app/creator/actions"
-);
+// **The fetch is replaced, the error taxonomy is not.** Reading a page is what
+// this action must not do in a test; which failures exist is a contract, and a
+// stubbed one would let an assertion pass against categories nobody ships.
+vi.mock("@/lib/creator/url-source", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/creator/url-source")>()),
+  loadCreatorUrlSource: mocks.loadCreatorUrlSource,
+}));
+
+const {
+  analyzeCreatorTextAction,
+  analyzeCreatorUrlAction,
+  recordCreatorFeedbackAction,
+} = await import("@/app/creator/actions");
 const { en } = await import("@/lib/i18n/en");
+const { ja } = await import("@/lib/i18n/ja");
+const { CreatorUrlSourceError } = await import("@/lib/creator/url-source");
 const {
   CreatorAnalysisRequestTooLargeError,
   creatorAnalysisLimits,
@@ -113,6 +128,13 @@ beforeEach(() => {
   mocks.analyzeCreatorText
     .mockReset()
     .mockResolvedValue({ contentItemId: "content-1", result: {} });
+  mocks.analyzeCreatorUrl
+    .mockReset()
+    .mockResolvedValue({ contentItemId: "content-1", result: {} });
+  mocks.loadCreatorUrlSource.mockReset().mockResolvedValue({
+    sourceUrl: "https://www.example.com/article/",
+    body: "The page text.",
+  });
   mocks.recordCreatorFeedback.mockReset().mockResolvedValue({ id: "feedback-1" });
   mocks.revalidatePath.mockReset();
   mocks.notFound.mockReset().mockImplementation(() => {
@@ -903,5 +925,270 @@ describe("recording an answer", () => {
     expect(
       mocks.requireProvisionedUserId.mock.invocationCallOrder[0],
     ).toBeLessThan(mocks.recordCreatorFeedback.mock.invocationCallOrder[0]);
+  });
+});
+
+/**
+ * Asking Koqentra to read a page instead of a pasted piece.
+ *
+ * **The fetch is replaced, so nothing here reaches a network.** What is fixed
+ * is the ordering — which is where the interesting decisions are — and what may
+ * travel back out when a page could not be used.
+ */
+describe("analyzeCreatorUrlAction", () => {
+  const PAGE_URL = "https://example.com/article";
+  const FINAL_URL = "https://www.example.com/article/";
+
+  function urlForm(fields: Record<string, string> = {}) {
+    const data = new FormData();
+    data.set("title", SECRET_TITLE);
+    data.set("url", PAGE_URL);
+    for (const [key, value] of Object.entries(fields)) {
+      data.set(key, value);
+    }
+    return data;
+  }
+
+  /**
+   * **Nothing is provisioned, counted, fetched or analysed for an address that
+   * cannot be fetched at all.** The whole point of settling these before the
+   * network is that somebody who mistyped has spent nothing and contacted
+   * nobody.
+   */
+  it.each([
+    ["nothing at all", { url: "" }],
+    ["only whitespace", { url: "   " }],
+    ["something that is not a URL", { url: "not-a-url" }],
+    ["an unsupported scheme", { url: "ftp://example.com/a" }],
+    ["a port", { url: "https://example.com:8443/a" }],
+    ["credentials", { url: "https://user:pass@example.com/a" }],
+    [
+      "an address past the limit",
+      { url: `https://example.com/${"a".repeat(creatorAnalysisLimits.contentSourceUrl)}` },
+    ],
+  ])("refuses %s, before anything is spent", async (_name, fields) => {
+    const result = await analyzeCreatorUrlAction(null, urlForm(fields));
+
+    expect(result?.status).toBe("error");
+    expect(mocks.requireProvisionedUserId).not.toHaveBeenCalled();
+    expect(mocks.createCreatorAnalyzer).not.toHaveBeenCalled();
+    expect(mocks.consumeCreatorAnalysisQuota).not.toHaveBeenCalled();
+    expect(mocks.loadCreatorUrlSource).not.toHaveBeenCalled();
+    expect(mocks.analyzeCreatorUrl).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("refuses a title past the limit the same way", async () => {
+    const result = await analyzeCreatorUrlAction(
+      null,
+      urlForm({ title: "T".repeat(creatorAnalysisLimits.contentTitle + 1) }),
+    );
+
+    expect(result).toEqual({
+      status: "error",
+      message: en["creator.analysis.tooLong"],
+    });
+    expect(mocks.requireProvisionedUserId).not.toHaveBeenCalled();
+    expect(mocks.loadCreatorUrlSource).not.toHaveBeenCalled();
+  });
+
+  it("identifies, validates, provisions, counts, fetches, then analyses", async () => {
+    await analyzeCreatorUrlAction(null, urlForm());
+
+    const order = [
+      mocks.requireUserId.mock.invocationCallOrder[0],
+      mocks.getUserLanguage.mock.invocationCallOrder[0],
+      mocks.requireProvisionedUserId.mock.invocationCallOrder[0],
+      mocks.createCreatorAnalyzer.mock.invocationCallOrder[0],
+      mocks.consumeCreatorAnalysisQuota.mock.invocationCallOrder[0],
+      mocks.loadCreatorUrlSource.mock.invocationCallOrder[0],
+      mocks.analyzeCreatorUrl.mock.invocationCallOrder[0],
+      mocks.revalidatePath.mock.invocationCallOrder[0],
+    ];
+
+    expect(order.slice().sort((a, b) => a - b)).toEqual(order);
+  });
+
+  /**
+   * **The address the body came from, not the one that was typed.** A redirect
+   * means those differ, and storing the submitted one would name a page that
+   * may never have been read.
+   */
+  it("analyses the page it actually read, under the session owner", async () => {
+    await analyzeCreatorUrlAction(null, urlForm());
+
+    expect(mocks.loadCreatorUrlSource).toHaveBeenCalledWith(PAGE_URL);
+    expect(mocks.analyzeCreatorUrl).toHaveBeenCalledWith(
+      USER,
+      { title: SECRET_TITLE, sourceUrl: FINAL_URL, body: "The page text." },
+      analyzer,
+    );
+  });
+
+  /** The body is Koqentra's to read. A form supplying one is ignored. */
+  it("ignores a body somebody put in the form", async () => {
+    await analyzeCreatorUrlAction(null, urlForm({ body: "ATTACKER TEXT" }));
+
+    expect(mocks.analyzeCreatorUrl.mock.calls[0][1].body).toBe("The page text.");
+  });
+
+  it.each(["userId", "ownerId", "sourceKind", "sourceUrl", "targetChannel"])(
+    "ignores %s in the form",
+    async (name) => {
+      await analyzeCreatorUrlAction(null, urlForm({ [name]: "attacker" }));
+
+      expect(mocks.analyzeCreatorUrl.mock.calls[0][0]).toBe(USER);
+      expect(JSON.stringify(mocks.analyzeCreatorUrl.mock.calls[0][1])).not.toContain(
+        "attacker",
+      );
+    },
+  );
+
+  it("keeps no title as no title", async () => {
+    await analyzeCreatorUrlAction(null, urlForm({ title: "" }));
+
+    expect(mocks.analyzeCreatorUrl.mock.calls[0][1].title).toBeNull();
+  });
+
+  /**
+   * **A deployment that cannot analyse has no business reading somebody
+   * else's page**, and charging for a feature it does not have would be
+   * charging for nothing.
+   */
+  it("fetches nothing and counts nothing when no model is configured", async () => {
+    mocks.createCreatorAnalyzer.mockReturnValue(null);
+
+    const result = await analyzeCreatorUrlAction(null, urlForm());
+
+    expect(result).toEqual({
+      status: "error",
+      message: en["creator.analysis.notConfigured"],
+    });
+    expect(mocks.consumeCreatorAnalysisQuota).not.toHaveBeenCalled();
+    expect(mocks.loadCreatorUrlSource).not.toHaveBeenCalled();
+  });
+
+  it("fetches nothing when the allowance is used up", async () => {
+    mocks.consumeCreatorAnalysisQuota.mockResolvedValue(false);
+
+    const result = await analyzeCreatorUrlAction(null, urlForm());
+
+    expect(result).toEqual({
+      status: "error",
+      message: en["creator.analysis.limitReached"],
+    });
+    expect(mocks.loadCreatorUrlSource).not.toHaveBeenCalled();
+    expect(mocks.analyzeCreatorUrl).not.toHaveBeenCalled();
+  });
+
+  it("fetches nothing when the allowance cannot be read", async () => {
+    mocks.consumeCreatorAnalysisQuota.mockRejectedValue(new Error("db down"));
+
+    const result = await analyzeCreatorUrlAction(null, urlForm());
+
+    expect(result).toEqual({
+      status: "error",
+      message: en["creator.analysis.failed"],
+    });
+    expect(mocks.loadCreatorUrlSource).not.toHaveBeenCalled();
+    expect(mocks.analyzeCreatorUrl).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **The allowance stays spent when the page could not be read.** Reading
+   * somebody else's site is part of the attempt, not a free preliminary — if it
+   * were refunded, a stream of addresses that fail would cost nothing to send.
+   */
+  it("keeps the allowance spent after a failed fetch", async () => {
+    mocks.loadCreatorUrlSource.mockRejectedValue(
+      new CreatorUrlSourceError("unavailable"),
+    );
+
+    await analyzeCreatorUrlAction(null, urlForm());
+
+    expect(mocks.consumeCreatorAnalysisQuota).toHaveBeenCalledTimes(1);
+    expect(mocks.consumeCreatorAnalysisQuota.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.loadCreatorUrlSource.mock.invocationCallOrder[0],
+    );
+    expect(mocks.analyzeCreatorUrl).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["invalid-url", "creator.analysis.urlInvalid"],
+    ["blocked", "creator.analysis.urlBlocked"],
+    ["unavailable", "creator.analysis.urlUnavailable"],
+    ["unreadable", "creator.analysis.urlUnreadable"],
+    ["too-large", "creator.analysis.urlTooLarge"],
+    ["empty", "creator.analysis.urlEmpty"],
+  ] as const)("says %s in words a reader can act on", async (failure, key) => {
+    mocks.loadCreatorUrlSource.mockRejectedValue(
+      new CreatorUrlSourceError(failure),
+    );
+
+    const result = await analyzeCreatorUrlAction(null, urlForm());
+
+    expect(result).toEqual({ status: "error", message: en[key] });
+    expect(mocks.analyzeCreatorUrl).not.toHaveBeenCalled();
+  });
+
+  it("gives the general wording to something that is not a page problem", async () => {
+    mocks.loadCreatorUrlSource.mockRejectedValue(new Error("SECRET INTERNALS"));
+
+    const result = await analyzeCreatorUrlAction(null, urlForm());
+
+    expect(result).toEqual({
+      status: "error",
+      message: en["creator.analysis.failed"],
+    });
+    expect(result?.message).not.toContain("SECRET");
+  });
+
+  it("says nothing about the model's failure beyond its category", async () => {
+    mocks.analyzeCreatorUrl.mockRejectedValue(
+      new ProviderError("timeout", "SECRET PROVIDER DETAIL"),
+    );
+
+    const result = await analyzeCreatorUrlAction(null, urlForm());
+
+    expect(result).toEqual({
+      status: "error",
+      message: en["creator.analysis.timeout"],
+    });
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("invalidates the inbox once, on success only", async () => {
+    const result = await analyzeCreatorUrlAction(null, urlForm());
+
+    expect(result).toEqual({
+      status: "success",
+      message: en["creator.analysis.done"],
+    });
+    expect(mocks.revalidatePath.mock.calls).toEqual([["/creator"]]);
+  });
+
+  /** Neither the address nor what was on the page comes back to the browser. */
+  it("returns nothing that was read", async () => {
+    mocks.loadCreatorUrlSource.mockResolvedValue({
+      sourceUrl: FINAL_URL,
+      body: SECRET_BODY,
+    });
+
+    const result = await analyzeCreatorUrlAction(null, urlForm());
+
+    expect(JSON.stringify(result)).not.toContain(SECRET_BODY);
+    expect(JSON.stringify(result)).not.toContain(SECRET_TITLE);
+  });
+
+  it("answers in the account's language", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    mocks.loadCreatorUrlSource.mockRejectedValue(
+      new CreatorUrlSourceError("unreadable"),
+    );
+
+    const result = await analyzeCreatorUrlAction(null, urlForm());
+
+    expect(result?.message).toBe(ja["creator.analysis.urlUnreadable"]);
   });
 });

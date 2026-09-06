@@ -16,6 +16,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 vi.mock("@/auth", () => ({ auth: vi.fn(), signIn: vi.fn(), signOut: vi.fn() }));
 vi.mock("@/app/creator/actions", () => ({
   analyzeCreatorTextAction: vi.fn(),
+  analyzeCreatorUrlAction: vi.fn(),
   recordCreatorFeedbackAction: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({
@@ -69,6 +70,7 @@ describe("what the form asks for", () => {
     expect(html).not.toContain(`name="${name}"`);
   });
 
+  /** The mode on screen is the paste, and it sends what it always sent. */
   it("sends exactly two named fields", () => {
     const names = [...html.matchAll(/name="([^"]+)"/g)].map((match) => match[1]);
 
@@ -157,5 +159,85 @@ describe("where it goes afterwards", () => {
     expect(useActionResult).toHaveBeenCalledWith(null, {
       redirectTo: "/creator",
     });
+  });
+});
+
+/**
+ * Choosing between pasting and giving an address.
+ *
+ * **A static render only ever shows the default.** Pressing the other button is
+ * a browser event, and this project has no DOM in its test environment — adding
+ * one for this would be a dependency, and a test-only prop to reach the second
+ * mode would be production code existing for a test. What is fixed here is
+ * everything a render can see: which mode opens, that the switch cannot submit
+ * the form, and that the chosen one is announced.
+ *
+ * The switch actually working is on the Production acceptance list.
+ */
+describe("choosing where the writing comes from", () => {
+  const html = render();
+
+  it("offers both, and opens on the paste", () => {
+    expect(html).toContain(t("en", "creator.new.sourceText"));
+    expect(html).toContain(t("en", "creator.new.sourceUrl"));
+    expect(html).toContain('name="body"');
+    expect(html).not.toContain('name="url"');
+  });
+
+  /** A submit here would send the form somebody was still filling in. */
+  it("switches with buttons that do not submit", () => {
+    const buttons = [...html.matchAll(/<button[^>]*aria-pressed[^>]*>/g)].map(
+      (match) => match[0],
+    );
+
+    expect(buttons).toHaveLength(2);
+    for (const button of buttons) {
+      expect(button).toContain('type="button"');
+    }
+  });
+
+  /** The border says which is chosen; this is what says it out loud. */
+  it("announces which one is chosen", () => {
+    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain('aria-pressed="false"');
+    expect(html.match(/aria-pressed="true"/g) ?? []).toHaveLength(1);
+  });
+
+  it("speaks both names in Japanese too", () => {
+    const japanese = render("ja");
+
+    expect(japanese).toContain(t("ja", "creator.new.sourceText"));
+    expect(japanese).toContain(t("ja", "creator.new.sourceUrl"));
+  });
+});
+
+/**
+ * What the address field would be, read from the component rather than from a
+ * rendered page: the second mode is not reachable without a DOM, and the field
+ * it builds is still worth stating.
+ */
+describe("the address field", () => {
+  it("names the limit an analysis may carry", () => {
+    expect(creatorAnalysisLimits.contentSourceUrl).toBe(8_192);
+  });
+
+  /** A bare field promises that any address works, and that is not true. */
+  it.each(["en", "ja"] as const)("says what is unsupported in %s", (language) => {
+    const help = t(language, "creator.new.urlHelp");
+
+    expect(help.trim()).not.toBe("");
+    expect(help.toLowerCase()).toContain(language === "ja" ? "pdf" : "pdf");
+  });
+
+  /**
+   * **A different sentence from the paste one, deliberately.** A URL adds
+   * something pasting does not do: Koqentra's own server contacts a site.
+   */
+  it.each(["en", "ja"] as const)("says the server fetches it in %s", (language) => {
+    const note = t(language, "creator.new.urlPrivacyNote");
+
+    expect(note).not.toBe(t(language, "creator.new.privacyNote"));
+    expect(note).toContain(language === "ja" ? "サーバー" : "server");
+    expect(note).toContain("Anthropic");
   });
 });

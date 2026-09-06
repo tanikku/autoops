@@ -48,6 +48,7 @@ type PrivacyCopy = {
   ai: Passage;
   email: Passage;
   creator: Passage;
+  creatorUrl: Passage;
   creatorDoesNot: Passage;
   storage: Passage;
   run: Passage;
@@ -176,6 +177,48 @@ const PRIVACY_COPY = {
             agreed, rewrote it, or turned it down — along with your edited text
             when you rewrote it, and a reason when you gave one. The post the AI
             originally proposed is kept as it was written.
+          </p>
+        </>
+      ),
+    },
+    creatorUrl: {
+      title: "Analyzing a page by its address",
+      body: (
+        <>
+          <p>
+            You can give Koqentra the address of a public page instead of
+            pasting text. When you do, <strong>Koqentra&rsquo;s own server makes
+            an ordinary HTTP request to that page</strong>, from Koqentra&rsquo;s
+            network rather than from your browser. The site receives that
+            request the way it receives any other, which normally includes the
+            server&rsquo;s address, the path asked for, and the name Koqentra
+            identifies itself by.
+          </p>
+          <p>
+            <strong>Your cookies and your sign-in are not sent to that
+            site.</strong> Koqentra does not forward any credential, cookie or
+            authorization header from your session, and it does not use your
+            browser to fetch the page. It follows a small number of redirects,
+            and refuses to follow one that would drop from https to http.
+          </p>
+          <p>
+            Only public pages served as HTML are read. Pages that require a
+            sign-in are not fetched, and PDFs and other file types are refused
+            rather than guessed at.
+          </p>
+          <p>
+            The text read from the page and the address it was finally read from
+            are sent to Anthropic for the analysis, together with the same
+            preferences and recent answers described above.
+          </p>
+          <p>
+            When the analysis succeeds, Koqentra stores that address, the text
+            it read, and the decisions and post text for the three channels — in
+            the same way it stores a piece you paste in.
+          </p>
+          <p>
+            <strong>Koqentra does not post anything to that address, or
+            anywhere else.</strong>
           </p>
         </>
       ),
@@ -388,6 +431,34 @@ const PRIVACY_COPY = {
         </>
       ),
     },
+    creatorUrl: {
+      title: "アドレスを指定した分析",
+      body: (
+        <>
+          <p>
+            文章を貼り付ける代わりに、公開されているページのアドレスを指定することもできます。その場合、
+            <strong>Koqentraのサーバー自身がそのページへ通常のHTTPリクエストを送信します。</strong>
+            利用者のブラウザからではなく、Koqentraのネットワークからのアクセスです。相手のサイトは他のアクセスと同じようにそのリクエストを受け取り、そこには通常、サーバーのアドレス、要求したパス、Koqentraが名乗る名前が含まれます。
+          </p>
+          <p>
+            <strong>利用者のCookieやサインイン情報は、そのサイトへ送信されません。</strong>
+            Koqentraはセッションの資格情報・Cookie・Authorizationヘッダーをそのサイトへ転送せず、利用者のブラウザを使ってページを取得することもありません。リダイレクトは少数だけ追跡し、httpsからhttpへ下がるリダイレクトは拒否します。
+          </p>
+          <p>
+            読み取るのは、HTMLとして公開されているページだけです。サインインが必要なページは取得せず、PDFなどのファイル形式は推測して読まずに拒否します。
+          </p>
+          <p>
+            ページから読み取った本文と、最終的に読み取ったアドレスは、上に記載した発信の前提および直近の回答とあわせて、分析のためAnthropicへ送信されます。
+          </p>
+          <p>
+            分析が成功すると、Koqentraはそのアドレス、読み取った本文、3つのチャネルの判断と投稿文を保存します。貼り付けた文章の場合と同じ扱いです。
+          </p>
+          <p>
+            <strong>Koqentraは、そのアドレスにも、他のどこにも投稿しません。</strong>
+          </p>
+        </>
+      ),
+    },
     creatorDoesNot: {
       title: "Creatorが行わないこと",
       body: (
@@ -558,6 +629,10 @@ export default async function PrivacyPage() {
             published. Describing the first and not the second would leave this
             page accurate about the smaller half. */}
         <Section title={copy.creator.title}>{copy.creator.body}</Section>
+        {/* **A URL adds one thing a paste does not**: Koqentra's own server
+            contacts a site the reader named. That is a new flow of data out of
+            this deployment, so it gets its own section rather than a clause. */}
+        <Section title={copy.creatorUrl.title}>{copy.creatorUrl.body}</Section>
         <Section title={copy.creatorDoesNot.title}>
           {copy.creatorDoesNot.body}
         </Section>

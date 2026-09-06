@@ -348,3 +348,96 @@ describe("promises nothing here could keep", () => {
     expect(text).not.toContain(claim);
   });
 });
+
+/**
+ * Reading a page by its address, which is the one thing C1.9A adds to what
+ * leaves this deployment.
+ *
+ * **A URL is not a paste with a different field.** Koqentra's own server
+ * contacts a site the reader named, and that site sees a request it did not
+ * get before. Every statement below is one somebody would be misled by if it
+ * disappeared — and the two negatives are the ones a reader most needs, because
+ * "does it send my login?" is the first question a fetch invites.
+ */
+describe("what fetching a page is said to do", () => {
+  const english = [
+    // Koqentra's server makes the request, not the reader's browser.
+    "own server",
+    "HTTP request",
+    // What is not forwarded.
+    "cookies",
+    "not sent to that site",
+    "authorization header",
+    // Only public HTML.
+    "public pages served as HTML",
+    "require a sign-in are not fetched",
+    "PDFs",
+    // What reaches Anthropic, and what is kept.
+    "sent to Anthropic",
+    "stores that address",
+    // What it still does not do.
+    "does not post anything to that address",
+  ];
+
+  it.each(english)("says %o in English", async (phrase) => {
+    signedOut();
+
+    const text = await render();
+
+    expect(text.toLowerCase()).toContain(phrase.toLowerCase());
+  });
+
+  const japanese = [
+    "Koqentraのサーバー自身",
+    "HTTPリクエスト",
+    "Cookie",
+    "送信されません",
+    "Authorization",
+    "HTMLとして公開されているページ",
+    "サインインが必要なページは取得せず",
+    "PDF",
+    "Anthropicへ送信",
+    "アドレス、読み取った本文",
+    "他のどこにも投稿しません",
+  ];
+
+  it.each(japanese)("says %o in Japanese", async (phrase) => {
+    signedInWith("user-ja", "ja");
+
+    const text = await render();
+
+    expect(text).toContain(phrase);
+  });
+
+  /**
+   * **Precise about what a site does still receive.** An ordinary request
+   * carries an address, a path and a user agent; claiming nothing at all is
+   * sent would be a promise the transport does not keep.
+   */
+  it("does not claim the site is told nothing", async () => {
+    signedOut();
+
+    const text = await render();
+
+    expect(text.toLowerCase()).not.toContain("sends nothing to");
+    expect(text.toLowerCase()).not.toContain("no information is sent to");
+  });
+
+  it("does not claim the site is told nothing, in Japanese", async () => {
+    signedInWith("user-ja", "ja");
+
+    const text = await render();
+
+    expect(text).not.toContain("何も送信しません");
+    expect(text).not.toContain("一切送信されません");
+  });
+
+  /** Neither language may claim a standard nothing here demonstrates. */
+  it.each(["robots.txt", "GDPR"])("does not claim %o", async (claim) => {
+    signedOut();
+
+    const text = await render();
+
+    expect(text).not.toContain(claim);
+  });
+});

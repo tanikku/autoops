@@ -51,11 +51,26 @@ export const MAX_REDIRECTS = 3;
 export const MAX_RESPONSE_BYTES = 2_000_000;
 
 /**
- * What AutoOps calls itself when it asks for a page.
+ * What Koqentra calls itself when it asks for a page.
  *
  * Identifiable on purpose. An operator reading their own logs should be able to
- * tell what this is and where to complain about it, and a repository URL says
- * both without naming a deployment or anyone's account.
+ * tell what this is and where to find out what it does, without the string
+ * naming a deployment or anyone's account.
+ *
+ * **The product's name, not the repository's.** The repository is still called
+ * `autoops` and stays that way — an internal identifier is not a brand — but
+ * this string is read by people outside this project, and telling them a name
+ * that appears nowhere they can look it up is telling them nothing.
+ *
+ * **"Fetcher" rather than "Watcher", because two features send it now.** A
+ * Website Worker checks the same page on a schedule; a Creator analysis reads
+ * one page once. "Watcher" describes only the first, and an operator matching
+ * it against their own logs would be told the wrong thing about half the
+ * requests.
+ *
+ * The link goes to the privacy notice rather than to a code host: it is the
+ * page that actually answers what this fetches and what happens to it, and it
+ * is public.
  */
 export const USER_AGENT =
-  "AutoOpsWatcher/1.0 (+https://github.com/tanikku/autoops)";
+  "KoqentraFetcher/1.0 (+https://app.koqentra.com/privacy)";

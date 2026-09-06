@@ -396,7 +396,23 @@ export type CreatorAnalysisPersistence = {
   title: string | null;
   body: string;
   result: CreatorAnalysisResult;
-};
+} & CreatorPersistedSource;
+
+/**
+ * Where the material came from, as a pair that cannot be half-set.
+ *
+ * **A union rather than two independent fields.** `sourceKind: "url"` with no
+ * address, or `"text"` carrying one, are both rows that describe something that
+ * did not happen — and a screen or a later analysis reading either would be
+ * reading a fiction. Written this way, neither compiles.
+ *
+ * **Not the client's to state.** Which of the two this is follows from which
+ * service function ran, and those are chosen by the server action, so a form
+ * has no field that could claim provenance.
+ */
+export type CreatorPersistedSource =
+  | { sourceKind: "text"; sourceUrl: null }
+  | { sourceKind: "url"; sourceUrl: string };
 
 /**
  * Everything a finished analysis produces, written or not at all.
@@ -417,7 +433,7 @@ export type CreatorAnalysisPersistence = {
  * draft is a post nobody decided to write.
  */
 export async function saveCreatorAnalysis(
-  { userId, title, body, result }: CreatorAnalysisPersistence,
+  { userId, title, body, result, sourceKind, sourceUrl }: CreatorAnalysisPersistence,
   client: DbClient = prisma,
 ): Promise<{ contentItemId: string }> {
   const run = async (tx: DbClient) => {
@@ -434,8 +450,8 @@ export async function saveCreatorAnalysis(
       data: {
         userId,
         creatorProfileId: profile.id,
-        sourceKind: "text",
-        sourceUrl: null,
+        sourceKind,
+        sourceUrl,
         title,
         body,
       },

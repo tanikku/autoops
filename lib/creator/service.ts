@@ -39,6 +39,31 @@ export type CreatorTextInput = {
   body: string;
 };
 
+/**
+ * What was read from a page. No owner, and no raw URL either.
+ *
+ * `sourceUrl` is the address the body actually came from — after redirects —
+ * because that is the page that was read. It arrives already fetched: this
+ * layer never touches the network, exactly as it never touches a session.
+ */
+export type CreatorUrlInput = {
+  title: string | null;
+  sourceUrl: string;
+  body: string;
+};
+
+/**
+ * The material and where it came from, as one indivisible fact.
+ *
+ * **Server-decided, never submitted.** Which arm this is follows from which of
+ * the two entry points below was called, and those are chosen by a server
+ * action. A form field naming a source kind would be a claim about provenance
+ * that nothing could check.
+ */
+type CreatorSourceInput =
+  | { sourceKind: "text"; sourceUrl: null; title: string | null; body: string }
+  | { sourceKind: "url"; sourceUrl: string; title: string | null; body: string };
+
 /** The material was empty, so there was nothing to judge. */
 export class EmptyCreatorContentError extends Error {
   constructor() {
@@ -95,19 +120,19 @@ export type CreatorAnalysisOutcome = {
  * has succeeded**, so a failed call leaves no content item, no empty profile,
  * and no half-finished set of decisions.
  */
-export async function analyzeCreatorText(
+async function analyzeCreatorContent(
   userId: string,
-  input: CreatorTextInput,
+  source: CreatorSourceInput,
   analyzer: CreatorAnalyzer,
 ): Promise<CreatorAnalysisOutcome> {
   // **The original text is what is judged and what is stored.** Only the
   // emptiness check looks at a trimmed copy; trimming what gets saved would
   // change somebody's material on its way in.
-  if (input.body.trim() === "") {
+  if (source.body.trim() === "") {
     throw new EmptyCreatorContentError();
   }
 
-  const title = normalizeOptionalText(input.title);
+  const title = normalizeOptionalText(source.title);
 
   const [profile, feedback] = await Promise.all([
     readCreatorProfile(userId),
@@ -117,13 +142,13 @@ export async function analyzeCreatorText(
   const request: CreatorAnalysisRequest = {
     profile,
     content: {
-      // Fixed here rather than chosen by a caller: C1 has one way in, and a
-      // field the client could set would be a claim about provenance that
-      // nothing checks.
-      sourceKind: "text",
-      sourceUrl: null,
+      // Carried from the entry point rather than chosen here, and never from a
+      // form: the two callers below are the only things that may say what a
+      // source is.
+      sourceKind: source.sourceKind,
+      sourceUrl: source.sourceUrl,
       title,
-      body: input.body,
+      body: source.body,
     },
     feedback,
   };
@@ -134,14 +159,68 @@ export async function analyzeCreatorText(
 
   const result = await analyzer.analyze(request);
 
-  const { contentItemId } = await saveCreatorAnalysis({
-    userId,
-    title,
-    body: input.body,
-    result,
-  });
+  const { contentItemId } = await saveCreatorAnalysis(
+    source.sourceKind === "url"
+      ? {
+          userId,
+          title,
+          body: source.body,
+          result,
+          sourceKind: "url",
+          sourceUrl: source.sourceUrl,
+        }
+      : {
+          userId,
+          title,
+          body: source.body,
+          result,
+          sourceKind: "text",
+          sourceUrl: null,
+        },
+  );
 
   return { contentItemId, result };
+}
+
+export async function analyzeCreatorText(
+  userId: string,
+  input: CreatorTextInput,
+  analyzer: CreatorAnalyzer,
+): Promise<CreatorAnalysisOutcome> {
+  return analyzeCreatorContent(
+    userId,
+    { sourceKind: "text", sourceUrl: null, title: input.title, body: input.body },
+    analyzer,
+  );
+}
+
+/**
+ * Judges one page that was read from a public address.
+ *
+ * **The same loop as the paste, with a different provenance.** The profile, the
+ * recent answers, the request limits, the ordering and the all-or-nothing write
+ * are identical — a URL changes where the words came from and nothing about how
+ * they are judged.
+ *
+ * **The fetch already happened.** Reading a page is
+ * `lib/creator/url-source.ts`'s job, and keeping it out of here is what lets
+ * the whole loop be tested without a network.
+ */
+export async function analyzeCreatorUrl(
+  userId: string,
+  input: CreatorUrlInput,
+  analyzer: CreatorAnalyzer,
+): Promise<CreatorAnalysisOutcome> {
+  return analyzeCreatorContent(
+    userId,
+    {
+      sourceKind: "url",
+      sourceUrl: input.sourceUrl,
+      title: input.title,
+      body: input.body,
+    },
+    analyzer,
+  );
 }
 
 /**

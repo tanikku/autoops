@@ -518,11 +518,18 @@ describe("saving an analysis", () => {
     },
   };
 
+  /**
+   * A pasted piece, which is what every assertion below that does not mention a
+   * source is about. The pair is required now — a row cannot say it came from a
+   * page without saying which one.
+   */
   const persistence = {
     userId: USER,
     title: "A title",
     body: "A body.",
     result,
+    sourceKind: "text" as const,
+    sourceUrl: null,
   };
 
   it("writes everything inside one transaction", async () => {
@@ -801,5 +808,109 @@ describe("saving a stated profile", () => {
     await saveCreatorProfile(OTHER, EMPTY_CREATOR_PROFILE);
 
     expect(profileUpsert.mock.calls[0][0].where).toEqual({ userId: OTHER });
+  });
+});
+
+/**
+ * Where the material came from, written down as one fact.
+ *
+ * **A pair, never two loose fields.** `"url"` with no address, or `"text"`
+ * carrying one, are both rows describing something that did not happen — the
+ * union makes neither expressible, and these fix that the pair reaches the row
+ * intact.
+ */
+describe("recording where the material came from", () => {
+  const result = {
+    x: { verdict: "recommend" as const, reason: "Stands alone.", draftBody: "A post." },
+    reddit: { verdict: "skip" as const, reason: "No community set.", draftBody: null },
+    longform: {
+      verdict: "recommend" as const,
+      reason: "Worth the room.",
+      draftBody: "A piece.",
+    },
+  };
+
+  it("files a pasted piece as pasted, with no address", async () => {
+    await saveCreatorAnalysis({
+      userId: USER,
+      title: "A title",
+      body: "A body.",
+      result,
+      sourceKind: "text",
+      sourceUrl: null,
+    });
+
+    expect(contentItemCreate.mock.calls[0][0].data).toMatchObject({
+      sourceKind: "text",
+      sourceUrl: null,
+    });
+  });
+
+  it("files a page under the address it was read from", async () => {
+    await saveCreatorAnalysis({
+      userId: USER,
+      title: "A title",
+      body: "The page text.",
+      result,
+      sourceKind: "url",
+      sourceUrl: "https://www.example.com/article/",
+    });
+
+    expect(contentItemCreate.mock.calls[0][0].data).toMatchObject({
+      userId: USER,
+      sourceKind: "url",
+      sourceUrl: "https://www.example.com/article/",
+      body: "The page text.",
+    });
+  });
+
+  it("accepts a page nobody gave a title", async () => {
+    await saveCreatorAnalysis({
+      userId: USER,
+      title: null,
+      body: "The page text.",
+      result,
+      sourceKind: "url",
+      sourceUrl: "https://www.example.com/article/",
+    });
+
+    expect(contentItemCreate.mock.calls[0][0].data.title).toBeNull();
+  });
+
+  /** A URL changes nothing about the rest of the write. */
+  it("writes the same three decisions and two drafts either way", async () => {
+    await saveCreatorAnalysis({
+      userId: USER,
+      title: null,
+      body: "The page text.",
+      result,
+      sourceKind: "url",
+      sourceUrl: "https://www.example.com/article/",
+    });
+
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(decisionCreate).toHaveBeenCalledTimes(3);
+    expect(draftCreate).toHaveBeenCalledTimes(2);
+
+    for (const call of decisionCreate.mock.calls) {
+      expect(call[0].data.userId).toBe(USER);
+    }
+  });
+
+  /**
+   * **An analysis still never rewrites a stated preference**, whichever way the
+   * material arrived. `saveCreatorProfile` is the only thing that may.
+   */
+  it("leaves a stated profile alone", async () => {
+    await saveCreatorAnalysis({
+      userId: USER,
+      title: null,
+      body: "The page text.",
+      result,
+      sourceKind: "url",
+      sourceUrl: "https://www.example.com/article/",
+    });
+
+    expect(profileUpsert.mock.calls[0][0].update).toEqual({});
   });
 });

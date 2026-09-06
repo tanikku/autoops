@@ -64,6 +64,7 @@ vi.mock("@/lib/prisma", () => ({
 
 const {
   analyzeCreatorText,
+  analyzeCreatorUrl,
   isEmptyCreatorContent,
   isInvalidCreatorFeedback,
   recordCreatorFeedback,
@@ -663,5 +664,143 @@ describe("the loop", () => {
       );
       expect(entry.contentExcerpt).not.toContain("�");
     }
+  });
+});
+
+/**
+ * The same loop, told where the words came from.
+ *
+ * **Provenance is the only difference.** The profile, the recent answers, the
+ * limits, the ordering and the all-or-nothing write are shared code — what
+ * these fix is that the pair travels intact to both the model and the database,
+ * and that the paste path did not quietly acquire a URL on the way.
+ */
+describe("analysing a page that was read from an address", () => {
+  const PAGE_URL = "https://www.example.com/article/";
+
+  it("tells the model where the words came from", async () => {
+    const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
+
+    await analyzeCreatorUrl(
+      USER,
+      { title: "A title", sourceUrl: PAGE_URL, body: "The page text." },
+      analyzer,
+    );
+
+    expect(requests[0].content).toEqual({
+      sourceKind: "url",
+      sourceUrl: PAGE_URL,
+      title: "A title",
+      body: "The page text.",
+    });
+  });
+
+  /** The paste path is what it always was, and gains no address. */
+  it("leaves a pasted piece saying it was pasted", async () => {
+    const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
+
+    await analyzeCreatorText(USER, { title: null, body: "Pasted." }, analyzer);
+
+    expect(requests[0].content.sourceKind).toBe("text");
+    expect(requests[0].content.sourceUrl).toBeNull();
+  });
+
+  it("reads the same preferences and the same recent answers", async () => {
+    profileFindUnique.mockResolvedValue({
+      audience: "Solo founders",
+      goals: "Be useful",
+      voiceInstructions: "Plain sentences",
+    });
+
+    const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
+
+    await analyzeCreatorUrl(
+      USER,
+      { title: null, sourceUrl: PAGE_URL, body: "The page text." },
+      analyzer,
+    );
+
+    expect(requests[0].profile).toEqual({
+      audience: "Solo founders",
+      goals: "Be useful",
+      voiceInstructions: "Plain sentences",
+    });
+    expect(profileFindUnique.mock.calls[0][0].where).toEqual({ userId: USER });
+    expect(feedbackFindMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("stores the address alongside what was read", async () => {
+    const { analyzer } = fakeAnalyzer(threeRecommendations);
+
+    await analyzeCreatorUrl(
+      USER,
+      { title: "A title", sourceUrl: PAGE_URL, body: "The page text." },
+      analyzer,
+    );
+
+    expect(contentItemCreate.mock.calls[0][0].data).toMatchObject({
+      userId: USER,
+      sourceKind: "url",
+      sourceUrl: PAGE_URL,
+      title: "A title",
+      body: "The page text.",
+    });
+  });
+
+  it("stores a pasted piece with no address, as before", async () => {
+    const { analyzer } = fakeAnalyzer(threeRecommendations);
+
+    await analyzeCreatorText(USER, { title: null, body: "Pasted." }, analyzer);
+
+    expect(contentItemCreate.mock.calls[0][0].data).toMatchObject({
+      sourceKind: "text",
+      sourceUrl: null,
+    });
+  });
+
+  it("applies the same request limits", async () => {
+    const { analyzer } = fakeAnalyzer(threeRecommendations);
+
+    await expect(
+      analyzeCreatorUrl(
+        USER,
+        {
+          title: null,
+          sourceUrl: PAGE_URL,
+          body: "x".repeat(creatorAnalysisLimits.contentBody + 1),
+        },
+        analyzer,
+      ),
+    ).rejects.toBeInstanceOf(CreatorAnalysisRequestTooLargeError);
+
+    expect(contentItemCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses a page that came back with nothing in it", async () => {
+    const { analyzer } = fakeAnalyzer(threeRecommendations);
+
+    await expect(
+      analyzeCreatorUrl(
+        USER,
+        { title: null, sourceUrl: PAGE_URL, body: "   " },
+        analyzer,
+      ),
+    ).rejects.toSatisfy(isEmptyCreatorContent);
+
+    expect(contentItemCreate).not.toHaveBeenCalled();
+  });
+
+  /** All or nothing, exactly as the paste path is. */
+  it("writes nothing when the model fails", async () => {
+    await expect(
+      analyzeCreatorUrl(
+        USER,
+        { title: null, sourceUrl: PAGE_URL, body: "The page text." },
+        failingAnalyzer(new ProviderError("unavailable", "no")),
+      ),
+    ).rejects.toBeInstanceOf(ProviderError);
+
+    expect(transaction).not.toHaveBeenCalled();
+    expect(contentItemCreate).not.toHaveBeenCalled();
   });
 });

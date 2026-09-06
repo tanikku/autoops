@@ -497,6 +497,29 @@ Write nothing that is not in the material. Where a section has nothing to draw o
   "creator.analysis.failed": "This is unavailable right now. Try again.",
   "creator.analysis.done": "Your writing has been read.",
 
+  /**
+   * Why a page could not be used, in the six situations a reader can act on.
+   *
+   * **None of them quotes the page or the address.** The fetch boundary names
+   * seventeen kinds and can carry a host, a status or a charset; those stay in
+   * the log. What these say is what to do next.
+   *
+   * `urlUnreadable` names the common case in the sentence — a PDF, or a page
+   * whose text arrives from JavaScript — because "could not be read" on its own
+   * sends somebody looking for a mistake they did not make.
+   */
+  "creator.analysis.urlInvalid":
+    "Check the address. Koqentra reads ordinary http and https pages on their usual port.",
+  "creator.analysis.urlBlocked": "That address cannot be fetched.",
+  "creator.analysis.urlUnavailable":
+    "The page could not be fetched. Try again in a moment.",
+  "creator.analysis.urlUnreadable":
+    "That page could not be read as an HTML document. PDFs and pages that build their text in the browser are not supported — paste the text instead.",
+  "creator.analysis.urlTooLarge":
+    "That page is too large to read in one go. Paste the part you want read.",
+  "creator.analysis.urlEmpty":
+    "No readable text was found on that page. Paste the text instead.",
+
   /** What comes back from agreeing, rewriting, or disagreeing with a decision. */
   "creator.feedback.saved": "Thanks — that has been noted.",
   /**
@@ -612,6 +635,28 @@ Write nothing that is not in the material. Where a section has nothing to draw o
   "creator.new.privacyNote":
     "The content you submit is sent to Anthropic for analysis.",
   "creator.new.privacyLink": "Privacy",
+
+  /**
+   * Choosing between pasting and giving an address.
+   *
+   * **The help text says what is not supported**, because "read any URL" is
+   * what a bare field promises and it is not true: pages behind a sign-in are
+   * never fetched, and PDFs are refused.
+   *
+   * `urlPrivacyNote` is a different sentence from the paste one on purpose. A
+   * URL adds something the paste path does not do — Koqentra's server makes a
+   * request to somebody else's site — and a reader deserves to be told that
+   * before they press the button rather than only in a policy page.
+   */
+  "creator.new.sourceText": "Text",
+  "creator.new.sourceUrl": "URL",
+  "creator.new.sourceLabel": "What would you like read?",
+  "creator.new.urlLabel": "Page address",
+  "creator.new.urlPlaceholder": "https://example.com/article",
+  "creator.new.urlHelp":
+    "Koqentra reads public HTML pages. Pages that need a sign-in, and PDFs, are not supported.",
+  "creator.new.urlPrivacyNote":
+    "Koqentra fetches this page from its own server, and sends the address and the text it reads to Anthropic for analysis.",
 
   /**
    * What the next analysis will be told, shown before it happens.

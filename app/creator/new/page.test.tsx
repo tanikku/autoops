@@ -38,6 +38,7 @@ vi.mock("@/lib/users", () => ({ getUserLanguage: mocks.getUserLanguage }));
 vi.mock("@/components/dashboard-nav", () => ({ DashboardNav: () => null }));
 vi.mock("@/app/creator/actions", () => ({
   analyzeCreatorTextAction: vi.fn(),
+  analyzeCreatorUrlAction: vi.fn(),
   recordCreatorFeedbackAction: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({
