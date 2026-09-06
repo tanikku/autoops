@@ -62,7 +62,15 @@ export default async function SettingsPage() {
             and then left alone — not part of handing a piece of writing over.
             The panel on `/creator/new` shows the same three values back at the
             moment they are about to be used. */}
-        <section className="mt-12 border-t border-border pt-8">
+        {/* **Named so a link can land on it.** This section is third on the
+            page, and the Creator screen sends people here who have never seen
+            Settings before — arriving at the timezone and having to hunt is
+            how somebody concludes the thing they were sent for is not
+            there. */}
+        <section
+          id="creator-preferences"
+          className="mt-12 border-t border-border pt-8"
+        >
           <h2 className="text-lg font-medium tracking-tight">
             {t(language, "settings.creator.title")}
           </h2>

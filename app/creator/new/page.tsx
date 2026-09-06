@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { CreatorAnalysisForm } from "@/components/creator-analysis-form";
 import { CreatorLearningContext } from "@/components/creator-learning-context";
 import { DashboardNav } from "@/components/dashboard-nav";
@@ -43,6 +44,17 @@ export default async function CreatorNewPage() {
     readRecentFeedbackContext(userId),
   ]);
 
+  // **Read from the values, never from the row.** A profile that was never
+  // created and one saved empty are the same answer to the only question that
+  // matters here, and asking the database to tell them apart would mean writing
+  // a row to find out. Whitespace counts as nothing said, the same way the
+  // panel below already reads it.
+  const hasStatedPreferences = [
+    profile.audience,
+    profile.goals,
+    profile.voiceInstructions,
+  ].some((value) => value.trim() !== "");
+
   return (
     <div className="flex flex-1 flex-col bg-background">
       <DashboardNav />
@@ -54,6 +66,44 @@ export default async function CreatorNewPage() {
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
           {t(language, "creator.new.description")}
         </p>
+
+        {/* **Where somebody finds out these preferences exist.** Until this,
+            the only sign of them was three lines reading "Not set" inside a
+            panel that starts collapsed — which is not a way of finding
+            anything.
+
+            **Shown only when all three are empty.** That is the one state
+            where "nothing has been said yet" is unambiguous; somebody who
+            filled in one of them has told Koqentra what they wanted to, and
+            calling that incomplete would be the product disagreeing with them.
+            It disappears on its own the moment anything is saved, which is why
+            there is nothing here to dismiss and no state remembering that
+            somebody did.
+
+            **Before the panel below, because it answers a different
+            question.** This one says where the preferences are set; the panel
+            says what the next analysis will actually be told.
+
+            **Nothing about it blocks anything.** The form is right there and
+            works exactly as well with none of this set — `preferencesOptional`
+            says so, so that the callout reads as an offer rather than a
+            gate. */}
+        {hasStatedPreferences ? null : (
+          <div className="mt-6 max-w-2xl rounded-lg border border-border bg-muted/30 px-4 py-4">
+            <p className="text-sm leading-relaxed">
+              {t(language, "creator.new.preferencesPrompt")}
+            </p>
+            <Link
+              href="/dashboard/settings#creator-preferences"
+              className="mt-3 inline-block text-sm underline underline-offset-4"
+            >
+              {t(language, "creator.new.preferencesAction")}
+            </Link>
+            <p className="mt-2 text-xs text-muted-foreground">
+              {t(language, "creator.new.preferencesOptional")}
+            </p>
+          </div>
+        )}
 
         {/* **Beside the form, not inside it.** What the next analysis will
             consider is worth being able to check before submitting — but it is

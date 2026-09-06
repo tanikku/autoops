@@ -110,6 +110,36 @@ describe("the Creator preferences section", () => {
   });
 
   /**
+   * **Named so a link can land on it.** The Creator screen sends people here
+   * who have never opened Settings before, and this section is third on the
+   * page — arriving at the timezone and having to hunt is how somebody
+   * concludes the thing they were sent for is not here.
+   */
+  it("can be linked to directly", async () => {
+    const html = await render();
+
+    expect(html).toContain('id="creator-preferences"');
+  });
+
+  it("puts the heading inside the section that carries the anchor", async () => {
+    const html = await render();
+    const section = html.match(
+      /<section[^>]*id="creator-preferences"[^>]*>[\s\S]*?<\/section>/,
+    )?.[0];
+
+    expect(section).toBeDefined();
+    expect(section).toContain(t("en", "settings.creator.title"));
+    expect(section).toContain('name="audience"');
+  });
+
+  /** Only this one is named; the others have nothing linking to them. */
+  it("names no other section", async () => {
+    const html = await render();
+
+    expect(html.match(/<section[^>]*\sid="/g) ?? []).toHaveLength(1);
+  });
+
+  /**
    * After Language, where the page's own order puts it. The Support section
    * below is absent unless an address is configured, so it is not part of
    * what a render can be held to here.

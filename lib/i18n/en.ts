@@ -646,6 +646,27 @@ Write nothing that is not in the material. Where a section has nothing to draw o
   "creator.new.privacyLink": "Privacy",
 
   /**
+   * Said to somebody who has stated no preferences at all.
+   *
+   * **Shown only when all three are empty**, because that is the one state
+   * where "nothing has been said yet" is unambiguous. Somebody who filled in
+   * one of them has told Koqentra what they wanted to tell it, and calling that
+   * incomplete would be the product disagreeing with them.
+   *
+   * **It describes what the preferences are for, and stops there.** Koqentra
+   * derives nothing about anybody — there is no memory of somebody being built
+   * up — so this may not say it learns, remembers, or notices a taste.
+   *
+   * `creator.new.preferencesOptional` is the half that keeps the whole thing
+   * non-blocking: the form below it works exactly as well with none of this
+   * set, and saying so is what stops the callout reading as a gate.
+   */
+  "creator.new.preferencesPrompt":
+    "Set who you want to reach, what you want to achieve, and how you want to sound so Koqentra can use that context when deciding where your content fits and how to write it.",
+  "creator.new.preferencesAction": "Open Creator preferences",
+  "creator.new.preferencesOptional": "You can analyze without setting this.",
+
+  /**
    * Choosing between pasting and giving an address.
    *
    * **The help text says what is not supported**, because "read any URL" is

@@ -435,6 +435,21 @@ export const ja: Record<TranslationKey, string> = {
   "creator.new.privacyLink": "プライバシー",
 
   /**
+   * まだ何も設定していない人にだけ表示する案内。
+   *
+   * 3項目すべてが空のときだけ出す。1項目でも書いた人は伝えたいことを
+   * 伝え終わっている可能性があり、それを「未完了」とは呼ばない。
+   *
+   * Koqentra は利用者について何も推論しないので、「学習」「記憶」「好み」
+   * とは書かない。設定しなくても分析できることを併記して、
+   * 案内が関門に見えないようにする。
+   */
+  "creator.new.preferencesPrompt":
+    "届けたい相手、発信の目的、文体を設定しておくと、Koqentra はその前提で投稿先と投稿文を判断します。",
+  "creator.new.preferencesAction": "クリエイター設定を開く",
+  "creator.new.preferencesOptional": "設定しなくても分析できます。",
+
+  /**
    * 貼り付けと URL 指定の切り替え。
    * 「どんな URL でも読める」と誤解させないため、対応していないものを明記する。
    * privacy note は貼り付け時と別文 — URL では Koqentra のサーバーが

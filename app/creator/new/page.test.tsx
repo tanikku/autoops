@@ -259,3 +259,201 @@ describe("what it says", () => {
     expect(text).not.toMatch(/\bruns?\b/i);
   });
 });
+
+/**
+ * Where somebody finds out that Creator preferences exist.
+ *
+ * **The problem it answers is a missing path, not a missing feature.** The
+ * preferences form has existed since C1.7B; until this callout, the only sign
+ * of it from anywhere in Creator was three lines reading "Not set" inside a
+ * panel that starts collapsed.
+ *
+ * **Shown only when all three are empty.** That is the one state where
+ * "nothing has been said yet" is unambiguous — somebody who filled in one has
+ * told Koqentra what they wanted to, and calling that incomplete would be the
+ * product disagreeing with them.
+ */
+describe("finding the preferences that have not been set", () => {
+  const profile = (overrides: Record<string, string> = {}) => ({
+    audience: "",
+    goals: "",
+    voiceInstructions: "",
+    ...overrides,
+  });
+
+  it("offers them when nothing at all has been stated", async () => {
+    mocks.readCreatorProfile.mockResolvedValue(profile());
+
+    const html = await render();
+
+    expect(html).toContain(t("en", "creator.new.preferencesPrompt"));
+    expect(html).toContain(t("en", "creator.new.preferencesAction"));
+    expect(html).toContain(t("en", "creator.new.preferencesOptional"));
+  });
+
+  /** A link, because it goes somewhere — and it lands on the right section. */
+  it("links straight to the section rather than to the page", async () => {
+    mocks.readCreatorProfile.mockResolvedValue(profile());
+
+    const html = await render();
+
+    expect(html).toContain('href="/dashboard/settings#creator-preferences"');
+    expect(html).toMatch(
+      /<a[^>]*href="\/dashboard\/settings#creator-preferences"/,
+    );
+  });
+
+  /** Whitespace is nothing said — the same reading the panel below uses. */
+  it("offers them when all three hold only whitespace", async () => {
+    mocks.readCreatorProfile.mockResolvedValue(
+      profile({ audience: "   ", goals: "\n", voiceInstructions: "\t" }),
+    );
+
+    expect(await render()).toContain(
+      t("en", "creator.new.preferencesPrompt"),
+    );
+  });
+
+  /**
+   * **One is enough.** Somebody who describes their audience and leaves the
+   * rest alone has said what they wanted to say; a product that kept asking
+   * would be telling them they are wrong about their own work.
+   */
+  it.each([
+    ["an audience", { audience: "Local readers" }],
+    ["a goal", { goals: "Be useful" }],
+    ["a voice", { voiceInstructions: "Plain sentences" }],
+  ])("says nothing more once %s has been stated", async (_name, stated) => {
+    mocks.readCreatorProfile.mockResolvedValue(profile(stated));
+
+    const html = await render();
+
+    expect(html).not.toContain(t("en", "creator.new.preferencesPrompt"));
+    expect(html).not.toContain(t("en", "creator.new.preferencesAction"));
+    expect(html).not.toContain(
+      'href="/dashboard/settings#creator-preferences"',
+    );
+  });
+
+  it("says nothing when all three have been stated", async () => {
+    mocks.readCreatorProfile.mockResolvedValue({
+      audience: "Local readers",
+      goals: "Be useful",
+      voiceInstructions: "Plain sentences",
+    });
+
+    expect(await render()).not.toContain(
+      t("en", "creator.new.preferencesPrompt"),
+    );
+  });
+
+  /**
+   * **It is an offer, not a gate.** The form is right there and works exactly
+   * as well with none of this set.
+   */
+  it("leaves the form working while it is shown", async () => {
+    mocks.readCreatorProfile.mockResolvedValue(profile());
+
+    const html = await render();
+
+    expect(html).toContain('name="title"');
+    expect(html).toContain('name="body"');
+    expect(html).toContain(t("en", "creator.new.submit"));
+  });
+
+  /**
+   * **It says where the preferences are set; the panel says what the analysis
+   * will be told.** Two different questions, and the first one comes first.
+   */
+  it("sits after the description and before the panel", async () => {
+    mocks.readCreatorProfile.mockResolvedValue(profile());
+
+    const html = await render();
+    const callout = html.indexOf(t("en", "creator.new.preferencesPrompt"));
+
+    expect(html.indexOf(t("en", "creator.new.description"))).toBeLessThan(
+      callout,
+    );
+    expect(callout).toBeLessThan(html.indexOf(t("en", "creator.learning.title")));
+  });
+
+  /** Reading a page must not be what brings a profile row into being. */
+  it("reads the same two things it always did, and writes nothing", async () => {
+    mocks.readCreatorProfile.mockResolvedValue(profile());
+
+    await render();
+
+    expect(mocks.readCreatorProfile).toHaveBeenCalledTimes(1);
+    expect(mocks.readRecentFeedbackContext).toHaveBeenCalledTimes(1);
+    expect(mocks.requireProvisionedUserId).not.toHaveBeenCalled();
+  });
+
+  it("speaks Japanese when the account does", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    mocks.readCreatorProfile.mockResolvedValue(profile());
+
+    const html = await render();
+
+    expect(html).toContain(t("ja", "creator.new.preferencesPrompt"));
+    expect(html).toContain(t("ja", "creator.new.preferencesAction"));
+    expect(html).toContain(t("ja", "creator.new.preferencesOptional"));
+    expect(html).not.toContain(t("en", "creator.new.preferencesPrompt"));
+  });
+
+  /**
+   * **Koqentra derives nothing about anybody, and this must not say it does.**
+   * There is no memory of a person being built up — `CreatorMemory` exists in
+   * the schema and nothing reads or writes it — so a sentence claiming the
+   * product learns or remembers would describe a feature that does not exist.
+   *
+   * Checked against the callout's own words rather than the whole page, so
+   * that unrelated copy elsewhere cannot make this pass or fail by accident.
+   */
+  it.each(["en", "ja"] as const)("claims nothing is learned, in %s", (language) => {
+    const callout = [
+      t(language, "creator.new.preferencesPrompt"),
+      t(language, "creator.new.preferencesAction"),
+      t(language, "creator.new.preferencesOptional"),
+    ].join(" ");
+
+    expect(callout).not.toMatch(/\blearn(ed|s|ing)?\b/i);
+    expect(callout).not.toMatch(/\bmemor(y|ies)\b/i);
+    expect(callout).not.toMatch(/\bremember(s|ed|ing)?\b/i);
+    expect(callout).not.toContain("学習");
+    expect(callout).not.toContain("覚え");
+    expect(callout).not.toContain("記憶");
+    expect(callout).not.toContain("好み");
+  });
+
+  /**
+   * Setting preferences is an offer. Wording that makes it sound compulsory —
+   * or that frames a profile as something to be completed — would turn the
+   * callout into the gate it deliberately is not.
+   */
+  it.each([
+    ["en", ["required", "must ", "complete your", "onboarding"]],
+    ["ja", ["必須", "完了してください", "オンボーディング", "完成"]],
+  ] as const)("asks rather than demands, in %s", (language, phrases) => {
+    const callout = [
+      t(language, "creator.new.preferencesPrompt"),
+      t(language, "creator.new.preferencesAction"),
+      t(language, "creator.new.preferencesOptional"),
+    ]
+      .join(" ")
+      .toLowerCase();
+
+    for (const phrase of phrases) {
+      expect(callout).not.toContain(phrase.toLowerCase());
+    }
+  });
+
+  /** A long sentence on a phone wraps inside the column rather than widening it. */
+  it("writes no fixed width", async () => {
+    mocks.readCreatorProfile.mockResolvedValue(profile());
+
+    const html = await render();
+
+    expect(html).not.toMatch(/style="[^"]*width/);
+    expect(html).not.toMatch(/w-\[\d/);
+  });
+});
