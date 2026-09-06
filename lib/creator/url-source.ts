@@ -1,6 +1,6 @@
 import "server-only";
 
-import { type DefaultTreeAdapterTypes, parse } from "parse5";
+import { type DefaultTreeAdapterTypes, parse, serializeOuter } from "parse5";
 import { creatorAnalysisLimits } from "@/lib/creator/analyzer";
 import { decodeWebsiteContent } from "@/lib/watcher/decode";
 import { isWatcherError, type WatcherErrorKind } from "@/lib/watcher/errors";
@@ -181,6 +181,259 @@ function findTitleText(node: Parse5Node): string | null {
 }
 
 /**
+ * The part of a page worth judging, when the page says which part that is.
+ *
+ * **The problem this solves was measured, not imagined.** A real article
+ * analysed in Production arrived with "投稿 ログイン 会員登録" in front of it
+ * and the site's footer behind it: navigation and chrome were being handed to
+ * the model as though somebody had written them, and the excerpt on the inbox
+ * opened with a sign-up prompt.
+ *
+ * **Semantic HTML only.** `<main>` and `<article>` are the two elements whose
+ * whole purpose is to say "this is the content", stated by the page's own
+ * author. Everything else that could be used here — a class name, an id, the
+ * biggest node, the densest text, the fewest links, an `h1` — is Koqentra
+ * guessing at what a page means, and a guess that is right most of the time
+ * silently truncates somebody's writing the rest of the time. There is no
+ * length threshold either: a short announcement is a legitimate source, and
+ * "too short to be the article" is exactly the kind of rule that would drop it.
+ *
+ * **`<main>` first, and an `<article>` inside one never wins.** `<main>` is the
+ * page saying where its primary content is; `<article>` says only that
+ * something is self-contained, which a related-post card, a recommendation and
+ * a sidebar entry all are. An earlier version of this preferred the article and
+ * an audit found what that costs: a page whose only `<article>` sat in an
+ * `<aside>` had its real content replaced by a related-post teaser.
+ *
+ * **Exactly one, or nothing.** Two eligible `<main>` elements is a page that
+ * has not said which one matters; picking the first would be inventing an
+ * answer. The search moves on — to `<article>`, and then to the whole document,
+ * which is what every page got before this existed.
+ *
+ * **A quality improvement that cannot cost anything.** The full-document text
+ * is produced first, by exactly the code that produced it before. Everything
+ * below is an attempt to do better, and any way it fails — a parser refusing
+ * the markup, a candidate that turns out empty — ends with that text being
+ * returned. No page that could be read yesterday becomes unreadable today.
+ */
+export function extractCreatorSourceBody(html: string): string {
+  // **The existing answer, computed first and on the shared path.** If this
+  // throws, it is the same failure the caller has always handled — a fetch
+  // boundary error that becomes `unreadable` — and it must not be swallowed by
+  // the enhancement below.
+  const fullBody = normalizeWhitespace(extractDocumentText(html));
+
+  try {
+    const document = parse(html);
+    const body = findBody(document);
+
+    if (body === null) {
+      // Markup so unusual the parser produced no body. The document text is
+      // still whatever it is, and inventing a container here would be worse.
+      return fullBody;
+    }
+
+    // **`main` before `article`, and the order is the correction.** See the
+    // note above: an article is self-contained, not primary.
+    for (const tagName of ["main", "article"] as const) {
+      const candidates = collectEligible(body, tagName);
+
+      if (candidates.length !== 1) {
+        continue;
+      }
+
+      const selected = extractCandidateText(candidates[0]);
+
+      // **An empty container is not a selection.** A page with a `<main>`
+      // holding only a decorative image has still said where its content is,
+      // and it has said "nowhere" — so the search carries on rather than
+      // handing the model nothing.
+      if (selected !== "") {
+        return selected;
+      }
+    }
+  } catch {
+    // **Nothing is logged, deliberately.** What could be said here is the
+    // address or the markup, and both are somebody's reading. This path is a
+    // missed improvement rather than a failure, and the answer below is the
+    // one the product gave before the improvement existed.
+  }
+
+  return fullBody;
+}
+
+/**
+ * What one candidate says, read by the same rules as a whole document.
+ *
+ * **Serialised and handed back to the shared extractor**, rather than walked
+ * here. What counts as text inside an element — that a `script` is a program, a
+ * `style` is presentation, an `svg` is a picture, that a `p` starts a new line
+ * and an unknown element does not — is `lib/watcher/extract.ts`'s answer, and
+ * it is the answer the Website Worker uses. A second copy of it living here
+ * would drift from that one, and the drift would show up as two features
+ * disagreeing about what a page says.
+ *
+ * **What serialising loses is why the eligibility check exists.** The fragment
+ * handed over starts at the candidate, so nothing inside the shared extractor
+ * can see that an ancestor was `hidden` or that the candidate sat in a
+ * `<footer>` — that has to be settled before this is called.
+ */
+function extractCandidateText(element: Parse5Node): string {
+  return normalizeWhitespace(extractDocumentText(serializeOuter(element)));
+}
+
+/**
+ * Places a page's primary source cannot be.
+ *
+ * **Each of these says what its contents are *for*, and none of them is "this
+ * is the piece".** A `<nav>` is a way around the site, an `<aside>` is
+ * tangential by definition, a `<header>` and a `<footer>` are the frame around
+ * the content rather than the content. The rest hold markup that is not being
+ * shown at all: a `<template>` is waiting to be used, a `<noscript>` is for a
+ * reader who will never see this page, an `<iframe>` is somebody else's page,
+ * and the last four are programs and pictures.
+ *
+ * **This is a selection policy, not a second text extractor.** It answers one
+ * question — may this element stand for the whole page? — and it never decides
+ * what counts as text. That remains `lib/watcher/extract.ts`'s, uncopied.
+ */
+const INELIGIBLE_ANCESTORS = new Set([
+  "nav",
+  "aside",
+  "footer",
+  "header",
+  "template",
+  "noscript",
+  "iframe",
+  "script",
+  "style",
+  "svg",
+  "canvas",
+]);
+
+/** Whether the markup says this element is not currently shown. */
+function hasHiddenAttribute(node: Parse5Node): boolean {
+  return "attrs" in node && node.attrs.some((attr) => attr.name === "hidden");
+}
+
+/**
+ * The node above this one, or null.
+ *
+ * A `Document` has no parent and does not carry the property at all, so the
+ * check is a narrowing rather than a cast — nothing here asserts a shape parse5
+ * did not give it.
+ */
+function parentOf(node: Parse5Node): Parse5Node | null {
+  return "parentNode" in node ? node.parentNode : null;
+}
+
+/**
+ * Whether an element may stand for the whole page.
+ *
+ * **The candidate itself, and every ancestor above it.** An audit of the
+ * previous version found both halves of this mattering in practice: an
+ * `<article>` inside `<div hidden>` replaced the visible content of the page,
+ * because serialising the article threw the `hidden` away before anything could
+ * act on it, and an `<article>` inside an `<aside>` replaced it because nothing
+ * looked at where the article was.
+ *
+ * **The two questions have different boundaries, deliberately.**
+ *
+ * *Where the candidate sits* is a question about content: a `<nav>` or a
+ * `<footer>` is a context somebody put something in, and above `<body>` there
+ * are no such contexts left — only the document itself. That check stops there.
+ *
+ * *Whether it is shown* does not stop anywhere. `hidden` on `<body>` or on
+ * `<html>` hides everything beneath it, and the shared extractor honours that
+ * by never descending; serialising a candidate out of one would resurrect text
+ * the markup says is not being displayed. So the `hidden` check continues all
+ * the way up. The `Document` at the top carries no attributes, so the walk ends
+ * there on its own rather than by a special case.
+ */
+function isEligibleCandidate(candidate: Parse5Node, body: Parse5Node): boolean {
+  if (hasHiddenAttribute(candidate)) {
+    return false;
+  }
+
+  let ancestor = parentOf(candidate);
+  let reachedBody = false;
+
+  while (ancestor !== null) {
+    if (hasHiddenAttribute(ancestor)) {
+      return false;
+    }
+
+    if (ancestor === body) {
+      reachedBody = true;
+    } else if (!reachedBody && INELIGIBLE_ANCESTORS.has(ancestor.nodeName)) {
+      return false;
+    }
+
+    ancestor = parentOf(ancestor);
+  }
+
+  // Never reaching `body` means the candidate is not under it — a detached or
+  // relocated subtree — and the page did not put it in its content.
+  return reachedBody;
+}
+
+/**
+ * Every descendant of `body` with the given tag name that may stand for the
+ * page.
+ *
+ * **Named elements only — no attributes are read except `hidden`.** A `class`,
+ * an `id` or a `role` is a convention rather than a statement, and reading one
+ * would be the first heuristic; `hidden` is different because it is the markup
+ * saying the element is not being shown.
+ *
+ * **Ineligible candidates do not count towards the cardinality either.** A page
+ * with one real `<article>` and one in its footer has said where its content
+ * is exactly once, and treating that as ambiguous would throw away the answer
+ * it gave.
+ */
+function collectEligible(
+  body: Parse5Node,
+  tagName: string,
+  node: Parse5Node = body,
+  found: Parse5Node[] = [],
+): Parse5Node[] {
+  if (!("childNodes" in node)) {
+    return found;
+  }
+
+  for (const child of node.childNodes) {
+    if (child.nodeName === tagName && isEligibleCandidate(child, body)) {
+      found.push(child);
+    }
+
+    collectEligible(body, tagName, child, found);
+  }
+
+  return found;
+}
+
+/** The document's `body`, or null when the markup produced none. */
+function findBody(node: Parse5Node): Parse5Node | null {
+  if (!("childNodes" in node)) {
+    return null;
+  }
+
+  for (const child of node.childNodes) {
+    if (child.nodeName === "body") {
+      return child;
+    }
+
+    const nested = findBody(child);
+
+    if (nested !== null) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Which reader-facing failure a fetch-layer one becomes.
  *
  * Grouped by what somebody can do about it: fix the address, nothing (it is a
@@ -287,7 +540,10 @@ export async function loadCreatorUrlSource(
     const decoded = decodeWebsiteContent(page.body, page.contentTypeHeader);
 
     sourceUrl = page.url;
-    body = normalizeWhitespace(extractDocumentText(decoded.content));
+    // **The part the page says is the content, where it says so.** A document
+    // that names neither an `<article>` nor a `<main>` gets exactly the text it
+    // got before this existed — see `extractCreatorSourceBody`.
+    body = extractCreatorSourceBody(decoded.content);
     // **Read from the same markup, and kept separate from it.** The title is
     // already part of the body — `extractDocumentText` takes it out of `head` —
     // and that is left exactly as it was: what the analyzer is given to judge
