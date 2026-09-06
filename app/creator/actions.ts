@@ -333,11 +333,18 @@ export async function analyzeCreatorUrlAction(
     return urlFailureResult(language, error);
   }
 
+  // **The page's own name, only where nobody gave one.** A title somebody typed
+  // is what they meant to call the piece, and an automatic one overwriting it
+  // would be the product disagreeing with them about their own work. Chosen
+  // here rather than before the fetch for the obvious reason: until the page
+  // has been read, there is nothing to fall back to.
+  const title = rawTitle.trim() === "" ? source.pageTitle : rawTitle;
+
   try {
     await analyzeCreatorUrl(
       provisionedUserId,
       {
-        title: rawTitle === "" ? null : rawTitle,
+        title,
         // **The address the body came from**, which is not always the one that
         // was typed. Storing the submitted one would name a page that may never
         // have been read.

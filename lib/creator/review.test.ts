@@ -52,6 +52,10 @@ function item(overrides: Record<string, unknown> = {}) {
     title: "An earlier piece",
     body: "The body of an earlier piece.",
     createdAt: ANALYZED_AT,
+    // A pasted piece by default: the source pair is required now, and a row
+    // cannot say it came from a page without saying which one.
+    sourceKind: "text",
+    sourceUrl: null,
     userId: USER,
     decisions: [decision()],
     ...overrides,
@@ -234,10 +238,12 @@ describe("what comes back", () => {
 
     expect(Object.keys(entry).sort()).toEqual([
       // The moment of the analysis joined this list in C1.8B: two submissions
-      // of the same piece are otherwise indistinguishable on screen.
+      // of the same piece are otherwise indistinguishable on screen. Where it
+      // came from joined it in C1.9B, for the same reason.
       "analyzedAt",
       "contentItemId",
       "decisions",
+      "source",
       "sourceExcerpt",
       "title",
     ]);
@@ -604,5 +610,123 @@ describe("what the history refuses to show", () => {
     expect(failure.message).not.toContain("SECRET UNPUBLISHED BODY");
     expect(failure.message).not.toContain("SECRET POST TEXT");
     expect(failure.message).not.toContain("SECRET EDIT");
+  });
+});
+
+/**
+ * Where an analysis got its material.
+ *
+ * **Two columns that only mean something together.** `"url"` with no address
+ * cannot be linked to, and `"text"` carrying one describes a fetch that never
+ * happened. Falling back to `"text"` would be the worst of the options: it
+ * reads as ordinary and hides the contradiction.
+ *
+ * **Nothing here goes near a network.** The address came back from the Safe
+ * Fetch that actually read the page, so it was validated at the one moment
+ * validation meant anything.
+ */
+describe("where the material came from", () => {
+  it("reads the source columns", async () => {
+    await listCreatorReviewItems(USER);
+
+    const select = findMany.mock.calls[0][0].select;
+
+    expect(select.sourceKind).toBe(true);
+    expect(select.sourceUrl).toBe(true);
+  });
+
+  it("reads them for the history too", async () => {
+    await listCreatorHistoryItems(USER);
+
+    const select = findMany.mock.calls[0][0].select;
+
+    expect(select.sourceKind).toBe(true);
+    expect(select.sourceUrl).toBe(true);
+  });
+
+  it("says a pasted piece has no address", async () => {
+    findMany.mockResolvedValue([item({ sourceKind: "text", sourceUrl: null })]);
+
+    const [entry] = await listCreatorReviewItems(USER);
+
+    expect(entry.source).toEqual({ kind: "text" });
+  });
+
+  it("carries the address a page was read from", async () => {
+    findMany.mockResolvedValue([
+      item({ sourceKind: "url", sourceUrl: "https://www.example.com/a/" }),
+    ]);
+
+    const [entry] = await listCreatorReviewItems(USER);
+
+    expect(entry.source).toEqual({
+      kind: "url",
+      url: "https://www.example.com/a/",
+    });
+  });
+
+  it("says the same thing on the history", async () => {
+    findMany.mockResolvedValue([
+      answeredItem({ sourceKind: "url", sourceUrl: "https://www.example.com/a/" }),
+      ]);
+
+    const [entry] = await listCreatorHistoryItems(USER);
+
+    expect(entry.source).toEqual({
+      kind: "url",
+      url: "https://www.example.com/a/",
+    });
+  });
+
+  it("says a pasted piece has no address on the history too", async () => {
+    findMany.mockResolvedValue([
+      answeredItem({ sourceKind: "text", sourceUrl: null }),
+    ]);
+
+    const [entry] = await listCreatorHistoryItems(USER);
+
+    expect(entry.source).toEqual({ kind: "text" });
+  });
+
+  it.each([
+    ["a source kind this version does not know", { sourceKind: "rss", sourceUrl: null }],
+    [
+      "a pasted piece carrying an address",
+      { sourceKind: "text", sourceUrl: "https://www.example.com/a/" },
+    ],
+    ["a page with no address", { sourceKind: "url", sourceUrl: null }],
+    ["a page with a blank address", { sourceKind: "url", sourceUrl: "   " }],
+  ])("refuses %s", async (_name, overrides) => {
+    findMany.mockResolvedValue([item(overrides)]);
+
+    await expect(listCreatorReviewItems(USER)).rejects.toSatisfy(
+      isInvalidCreatorReviewData,
+    );
+  });
+
+  it.each([
+    ["a source kind this version does not know", { sourceKind: "rss", sourceUrl: null }],
+    [
+      "a pasted piece carrying an address",
+      { sourceKind: "text", sourceUrl: "https://www.example.com/a/" },
+    ],
+    ["a page with no address", { sourceKind: "url", sourceUrl: null }],
+  ])("refuses %s on the history", async (_name, overrides) => {
+    findMany.mockResolvedValue([answeredItem(overrides)]);
+
+    await expect(listCreatorHistoryItems(USER)).rejects.toSatisfy(
+      isInvalidCreatorReviewData,
+    );
+  });
+
+  /** Reading a record must not be a reason to contact anybody. */
+  it("asks for the page exactly never", async () => {
+    findMany.mockResolvedValue([
+      item({ sourceKind: "url", sourceUrl: "https://www.example.com/a/" }),
+    ]);
+
+    await listCreatorReviewItems(USER);
+
+    expect(findMany).toHaveBeenCalledTimes(1);
   });
 });

@@ -374,6 +374,12 @@ export const ja: Record<TranslationKey, string> = {
   "creator.inbox.analyzedAt": "分析: {at}",
   "creator.inbox.historyCta": "履歴",
 
+  /**
+   * 分析の材料をどこから取得したか。URL 指定のときだけ表示する。
+   * 表示するのは redirect 後に実際に読み取ったアドレス。
+   */
+  "creator.source.page": "元ページ",
+
   /** 回答済みの判断を見るだけの画面。書き換えの導線は置かない。 */
   "creator.history.title": "回答履歴",
   "creator.history.description":

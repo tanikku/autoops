@@ -1,5 +1,6 @@
 import "server-only";
 
+import { type DefaultTreeAdapterTypes, parse } from "parse5";
 import { creatorAnalysisLimits } from "@/lib/creator/analyzer";
 import { decodeWebsiteContent } from "@/lib/watcher/decode";
 import { isWatcherError, type WatcherErrorKind } from "@/lib/watcher/errors";
@@ -89,7 +90,95 @@ export type CreatorUrlSource = {
   sourceUrl: string;
   /** The document's visible text, whitespace-normalised. */
   body: string;
+  /**
+   * What the page calls itself, when it says anything usable.
+   *
+   * **Only a fallback.** A title somebody typed is what they meant to call the
+   * piece and always wins; this is what stops a page analysed with the box left
+   * empty from being filed as "Untitled" forever.
+   *
+   * Null whenever the document has no `<title>`, has an empty one, or has one
+   * longer than an analysis may carry — see `extractCreatorPageTitle`.
+   */
+  pageTitle: string | null;
 };
+
+/**
+ * What a document calls itself, or null.
+ *
+ * **`<title>` and nothing else.** `og:title`, `twitter:title`, `h1` and
+ * schema.org are all somebody's guess at what an *article* is called, and
+ * guessing that well is a different problem from knowing what a document is.
+ * `<title>` is the one answer the document states about itself.
+ *
+ * **Parsed, never matched.** A regular expression over markup gets entities
+ * wrong — `A &amp; B` is "A & B" — and gets nesting, attributes and malformed
+ * tags wrong in ways that are hard to see and easy to ship. `parse5` is already
+ * a dependency and already how this repository reads HTML.
+ *
+ * **Too long is dropped rather than cut.** The Creator contract refuses a title
+ * past its limit rather than trimming one, and an automatic convenience is the
+ * last place to start rewriting somebody's material. Refusing the whole
+ * analysis over it would be worse still: the page is fine, and only this
+ * optional extra is not.
+ */
+export function extractCreatorPageTitle(html: string): string | null {
+  let document: DefaultTreeAdapterTypes.Document;
+
+  try {
+    document = parse(html);
+  } catch {
+    // The body already went through `extractDocumentText`, which raises on a
+    // parser failure. Reaching here means something odd, and an optional title
+    // is not worth failing an analysis for.
+    return null;
+  }
+
+  const raw = findTitleText(document);
+
+  if (raw === null) {
+    return null;
+  }
+
+  const title = normalizeWhitespace(raw);
+
+  if (title === "" || title.length > creatorAnalysisLimits.contentTitle) {
+    return null;
+  }
+
+  return title;
+}
+
+type Parse5Node = DefaultTreeAdapterTypes.Node;
+
+/**
+ * The text of the first `<title>` in the document, wherever the parser put it.
+ *
+ * A walk rather than a path through `html > head > title`: the parser relocates
+ * elements while recovering from broken markup, and a title that ends up
+ * somewhere unexpected is still what the page calls itself.
+ */
+function findTitleText(node: Parse5Node): string | null {
+  if (!("childNodes" in node)) {
+    return null;
+  }
+
+  for (const child of node.childNodes) {
+    if (child.nodeName === "title" && "childNodes" in child) {
+      return child.childNodes
+        .map((part) => ("value" in part ? part.value : ""))
+        .join("");
+    }
+
+    const nested = findTitleText(child);
+
+    if (nested !== null) {
+      return nested;
+    }
+  }
+
+  return null;
+}
 
 /**
  * Which reader-facing failure a fetch-layer one becomes.
@@ -188,6 +277,7 @@ export async function loadCreatorUrlSource(
 
   let sourceUrl: string;
   let body: string;
+  let pageTitle: string | null;
 
   try {
     const page = await fetchWatchedPage(rawUrl, { ...rest, throttle });
@@ -198,6 +288,11 @@ export async function loadCreatorUrlSource(
 
     sourceUrl = page.url;
     body = normalizeWhitespace(extractDocumentText(decoded.content));
+    // **Read from the same markup, and kept separate from it.** The title is
+    // already part of the body — `extractDocumentText` takes it out of `head` —
+    // and that is left exactly as it was: what the analyzer is given to judge
+    // did not change in this checkpoint.
+    pageTitle = extractCreatorPageTitle(decoded.content);
   } catch (error) {
     throw asSourceFailure(error);
   }
@@ -218,5 +313,5 @@ export async function loadCreatorUrlSource(
     throw new CreatorUrlSourceError("too-large");
   }
 
-  return { sourceUrl, body };
+  return { sourceUrl, body, pageTitle };
 }

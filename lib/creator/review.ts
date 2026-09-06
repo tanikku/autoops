@@ -9,6 +9,7 @@ import {
   creatorTargetChannels,
   type EditorialVerdict,
   isCreatorFeedbackAction,
+  isCreatorSourceKind,
   isCreatorTargetChannel,
   isEditorialVerdict,
 } from "@/types";
@@ -80,6 +81,8 @@ export type CreatorReviewItem = {
    * confusion this answers.
    */
   analyzedAt: Date;
+  /** Where the material came from — an address, when there was one. */
+  source: CreatorReviewSource;
   decisions: CreatorReviewDecision[];
 };
 
@@ -109,6 +112,59 @@ export function isInvalidCreatorReviewData(error: unknown): boolean {
 }
 
 /**
+ * Where an analysis got its material, as a pair that cannot be half-set.
+ *
+ * **The address is on the analysis, not on a judgement.** Three decisions come
+ * out of one page, so putting the URL on each of them would say the same thing
+ * three times and invite somebody to wonder whether they could differ.
+ */
+export type CreatorReviewSource =
+  | { kind: "text" }
+  | { kind: "url"; url: string };
+
+/**
+ * Reads the stored pair, or refuses.
+ *
+ * **Two columns that only mean something together.** `"url"` with no address
+ * cannot be linked to, and `"text"` carrying one describes a fetch that never
+ * happened — both are rows this version cannot show honestly, and a screen
+ * guessing at either would be making a claim about where somebody's work came
+ * from. Falling back to `"text"` would be the worst of the options: it reads as
+ * ordinary and hides the contradiction.
+ */
+function toReviewSource(
+  contentItemId: string,
+  sourceKind: string,
+  sourceUrl: string | null,
+): CreatorReviewSource {
+  const refuse = (reason: string): never => {
+    throw new InvalidCreatorReviewDataError(contentItemId, reason);
+  };
+
+  if (!isCreatorSourceKind(sourceKind)) {
+    refuse("unknown-source-kind");
+  }
+
+  if (sourceKind === "text") {
+    if (sourceUrl !== null) {
+      refuse("text-source-with-url");
+    }
+
+    return { kind: "text" };
+  }
+
+  if (sourceUrl === null || sourceUrl.trim() === "") {
+    refuse("url-source-without-url");
+  }
+
+  // **Not re-parsed and never re-fetched.** This address came back from the
+  // Safe Fetch that actually read the page, so it was validated at the one
+  // moment validation meant anything. Checking it again here would be checking
+  // it against a network state nobody is looking at.
+  return { kind: "url", url: sourceUrl as string };
+}
+
+/**
  * Where a channel sits in the list.
  *
  * Read from `creatorTargetChannels` so the order is the one the rest of the
@@ -134,6 +190,8 @@ type ItemRow = {
   title: string | null;
   body: string;
   createdAt: Date;
+  sourceKind: string;
+  sourceUrl: string | null;
   userId: string;
   decisions: DecisionRow[];
 };
@@ -238,6 +296,8 @@ export async function listCreatorReviewItems(
       title: true,
       body: true,
       createdAt: true,
+      sourceKind: true,
+      sourceUrl: true,
       userId: true,
       decisions: {
         where: { userId, feedback: { is: null } },
@@ -282,6 +342,7 @@ export async function listCreatorReviewItems(
         creatorAnalysisLimits.feedbackContentExcerpt,
       ),
       analyzedAt: row.createdAt,
+      source: toReviewSource(row.id, row.sourceKind, row.sourceUrl),
       decisions,
     };
   });
@@ -333,6 +394,8 @@ export type CreatorHistoryItem = {
   title: string | null;
   sourceExcerpt: string;
   analyzedAt: Date;
+  /** Where the material came from — an address, when there was one. */
+  source: CreatorReviewSource;
   decisions: CreatorHistoryDecision[];
 };
 
@@ -357,6 +420,8 @@ type HistoryItemRow = {
   title: string | null;
   body: string;
   createdAt: Date;
+  sourceKind: string;
+  sourceUrl: string | null;
   userId: string;
   decisions: HistoryDecisionRow[];
 };
@@ -483,6 +548,8 @@ export async function listCreatorHistoryItems(
       title: true,
       body: true,
       createdAt: true,
+      sourceKind: true,
+      sourceUrl: true,
       userId: true,
       decisions: {
         where: { userId, feedback: { isNot: null } },
@@ -529,6 +596,7 @@ export async function listCreatorHistoryItems(
         creatorAnalysisLimits.feedbackContentExcerpt,
       ),
       analyzedAt: row.createdAt,
+      source: toReviewSource(row.id, row.sourceKind, row.sourceUrl),
       decisions,
     };
   });

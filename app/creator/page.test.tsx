@@ -58,6 +58,8 @@ const item = {
   title: "An earlier piece",
   sourceExcerpt: "The opening lines of an earlier piece…",
   analyzedAt: new Date("2026-09-06T03:34:00.000Z"),
+  // Pasted by default, so the source block stays out of the existing tests.
+  source: { kind: "text" as const },
   decisions: [
     {
       id: "decision-1",
@@ -264,5 +266,85 @@ describe("the way to the record", () => {
   /** The queue being empty is not a reason to hide what was already answered. */
   it("still offers a way to start one when nothing is waiting", async () => {
     expect(await render()).toContain('href="/creator/new"');
+  });
+});
+
+/**
+ * Where an analysis came from, when it came from somewhere.
+ *
+ * **Only for a page.** A pasted piece has no source to name, and an empty label
+ * would read as a page that failed to load. The address shown is the one the
+ * body was actually read from — after redirects — because that is the page the
+ * decisions are about.
+ */
+describe("the source of an analysis", () => {
+  const PAGE = "https://www.example.com/a-fairly-long-article-path/";
+
+  const fromUrl = (url = PAGE) => ({
+    ...item,
+    source: { kind: "url" as const, url },
+  });
+
+  it("names the page and links to it", async () => {
+    mocks.listCreatorReviewItems.mockResolvedValue([fromUrl()]);
+
+    const html = await render();
+
+    expect(html).toContain(t("en", "creator.source.page"));
+    expect(html).toContain(PAGE);
+    expect(html).toContain(`href="${PAGE}"`);
+  });
+
+  /** A new tab, and nothing about this page travels to the other one. */
+  it("opens it away from the inbox, without a referrer", async () => {
+    mocks.listCreatorReviewItems.mockResolvedValue([fromUrl()]);
+
+    const link = (await render()).match(
+      new RegExp(`<a[^>]*href="${PAGE}"[^>]*>`),
+    )?.[0];
+
+    expect(link).toBeDefined();
+    expect(link).toContain('target="_blank"');
+    expect(link).toContain("noreferrer");
+    expect(link).toContain("noopener");
+  });
+
+  /**
+   * A long URL is one unbroken token and would widen the page on a phone. The
+   * `href` stays the whole address; only the drawing of it wraps.
+   */
+  it("lets a long address wrap rather than widening the page", async () => {
+    mocks.listCreatorReviewItems.mockResolvedValue([fromUrl()]);
+
+    const link = (await render()).match(
+      new RegExp(`<a[^>]*href="${PAGE}"[^>]*>`),
+    )?.[0];
+
+    expect(link).toContain("break-all");
+  });
+
+  it("says nothing about a source for a pasted piece", async () => {
+    mocks.listCreatorReviewItems.mockResolvedValue([item]);
+
+    const html = await render();
+
+    expect(html).not.toContain(t("en", "creator.source.page"));
+    expect(html).not.toContain("href=\"https://");
+  });
+
+  it("names it in Japanese too", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    mocks.listCreatorReviewItems.mockResolvedValue([fromUrl()]);
+
+    expect(await render()).toContain(t("ja", "creator.source.page"));
+  });
+
+  /** Reading a list is not a reason to contact anybody. */
+  it("renders the address without fetching it", async () => {
+    mocks.listCreatorReviewItems.mockResolvedValue([fromUrl()]);
+
+    await render();
+
+    expect(mocks.listCreatorReviewItems).toHaveBeenCalledTimes(1);
   });
 });

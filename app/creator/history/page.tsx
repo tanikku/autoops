@@ -115,6 +115,29 @@ export default async function CreatorHistoryPage() {
                     })}
                   </p>
 
+                  {/* **Where this came from, when it came from somewhere.** A
+                      pasted piece has no source to name, so nothing is shown for
+                      one — an empty label would read as a page that failed to
+                      load. The address is the one the body was actually read
+                      from, after redirects.
+
+                      `break-all` because a long URL is one unbroken token and
+                      would otherwise widen the page on a phone; the `href` is
+                      always the whole address. */}
+                  {item.source.kind === "url" ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t(language, "creator.source.page")}:{" "}
+                      <a
+                        href={item.source.url}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="break-all underline underline-offset-4"
+                      >
+                        {item.source.url}
+                      </a>
+                    </p>
+                  ) : null}
+
                   {/* An excerpt, not the piece: the whole body never reaches a
                       browser, here or on the inbox. */}
                   <p className="mt-2 line-clamp-3 whitespace-pre-wrap break-words text-sm text-muted-foreground">

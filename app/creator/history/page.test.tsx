@@ -43,6 +43,8 @@ const item = {
   title: "テスト3",
   sourceExcerpt: "The opening lines of an earlier piece…",
   analyzedAt: new Date("2026-09-06T03:34:00.000Z"),
+  // Pasted by default, so the source block stays out of the existing tests.
+  source: { kind: "text" as const },
   decisions: [
     {
       id: "decision-1",
@@ -197,5 +199,68 @@ describe("with something answered", () => {
     expect(text).not.toMatch(/\bruns?\b/i);
     expect(text).not.toContain("下書き");
     expect(text).not.toContain("実行");
+  });
+});
+
+/**
+ * Where an answered analysis came from.
+ *
+ * The same rule as the inbox, on the screen that looks back: an address only
+ * where there was one, and the address the body was actually read from.
+ */
+describe("the source of an answered analysis", () => {
+  const PAGE = "https://www.example.com/a-fairly-long-article-path/";
+
+  const fromUrl = () => ({
+    ...item,
+    source: { kind: "url" as const, url: PAGE },
+  });
+
+  it("names the page and links to it", async () => {
+    mocks.listCreatorHistoryItems.mockResolvedValue([fromUrl()]);
+
+    const html = await render();
+
+    expect(html).toContain(t("en", "creator.source.page"));
+    expect(html).toContain(PAGE);
+    expect(html).toContain(`href="${PAGE}"`);
+  });
+
+  it("opens it away from the history, without a referrer, and lets it wrap", async () => {
+    mocks.listCreatorHistoryItems.mockResolvedValue([fromUrl()]);
+
+    const link = (await render()).match(
+      new RegExp(`<a[^>]*href="${PAGE}"[^>]*>`),
+    )?.[0];
+
+    expect(link).toBeDefined();
+    expect(link).toContain('target="_blank"');
+    expect(link).toContain("noreferrer");
+    expect(link).toContain("noopener");
+    expect(link).toContain("break-all");
+  });
+
+  it("says nothing about a source for a pasted piece", async () => {
+    mocks.listCreatorHistoryItems.mockResolvedValue([item]);
+
+    expect(await render()).not.toContain(t("en", "creator.source.page"));
+  });
+
+  /** The record is what was written down, not what the address says today. */
+  it("shows the address without asking whether it still works", async () => {
+    mocks.listCreatorHistoryItems.mockResolvedValue([fromUrl()]);
+
+    await render();
+
+    expect(mocks.listCreatorHistoryItems).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the timestamps exactly where they were", async () => {
+    mocks.listCreatorHistoryItems.mockResolvedValue([fromUrl()]);
+
+    const html = await render();
+
+    expect(html).toContain("2026-09-06 12:34 Asia/Tokyo");
+    expect(html).toContain("2026-09-06 12:45 Asia/Tokyo");
   });
 });

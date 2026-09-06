@@ -134,6 +134,9 @@ beforeEach(() => {
   mocks.loadCreatorUrlSource.mockReset().mockResolvedValue({
     sourceUrl: "https://www.example.com/article/",
     body: "The page text.",
+    // Most of these are about a title somebody typed, so the page names itself
+    // nothing by default and the fallback stays out of the way.
+    pageTitle: null,
   });
   mocks.recordCreatorFeedback.mockReset().mockResolvedValue({ id: "feedback-1" });
   mocks.revalidatePath.mockReset();
@@ -1023,6 +1026,7 @@ describe("analyzeCreatorUrlAction", () => {
       { title: SECRET_TITLE, sourceUrl: FINAL_URL, body: "The page text." },
       analyzer,
     );
+    // The typed title stands; the page named itself nothing here anyway.
   });
 
   /** The body is Koqentra's to read. A form supplying one is ignored. */
@@ -1173,6 +1177,7 @@ describe("analyzeCreatorUrlAction", () => {
     mocks.loadCreatorUrlSource.mockResolvedValue({
       sourceUrl: FINAL_URL,
       body: SECRET_BODY,
+      pageTitle: null,
     });
 
     const result = await analyzeCreatorUrlAction(null, urlForm());
@@ -1190,5 +1195,110 @@ describe("analyzeCreatorUrlAction", () => {
     const result = await analyzeCreatorUrlAction(null, urlForm());
 
     expect(result?.message).toBe(ja["creator.analysis.urlUnreadable"]);
+  });
+});
+
+/**
+ * What an analysis ends up called when the box was left empty.
+ *
+ * **A title somebody typed always wins.** It is what they meant to call the
+ * piece, and a page's own name overwriting it would be the product disagreeing
+ * with them about their own work. The fallback exists for the other case: a URL
+ * analysed with the title blank used to be filed as "Untitled" forever.
+ */
+describe("the title an URL analysis is filed under", () => {
+  const PAGE_URL = "https://example.com/article";
+
+  function urlForm(fields: Record<string, string> = {}) {
+    const data = new FormData();
+    data.set("title", SECRET_TITLE);
+    data.set("url", PAGE_URL);
+    for (const [key, value] of Object.entries(fields)) {
+      data.set(key, value);
+    }
+    return data;
+  }
+
+  const withPageTitle = (pageTitle: string | null) => {
+    mocks.loadCreatorUrlSource.mockResolvedValue({
+      sourceUrl: "https://www.example.com/article/",
+      body: "The page text.",
+      pageTitle,
+    });
+  };
+
+  it("keeps what somebody typed, even when the page names itself", async () => {
+    withPageTitle("Privacy — Koqentra");
+
+    await analyzeCreatorUrlAction(null, urlForm({ title: "自分用タイトル" }));
+
+    expect(mocks.analyzeCreatorUrl.mock.calls[0][1].title).toBe("自分用タイトル");
+  });
+
+  it.each([
+    ["nothing at all", ""],
+    ["only spaces", "   "],
+    ["only a newline", "\n"],
+  ])("falls back to the page's own name when the box held %s", async (_name, title) => {
+    withPageTitle("Privacy — Koqentra");
+
+    await analyzeCreatorUrlAction(null, urlForm({ title }));
+
+    expect(mocks.analyzeCreatorUrl.mock.calls[0][1].title).toBe(
+      "Privacy — Koqentra",
+    );
+  });
+
+  it("files it under nothing when neither has a name", async () => {
+    withPageTitle(null);
+
+    await analyzeCreatorUrlAction(null, urlForm({ title: "" }));
+
+    expect(mocks.analyzeCreatorUrl.mock.calls[0][1].title).toBeNull();
+  });
+
+  /**
+   * **A title somebody typed is still refused before anything is fetched.**
+   * "There is a fallback" is not a reason to accept an input the contract
+   * rejects — and the refusal has to stay cheap.
+   */
+  it("still refuses an oversized typed title, before the page is read", async () => {
+    withPageTitle("Privacy — Koqentra");
+
+    const result = await analyzeCreatorUrlAction(
+      null,
+      urlForm({ title: "T".repeat(creatorAnalysisLimits.contentTitle + 1) }),
+    );
+
+    expect(result).toEqual({
+      status: "error",
+      message: en["creator.analysis.tooLong"],
+    });
+    expect(mocks.loadCreatorUrlSource).not.toHaveBeenCalled();
+    expect(mocks.analyzeCreatorUrl).not.toHaveBeenCalled();
+  });
+
+  /** The fallback is a choice made from what was fetched, not a second trip. */
+  it("adds no provisioning, no allowance and no second fetch", async () => {
+    withPageTitle("Privacy — Koqentra");
+
+    await analyzeCreatorUrlAction(null, urlForm({ title: "" }));
+
+    expect(mocks.requireProvisionedUserId).toHaveBeenCalledTimes(1);
+    expect(mocks.consumeCreatorAnalysisQuota).toHaveBeenCalledTimes(1);
+    expect(mocks.loadCreatorUrlSource).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the allowance before the fetch, and the fetch before the analysis", async () => {
+    withPageTitle("Privacy — Koqentra");
+
+    await analyzeCreatorUrlAction(null, urlForm({ title: "" }));
+
+    expect(mocks.consumeCreatorAnalysisQuota.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.loadCreatorUrlSource.mock.invocationCallOrder[0],
+    );
+    expect(mocks.loadCreatorUrlSource.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.analyzeCreatorUrl.mock.invocationCallOrder[0],
+    );
   });
 });

@@ -563,6 +563,15 @@ Write nothing that is not in the material. Where a section has nothing to draw o
   "creator.inbox.historyCta": "History",
 
   /**
+   * Where an analysis got its material.
+   *
+   * **Shown only where there was an address**, and it is the address the page
+   * was actually read from — after redirects — because that is the page the
+   * decisions are about. A pasted piece has no source to name.
+   */
+  "creator.source.page": "Source page",
+
+  /**
    * What was already answered.
    *
    * **A record, and read-only.** Nothing on that screen changes an answer:

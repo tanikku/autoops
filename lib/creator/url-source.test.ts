@@ -38,6 +38,7 @@ vi.mock("@/lib/website-throttle", () => ({
 
 const {
   CreatorUrlSourceError,
+  extractCreatorPageTitle,
   isCreatorUrlSourceError,
   loadCreatorUrlSource,
   validateCreatorSourceUrl,
@@ -155,6 +156,8 @@ describe("how the page is fetched", () => {
     await expect(loadCreatorUrlSource(URL_IN)).resolves.toEqual({
       sourceUrl: "https://www.example.com/article/",
       body: "Hello there",
+      // The fixture markup names no title; C1.9B added the field, not a value.
+      pageTitle: null,
     });
   });
 
@@ -290,5 +293,131 @@ describe("what a reader is told went wrong", () => {
     mocks.fetchWatchedPage.mockRejectedValue(boom);
 
     await expect(loadCreatorUrlSource(URL_IN)).rejects.toBe(boom);
+  });
+});
+
+/**
+ * What a page calls itself, when the box was left empty.
+ *
+ * **`<title>` and nothing else.** It is the one name a document states about
+ * itself; `og:title` and `h1` are guesses at what an *article* is called, and
+ * guessing that well is a different problem.
+ *
+ * **Parsed rather than matched**, which is what makes the entity case work — a
+ * regular expression over markup would hand back `A &amp; B`.
+ */
+describe("what the page calls itself", () => {
+  const withTitle = (title: string) =>
+    `<!doctype html><html><head><title>${title}</title></head><body><p>Hi</p></body></html>`;
+
+  it("reads the title out of the document", () => {
+    expect(extractCreatorPageTitle(withTitle("Privacy — Koqentra"))).toBe(
+      "Privacy — Koqentra",
+    );
+  });
+
+  it("decodes entities the way a browser would", () => {
+    expect(extractCreatorPageTitle(withTitle("A &amp; B"))).toBe("A & B");
+  });
+
+  it("collapses the whitespace a formatter left in it", () => {
+    expect(
+      extractCreatorPageTitle(
+        "<html><head><title>\n  Privacy   —   Koqentra\n</title></head><body></body></html>",
+      ),
+    ).toBe("Privacy — Koqentra");
+  });
+
+  it.each([
+    ["no title at all", "<html><head></head><body><p>Hi</p></body></html>"],
+    ["an empty title", "<html><head><title></title></head><body></body></html>"],
+    [
+      "a title of only whitespace",
+      "<html><head><title>   \n </title></head><body></body></html>",
+    ],
+  ])("says nothing for %s", (_name, html) => {
+    expect(extractCreatorPageTitle(html)).toBeNull();
+  });
+
+  it("keeps a title exactly at the limit", () => {
+    const title = "T".repeat(creatorAnalysisLimits.contentTitle);
+
+    expect(extractCreatorPageTitle(withTitle(title))).toBe(title);
+  });
+
+  /**
+   * **Dropped rather than cut.** The Creator contract refuses an oversized
+   * title rather than trimming one, and an automatic convenience is the last
+   * place to start rewriting somebody's material. Refusing the whole analysis
+   * would be worse: the page is fine and only this optional extra is not.
+   */
+  it("drops a title past the limit rather than shortening it", () => {
+    const title = "T".repeat(creatorAnalysisLimits.contentTitle + 1);
+
+    expect(extractCreatorPageTitle(withTitle(title))).toBeNull();
+  });
+
+  it("finds a title the parser had to move", () => {
+    expect(
+      extractCreatorPageTitle("<title>Bare title</title><p>Body</p>"),
+    ).toBe("Bare title");
+  });
+});
+
+describe("the page title on a loaded source", () => {
+  const HTML =
+    "<html><head><title>Privacy — Koqentra</title></head><body><p>Hello</p></body></html>";
+
+  it("comes back alongside the address and the text", async () => {
+    mocks.decodeWebsiteContent.mockReturnValue({
+      content: HTML,
+      mediaType: "text/html",
+    });
+    mocks.extractDocumentText.mockReturnValue("Privacy — Koqentra Hello");
+
+    await expect(loadCreatorUrlSource(URL_IN)).resolves.toEqual({
+      sourceUrl: URL_IN,
+      body: "Privacy — Koqentra Hello",
+      pageTitle: "Privacy — Koqentra",
+    });
+  });
+
+  it("is null when the page names itself nothing", async () => {
+    mocks.decodeWebsiteContent.mockReturnValue({
+      content: "<html><head></head><body><p>Hello</p></body></html>",
+      mediaType: "text/html",
+    });
+
+    const source = await loadCreatorUrlSource(URL_IN);
+
+    expect(source.pageTitle).toBeNull();
+  });
+
+  /**
+   * **The body did not change in this checkpoint.** `extractDocumentText`
+   * already takes the title out of `head`, and what the analyzer is given to
+   * judge is exactly what C1.9A verified in Production.
+   */
+  it("changes neither the text nor the address", async () => {
+    mocks.decodeWebsiteContent.mockReturnValue({
+      content: HTML,
+      mediaType: "text/html",
+    });
+    mocks.fetchWatchedPage.mockResolvedValue(
+      page({ url: "https://www.example.com/article/" }),
+    );
+
+    const source = await loadCreatorUrlSource(URL_IN);
+
+    expect(mocks.extractDocumentText).toHaveBeenCalledWith(HTML);
+    expect(source.body).toBe("Hello there");
+    expect(source.sourceUrl).toBe("https://www.example.com/article/");
+  });
+
+  /** Reading a title is not a reason to ask for the page a second time. */
+  it("asks for the page once", async () => {
+    await loadCreatorUrlSource(URL_IN);
+
+    expect(mocks.fetchWatchedPage).toHaveBeenCalledTimes(1);
   });
 });
