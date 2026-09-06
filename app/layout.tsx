@@ -14,8 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Koqentra — Automate recurring AI workflows.",
-  description: "Create AI routines once. Run forever.",
+  title: "Koqentra — AI Content Editor",
+  description:
+    "Evaluate content for X, Reddit, and long-form, get drafts for what is worth using, and keep the final decision with you.",
 };
 
 export default function RootLayout({

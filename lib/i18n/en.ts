@@ -25,6 +25,16 @@ export const en = {
   "nav.dashboard": "Dashboard",
   "nav.creator": "Creator",
   "nav.settings": "Settings",
+  /**
+   * The Worker side of the product, named for what it holds.
+   *
+   * **Its own key rather than a rewording of `nav.dashboard`.** That one means
+   * "the dashboard", and the route is still `/dashboard`; this one is a label
+   * saying which part of Koqentra the link goes to. Somebody arriving at a bar
+   * that says "Dashboard" reasonably expects the whole product, and since
+   * Creator opens first that expectation is now wrong.
+   */
+  "nav.workers": "Workers",
   "nav.signOut": "Sign out",
   /** Stands in for a name the provider did not give us. */
   "nav.signedIn": "Signed in",

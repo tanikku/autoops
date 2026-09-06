@@ -46,11 +46,23 @@ export default async function Home({
 
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col items-center justify-center px-6 py-24 text-center sm:px-10">
         <h1 className="text-balance text-4xl font-semibold tracking-tight sm:text-6xl">
-          Automate recurring AI workflows.
+          Your AI content editor.
         </h1>
 
+        {/* **Only what the product does today.** Koqentra reads what it is
+            given and says where it belongs; it holds no social account, posts
+            nothing, measures nothing, and derives no lasting picture of
+            anybody. A landing page is where an overclaim does the most damage,
+            because it is the one somebody agrees to before they can check. */}
         <p className="mt-6 text-balance text-lg text-muted-foreground sm:text-xl">
-          Create AI routines once. Run forever.
+          Paste text or a public URL. Koqentra evaluates X, Reddit, and
+          long-form, recommends what is worth using, and drafts the copy.
+        </p>
+
+        {/* Said here rather than only in the privacy notice: the first question
+            an editor that writes posts invites is whether it sends them. */}
+        <p className="mt-4 text-balance text-base text-muted-foreground">
+          You decide what to use. Nothing is posted automatically.
         </p>
 
         {refused ? (
@@ -64,7 +76,10 @@ export default async function Home({
           <form
             action={async () => {
               "use server";
-              await signIn("google", { redirectTo: "/dashboard" });
+              // **Creator is where somebody lands.** The Worker dashboard is
+              // still there under `/dashboard` and reachable from the nav; what
+              // changed is which of the two the product opens on.
+              await signIn("google", { redirectTo: "/creator" });
             }}
             className="w-full sm:w-auto"
           >

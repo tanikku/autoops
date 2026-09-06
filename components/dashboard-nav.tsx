@@ -45,14 +45,17 @@ export async function DashboardNav() {
             question for a UX checkpoint rather than something to guess at
             here. */}
         <nav className="order-last flex w-full flex-wrap items-center gap-1 sm:order-none sm:w-auto sm:flex-nowrap">
-          <Button
-            variant="ghost"
-            size="sm"
-            nativeButton={false}
-            render={<Link href="/dashboard" />}
-          >
-            {t(language, "nav.dashboard")}
-          </Button>
+          {/* **Creator first, because that is what the product opens on.**
+              The order is the whole of the hierarchy here — no link is styled
+              as primary and none is marked as current — so putting Creator
+              ahead of Workers is what says which one Koqentra is about.
+
+              **The Worker route is untouched.** It is still `/dashboard`, and
+              everything behind it works exactly as it did; only the label and
+              the position changed. `nav.workers` rather than a reworded
+              `nav.dashboard`: the route is still the dashboard, but a bar
+              reading "Dashboard" promises the whole product, and that promise
+              stopped being true when Creator became the first screen. */}
           <Button
             variant="ghost"
             size="sm"
@@ -60,6 +63,14 @@ export async function DashboardNav() {
             render={<Link href="/creator" />}
           >
             {t(language, "nav.creator")}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            nativeButton={false}
+            render={<Link href="/dashboard" />}
+          >
+            {t(language, "nav.workers")}
           </Button>
           <Button
             variant="ghost"

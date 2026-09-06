@@ -21,6 +21,8 @@ export const ja: Record<TranslationKey, string> = {
   "nav.dashboard": "ダッシュボード",
   "nav.creator": "クリエイター",
   "nav.settings": "設定",
+  /** /dashboard が何を持つ画面かを名前で示す。nav.dashboard は据え置き。 */
+  "nav.workers": "ワーカー",
   "nav.signOut": "サインアウト",
   "nav.signedIn": "サインイン中",
 

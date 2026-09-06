@@ -36,16 +36,33 @@ beforeEach(() => {
 });
 
 describe("where it can go", () => {
-  it("offers the dashboard, Creator and settings, in that order", async () => {
+  /**
+   * **The order is the whole of the hierarchy.** No link is styled as primary
+   * and none is marked as current, so which one comes first is what says what
+   * Koqentra is about — and it is the screen sign-in now opens on.
+   */
+  it("offers Creator, Workers and settings, in that order", async () => {
     const html = await render();
 
-    const dashboard = html.indexOf('href="/dashboard"');
     const creator = html.indexOf('href="/creator"');
+    const workers = html.indexOf('href="/dashboard"');
     const settings = html.indexOf('href="/dashboard/settings"');
 
-    expect(dashboard).toBeGreaterThan(-1);
-    expect(creator).toBeGreaterThan(dashboard);
-    expect(settings).toBeGreaterThan(creator);
+    expect(creator).toBeGreaterThan(-1);
+    expect(workers).toBeGreaterThan(creator);
+    expect(settings).toBeGreaterThan(workers);
+  });
+
+  /**
+   * **The Worker route did not move.** Everything behind `/dashboard` works
+   * exactly as it did; the label and the position are what changed.
+   */
+  it("leaves every destination where it was", async () => {
+    const html = await render();
+
+    expect(html).toContain('href="/creator"');
+    expect(html).toContain('href="/dashboard"');
+    expect(html).toContain('href="/dashboard/settings"');
   });
 
   it("names Creator in the account's language", async () => {
@@ -53,6 +70,24 @@ describe("where it can go", () => {
 
     mocks.getUserLanguage.mockResolvedValue("ja");
     expect(await render()).toContain(t("ja", "nav.creator"));
+  });
+
+  /**
+   * **Named for what it holds, not for the route it sits on.** A bar reading
+   * "Dashboard" promises the whole product, and that stopped being true when
+   * Creator became the first screen — so the label says Workers while the
+   * address stays `/dashboard`.
+   */
+  it.each(["en", "ja"] as const)("names Workers in %s", async (language) => {
+    mocks.getUserLanguage.mockResolvedValue(language);
+
+    expect(await render()).toContain(t(language, "nav.workers"));
+  });
+
+  it("no longer calls that link the dashboard", async () => {
+    const text = (await render()).replace(/<[^>]*>/g, " ");
+
+    expect(text).not.toContain(t("en", "nav.dashboard"));
   });
 });
 
