@@ -82,9 +82,29 @@ describe("a recommendation", () => {
   });
 
   it("offers all three answers", () => {
-    expect(html).toContain(t("en", "creator.feedback.useAsIs"));
+    expect(html).toContain(t("en", "creator.feedback.copyAndUse"));
     expect(html).toContain(asRendered(t("en", "creator.feedback.editAndUse")));
     expect(html).toContain(t("en", "creator.feedback.reject"));
+  });
+
+  /**
+   * **Adopting is a copy and an answer, not an answer alone.** The card leaves
+   * the inbox the moment it is answered, so a button that only answered would
+   * take the post text away with it — which is the whole reason the label
+   * changed.
+   */
+  it("no longer offers to adopt without copying", () => {
+    expect(html).not.toContain(t("en", "creator.feedback.useAsIs"));
+  });
+
+  /**
+   * The copy has to happen before the answer is sent, so this control cannot
+   * be a submit button — a submit would send first and copy afterwards.
+   */
+  it("adopts through a button that is not a submit", () => {
+    const button = html.match(/<button[^>]*>[^<]*Copy and use[^<]*<\/button>/);
+
+    expect(button?.[0]).toContain('type="button"');
   });
 });
 
@@ -118,6 +138,11 @@ describe("a skip", () => {
     expect(html).toContain(t("en", "creator.feedback.agreeWithSkip"));
     expect(html).toContain(t("en", "creator.feedback.wouldPost"));
     expect(html).not.toContain(t("en", "creator.feedback.useAsIs"));
+  });
+
+  /** There is nothing to take anywhere, so nothing offers to copy it. */
+  it("does not offer to copy a post that was never written", () => {
+    expect(html).not.toContain(t("en", "creator.feedback.copyAndUse"));
   });
 });
 
@@ -160,13 +185,21 @@ describe("what a submission carries", () => {
   it.each([
     ["a recommendation", recommended, 2],
     ["a skip", skipped, 2],
-  ])("gives %s one submit button per form", (_name, decision, forms) => {
+  ])("gives %s one control per form", (_name, decision, forms) => {
     const html = render(decision as Decision);
-    const submits = html.match(/<button type="submit"/g) ?? [];
-    const openedForms = html.match(/<form /g) ?? [];
+    const bodies = html
+      .split("<form ")
+      .slice(1)
+      .map((part) => part.split("</form>")[0]);
 
-    expect(openedForms).toHaveLength(forms);
-    expect(submits).toHaveLength(forms);
+    expect(bodies).toHaveLength(forms);
+
+    // Counting buttons rather than submits: adopting a recommendation copies
+    // first and submits from script, so it is a `type="button"`. What must stay
+    // true is that no form holds two controls — the bug this replaced.
+    for (const body of bodies) {
+      expect(body.match(/<button/g) ?? []).toHaveLength(1);
+    }
   });
 });
 
@@ -197,8 +230,8 @@ describe("the words this side of the product uses", () => {
     const html = render(recommended, "ja");
 
     expect(html).toContain(t("ja", "creator.postText"));
-    expect(html).toContain(t("ja", "creator.feedback.useAsIs"));
-    expect(html).not.toContain(t("en", "creator.feedback.useAsIs"));
+    expect(html).toContain(t("ja", "creator.feedback.copyAndUse"));
+    expect(html).not.toContain(t("en", "creator.feedback.copyAndUse"));
   });
 });
 
@@ -235,5 +268,60 @@ describe("the edit box, when it is opened", () => {
 
   it("starts closed", () => {
     expect(render(recommended)).not.toContain('name="editedBody"');
+  });
+});
+
+/**
+ * What adopting a post is allowed to claim.
+ *
+ * **Koqentra publishes nothing.** It puts the text on the clipboard and records
+ * that somebody took it; every step after that is theirs. A label saying the
+ * post went out would be describing a feature that does not exist, and would be
+ * believed.
+ */
+describe("what the handoff must not claim", () => {
+  it.each([
+    ["en", ["publish", "posted", "shared", "sent"]],
+    ["ja", ["投稿しました", "投稿済み", "公開", "送信しました"]],
+  ] as const)("claims none of the forbidden things in %s", (language, phrases) => {
+    const text = render(recommended, language).replace(/<[^>]*>/g, " ");
+
+    for (const phrase of phrases) {
+      expect(text.toLowerCase()).not.toContain(phrase.toLowerCase());
+    }
+  });
+
+  /** The failure names what did not happen and never what was in it. */
+  it.each(["en", "ja"] as const)("keeps the post out of the copy failure in %s", (language) => {
+    const message = t(language, "creator.feedback.copyFailed");
+
+    expect(message.trim()).not.toBe("");
+    expect(message).not.toContain(recommended.postText);
+  });
+
+  it.each(["en", "ja"] as const)("says copy in the adopt label in %s", (language) => {
+    const label = t(language, "creator.feedback.copyAndUse");
+
+    expect(label).toBe(language === "ja" ? "コピーして採用" : "Copy and use");
+  });
+});
+
+/**
+ * The three answers on a narrow screen.
+ *
+ * Nothing here is measured — what is fixed is that the row is allowed to wrap
+ * and that no fixed width is written into the markup, which is how a set of
+ * buttons starts overflowing on a phone.
+ */
+describe("on a narrow screen", () => {
+  it("lets the answers wrap", () => {
+    expect(render(recommended)).toContain("flex-wrap");
+  });
+
+  it("writes no fixed width anywhere", () => {
+    const html = render(recommended);
+
+    expect(html).not.toMatch(/style="[^"]*width/);
+    expect(html).not.toMatch(/w-\[\d/);
   });
 });

@@ -360,6 +360,13 @@ export const ja: Record<TranslationKey, string> = {
 
   "creator.postText": "投稿文",
 
+  /**
+   * 「コピーして採用」は、clipboard へのコピーと採用の記録を1操作にしたもの。
+   * Koqentra は投稿を行わないので、「投稿しました」とは書かない。
+   */
+  "creator.feedback.copyAndUse": "コピーして採用",
+  "creator.feedback.copyFailed":
+    "投稿文をコピーできませんでした。もう一度お試しください。",
   "creator.feedback.useAsIs": "このまま採用",
   "creator.feedback.editAndUse": "編集して採用",
   "creator.feedback.reject": "却下",

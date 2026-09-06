@@ -539,6 +539,18 @@ Write nothing that is not in the material. Where a section has nothing to draw o
   "creator.postText": "Post text",
 
   /** What the buttons say depends on what is being answered. */
+  /**
+   * Adopting a recommendation, which is a copy and an answer at once.
+   *
+   * **It says copy because copying is what Koqentra does.** Nothing is posted
+   * anywhere, and a label promising otherwise would describe a product that
+   * does not exist. `creator.feedback.copyFailed` is what a reader sees when
+   * the clipboard refused — the answer was not sent either, so the decision is
+   * still there to try again.
+   */
+  "creator.feedback.copyAndUse": "Copy and use",
+  "creator.feedback.copyFailed":
+    "Could not copy the post text. Please try again.",
   "creator.feedback.useAsIs": "Use as-is",
   "creator.feedback.editAndUse": "Edit & use",
   "creator.feedback.reject": "Reject",
