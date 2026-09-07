@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import {
   DEFAULT_LANGUAGE,
   isSupportedLanguage,
@@ -46,8 +47,20 @@ export async function getUserTimezone(userId: string): Promise<string> {
  * exist yet gets English — a read must not be what creates the row — and so
  * does a stored value this version cannot read, which is what keeps a language
  * removed in a later release from turning a dashboard into a blank page.
+ *
+ * **Asked several times per render, and answered once.** A signed-in screen
+ * needs this in the document element, in the navigation bar and in the page
+ * itself, and each of those is a separate server component that cannot hand its
+ * answer to the others. `cache` is React's per-request memoization: the same id
+ * inside one render resolves to one query, and the next request starts over —
+ * which is what keeps a language somebody just changed from being served stale.
+ * It is deliberately not a data cache, a TTL or anything that outlives the
+ * request; none of those could tell the difference between "asked twice" and
+ * "changed since".
  */
-export async function getUserLanguage(userId: string): Promise<Language> {
+export const getUserLanguage = cache(async function getUserLanguage(
+  userId: string,
+): Promise<Language> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { language: true },
@@ -56,7 +69,7 @@ export async function getUserLanguage(userId: string): Promise<Language> {
   return user && isSupportedLanguage(user.language)
     ? user.language
     : DEFAULT_LANGUAGE;
-}
+});
 
 /**
  * Who a notification about this account's work goes to, and how it should read.

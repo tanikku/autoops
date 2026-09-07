@@ -151,6 +151,15 @@ export async function updateLanguageAction(
   // dashboard is stale after it changes.
   revalidatePath("/dashboard", "layout");
 
+  // **And the root layout above it, which the zone does not need.** The
+  // document's `lang` attribute is written once for the whole tree by
+  // `app/layout.tsx`; a client navigation that reused the cached root would
+  // carry the previous language on an otherwise correct page — markup claiming
+  // English over Japanese text, which is the exact thing that attribute exists
+  // to prevent. Only the language changes what the root renders, so only this
+  // action invalidates it.
+  revalidatePath("/", "layout");
+
   return { status: "success", message: t(language, "settings.language.saved") };
 }
 
