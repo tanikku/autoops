@@ -553,6 +553,17 @@ Write nothing that is not in the material. Where a section has nothing to draw o
   "creator.inbox.title": "Review Inbox",
   "creator.inbox.description":
     "What Koqentra suggested, waiting for you to agree, rewrite, or turn down.",
+  /**
+   * What the screen says about itself in a browser tab, not on the screen.
+   *
+   * **Its own string rather than the description above it.** The two answer
+   * different questions: one introduces the screen to somebody already on it,
+   * the other has to say what the screen is to somebody looking at a tab
+   * strip or a search result, in a single line. Reusing the longer one would
+   * have changed wording that was chosen for a different place.
+   */
+  "creator.inbox.metadataDescription":
+    "What Koqentra suggested, waiting for your answer.",
   "creator.inbox.analyzeCta": "Analyze content",
   /** Nothing waiting is the ordinary state, not a failure. */
   "creator.inbox.emptyTitle": "Nothing to review",
@@ -592,6 +603,8 @@ Write nothing that is not in the material. Where a section has nothing to draw o
   "creator.history.title": "Answer history",
   "creator.history.description":
     "The judgements you have already answered, newest analysis first.",
+  "creator.history.metadataDescription":
+    "The judgements you have already answered.",
   "creator.history.pendingNote":
     "An analysis with unanswered judgements also appears in the Review Inbox.",
   "creator.history.answeredCount": "{count} answered",
@@ -635,6 +648,8 @@ Write nothing that is not in the material. Where a section has nothing to draw o
   "creator.feedback.sending": "Saving…",
 
   "creator.new.title": "Analyze content",
+  "creator.new.metadataDescription":
+    "Have Koqentra read a piece of writing and say where it belongs.",
   "creator.new.description":
     "Koqentra reads what you paste and says, for X, Reddit and long-form separately, whether it is worth posting there — and writes the post if it is. Deciding against a channel is a normal answer.",
   "creator.new.titleLabel": "Title",

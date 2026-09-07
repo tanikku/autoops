@@ -10,13 +10,36 @@ import {
   readRecentFeedbackContext,
 } from "@/lib/creator/repository";
 import { t } from "@/lib/i18n";
+import { getDocumentLanguage } from "@/lib/i18n/server";
 import { requireUserId } from "@/lib/session";
 import { getUserLanguage } from "@/lib/users";
 
-export const metadata: Metadata = {
-  title: "Analyze content — Koqentra",
-  description: "Have Koqentra read a piece of writing and say where it belongs.",
-};
+/**
+ * The title and description in the language the screen itself is in.
+ *
+ * **The document already says which language it is.** `app/layout.tsx` writes
+ * the account's language onto `<html>`, and everything visible here follows
+ * it — so a title left in English would be the one part of the page
+ * contradicting the attribute around it, which is exactly what a screen
+ * reader believes when it chooses a voice.
+ *
+ * **The heading is reused; the description is its own string.** The title is
+ * the same words the page leads with, so there is one place to change them.
+ * The description has to say what this screen is to somebody reading a tab
+ * strip rather than the screen, which is a different sentence — see the note
+ * beside `creator.new.metadataDescription` in the dictionary.
+ *
+ * **Read-only.** `getDocumentLanguage` decodes the session and falls back to
+ * English; no account row is read into existence to render a title.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const language = await getDocumentLanguage();
+
+  return {
+    title: `${t(language, "creator.new.title")} — Koqentra`,
+    description: t(language, "creator.new.metadataDescription"),
+  };
+}
 
 // The wording comes from the account row, so this page must not be prerendered.
 export const dynamic = "force-dynamic";

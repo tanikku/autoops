@@ -40,6 +40,7 @@ vi.mock("@/lib/support", () => ({
 }));
 
 const PrivacyPage = (await import("@/app/privacy/page")).default;
+const { generateMetadata } = await import("@/app/privacy/page");
 
 /** The rendered page with its markup stripped, for whichever session is set. */
 const render = async () =>
@@ -587,5 +588,72 @@ describe("what the summary of older answers is said to be", () => {
     expect((await render()).toLowerCase()).toContain(
       "does not post anything anywhere",
     );
+  });
+});
+
+/**
+ * What a browser tab and a search result say this page is.
+ *
+ * **The one public page that speaks Japanese used to title itself in English.**
+ * The notice below has always followed the account's language while the title
+ * above it did not, which left a document declaring `lang="ja"` and then
+ * naming itself in English — the state a screen reader takes literally.
+ *
+ * **Driven through the real resolver.** The session and the stored language
+ * are already replaced for the rendering tests above, so these go through
+ * `getDocumentLanguage` as it actually runs rather than around it — which also
+ * fixes that a signed-out visitor gets English without an account row being
+ * read into existence.
+ */
+describe("what the tab says", () => {
+  it("keeps the English title and description exactly as they were", async () => {
+    signedOut();
+
+    await expect(generateMetadata()).resolves.toMatchObject({
+      title: "Privacy — Koqentra",
+      description:
+        "What Koqentra stores, where it goes, and what it does not do.",
+    });
+  });
+
+  it("says the same thing in Japanese when the account reads Japanese", async () => {
+    signedInWith("user-ja", "ja");
+
+    await expect(generateMetadata()).resolves.toMatchObject({
+      title: "プライバシー — Koqentra",
+      description:
+        "Koqentra が何を保存し、どこへ送られ、何をしないのかを説明します。",
+    });
+  });
+
+  it("titles itself in English for a signed-in English account", async () => {
+    signedInWith("user-en", "en");
+
+    await expect(generateMetadata()).resolves.toMatchObject({
+      title: "Privacy — Koqentra",
+    });
+  });
+
+  /**
+   * **Not the opening sentence of the notice.** `intro` says what Koqentra
+   * receives; this says what is kept, where it goes and what is not done. They
+   * were separated because they answer different questions, and reusing one
+   * for the other would have reworded the product to save a string.
+   */
+  it("does not reuse the opening sentence of the notice", async () => {
+    signedOut();
+
+    const { description } = await generateMetadata();
+
+    expect(description).not.toContain("What Koqentra receives");
+  });
+
+  /** The product name is a name in both languages. */
+  it("leaves the name untranslated in either language", async () => {
+    signedOut();
+    expect((await generateMetadata()).title).toContain("Koqentra");
+
+    signedInWith("user-ja", "ja");
+    expect((await generateMetadata()).title).toContain("Koqentra");
   });
 });

@@ -15,6 +15,7 @@ import { renderToStaticMarkup } from "react-dom/server";
  */
 
 const mocks = vi.hoisted(() => ({
+  getDocumentLanguage: vi.fn(),
   requireUserId: vi.fn(),
   requireProvisionedUserId: vi.fn(),
   getUserLanguage: vi.fn(),
@@ -23,6 +24,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/auth", () => ({ auth: vi.fn(), signIn: vi.fn(), signOut: vi.fn() }));
+vi.mock("@/lib/i18n/server", () => ({
+  getDocumentLanguage: mocks.getDocumentLanguage,
+}));
 vi.mock("@/lib/session", () => ({
   requireUserId: mocks.requireUserId,
   requireProvisionedUserId: mocks.requireProvisionedUserId,
@@ -49,6 +53,7 @@ vi.mock("@/components/notification/use-action-result", () => ({
 }));
 
 const CreatorInboxPage = (await import("@/app/creator/page")).default;
+const { generateMetadata } = await import("@/app/creator/page");
 const { t } = await import("@/lib/i18n");
 
 const USER = "user-1";
@@ -346,5 +351,48 @@ describe("the source of an analysis", () => {
     await render();
 
     expect(mocks.listCreatorReviewItems).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * What a browser tab and a search result say this screen is.
+ *
+ * **The document declares a language and the title has to be in it.** The root
+ * layout writes the account's language onto `<html>`; a title left in English
+ * under `lang="ja"` is the one part of the page contradicting the attribute a
+ * screen reader chooses its voice from.
+ *
+ * **The resolver is replaced, not re-tested.** Which language a request is in
+ * is settled in `lib/i18n/server.test.ts`; what is checked here is only the
+ * mapping from a language to the two strings — including that the English
+ * wording is exactly what it has always been, since a correctness fix must not
+ * quietly reword the product.
+ */
+describe("what the tab says", () => {
+  it("keeps the English title and description exactly as they were", async () => {
+    mocks.getDocumentLanguage.mockResolvedValue("en");
+
+    await expect(generateMetadata()).resolves.toMatchObject({
+      title: "Review Inbox — Koqentra",
+      description: "What Koqentra suggested, waiting for your answer.",
+    });
+  });
+
+  it("says the same thing in Japanese when the account reads Japanese", async () => {
+    mocks.getDocumentLanguage.mockResolvedValue("ja");
+
+    await expect(generateMetadata()).resolves.toMatchObject({
+      title: `${t("ja", "creator.inbox.title")} — Koqentra`,
+      description: t("ja", "creator.inbox.metadataDescription"),
+    });
+  });
+
+  /** The product name is a name in both languages. See the i18n parity test. */
+  it("leaves the name untranslated in either language", async () => {
+    for (const language of ["en", "ja"] as const) {
+      mocks.getDocumentLanguage.mockResolvedValue(language);
+
+      expect((await generateMetadata()).title).toContain("Koqentra");
+    }
   });
 });

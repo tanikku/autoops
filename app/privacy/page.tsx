@@ -2,13 +2,36 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { auth } from "@/auth";
 import { DEFAULT_LANGUAGE, t, type Language } from "@/lib/i18n";
+import { getDocumentLanguage } from "@/lib/i18n/server";
 import { supportMailtoHref } from "@/lib/support";
 import { getUserLanguage } from "@/lib/users";
 
-export const metadata: Metadata = {
-  title: "Privacy — Koqentra",
-  description: "What Koqentra stores, where it goes, and what it does not do.",
-};
+/**
+ * The title and description in the same language as the notice under them.
+ *
+ * **A document that says `lang="ja"` and then titles itself in English is
+ * telling a screen reader to read English words with Japanese pronunciation.**
+ * The body of this page has always followed the account's language; the title
+ * did not, which left the one public page that speaks Japanese describing
+ * itself in English.
+ *
+ * **The words come from the same place the page does.** `PRIVACY_COPY` is
+ * page-local on purpose — a legal notice is not a set of interface strings —
+ * so the heading is reused rather than restated, and the description sits
+ * beside the rest of the copy instead of in the shared dictionary.
+ *
+ * **Read-only, like the page.** `getDocumentLanguage` decodes the session and
+ * falls back to English; nothing here provisions an account row, which is what
+ * keeps a privacy notice openable by somebody who does not have one.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const copy = PRIVACY_COPY[await getDocumentLanguage()];
+
+  return {
+    title: `${copy.heading} — Koqentra`,
+    description: copy.metadataDescription,
+  };
+}
 
 /**
  * What Koqentra actually does with what it holds.
@@ -41,6 +64,15 @@ type Passage = { title: string; body: React.ReactNode };
 type PrivacyCopy = {
   heading: string;
   intro: string;
+  /**
+   * What the page says about itself in a browser tab and a search result.
+   *
+   * Deliberately not `intro`. That sentence opens the notice and names what
+   * Koqentra *receives*; this one answers the question somebody asks before
+   * opening it at all — what is kept, where it goes, and what is not done.
+   * They are different sentences because they are answering different things.
+   */
+  metadataDescription: string;
   closedBeta: Passage;
   signIn: Passage;
   provide: Passage;
@@ -83,6 +115,8 @@ const PRIVACY_COPY = {
   en: {
     heading: "Privacy",
     intro: "What Koqentra receives, where it is kept, and what it does with it.",
+    metadataDescription:
+      "What Koqentra stores, where it goes, and what it does not do.",
     closedBeta: {
       title: "Koqentra is in Closed Beta",
       body: (
@@ -415,6 +449,8 @@ const PRIVACY_COPY = {
     heading: "プライバシー",
     intro:
       "Koqentraが受け取るもの、それをどこに保管するのか、そして何に使うのかを説明します。",
+    metadataDescription:
+      "Koqentra が何を保存し、どこへ送られ、何をしないのかを説明します。",
     closedBeta: {
       title: "Koqentraはクローズドベータです",
       body: (

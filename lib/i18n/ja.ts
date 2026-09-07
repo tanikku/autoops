@@ -360,6 +360,8 @@ export const ja: Record<TranslationKey, string> = {
   // どちらの話か読み手に分からなくなる。ここで作るのは「投稿文」、行うのは
   // 「分析」。
   "creator.inbox.title": "レビュー待ち",
+  "creator.inbox.metadataDescription":
+    "Koqentra の提案のうち、あなたの回答を待っているものを表示します。",
   "creator.inbox.description":
     "Koqentra からの提案です。このまま使うか、書き直すか、見送るかを選んでください。",
   "creator.inbox.analyzeCta": "コンテンツを分析",
@@ -384,6 +386,7 @@ export const ja: Record<TranslationKey, string> = {
 
   /** 回答済みの判断を見るだけの画面。書き換えの導線は置かない。 */
   "creator.history.title": "回答履歴",
+  "creator.history.metadataDescription": "すでに回答した判断を表示します。",
   "creator.history.description":
     "すでに回答した Koqentra の判断を、新しい分析から順に確認できます。",
   "creator.history.pendingNote":
@@ -422,6 +425,8 @@ export const ja: Record<TranslationKey, string> = {
   "creator.feedback.sending": "保存中…",
 
   "creator.new.title": "コンテンツを分析",
+  "creator.new.metadataDescription":
+    "文章を Koqentra に読ませ、どこに向いているか判断してもらいます。",
   "creator.new.description":
     "Koqentra が貼り付けた文章を読み、X・Reddit・長文それぞれについて投稿する価値があるかを判断し、ある場合は投稿文を作ります。見送りという答えも正常な結果です。",
   "creator.new.titleLabel": "タイトル",
