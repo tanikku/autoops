@@ -127,6 +127,37 @@ describe("what a third link must not cost", () => {
   });
 });
 
+/**
+ * **The dictionary stays here.** The links became a client component so they
+ * could read the pathname; taking a language with them would have pulled
+ * `lib/i18n` — both dictionaries, every string in the product — into the
+ * browser bundle of every signed-in page to render three words. The lookup
+ * happens on this side and the resolved words are what cross.
+ */
+describe("where the words are looked up", () => {
+  it.each(["en", "ja"] as const)("names all three links in %s", async (language) => {
+    mocks.getUserLanguage.mockResolvedValue(language);
+
+    const html = await render();
+
+    for (const key of ["nav.creator", "nav.workers", "nav.settings"] as const) {
+      expect(html).toContain(t(language, key));
+    }
+  });
+
+  /**
+   * A label that arrived as a key rather than a word would mean the client had
+   * been handed the means to translate instead of the translation.
+   */
+  it("hands over words, not keys", async () => {
+    const html = await render();
+
+    expect(html).not.toContain("nav.creator");
+    expect(html).not.toContain("nav.workers");
+    expect(html).not.toContain("nav.settings");
+  });
+});
+
 describe("which page it claims to be on", () => {
   /**
    * **The bar used to claim the wrong one, then none at all.**

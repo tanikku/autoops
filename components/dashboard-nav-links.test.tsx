@@ -22,12 +22,34 @@ const mocks = vi.hoisted(() => ({ usePathname: vi.fn() }));
 vi.mock("next/navigation", () => ({ usePathname: mocks.usePathname }));
 
 const { DashboardNavLinks } = await import("@/components/dashboard-nav-links");
-const { t } = await import("@/lib/i18n");
 
-const render = (pathname: string, language: "en" | "ja" = "en") => {
+/**
+ * **The labels arrive already translated.** This component takes words rather
+ * than a language, so that the dictionaries stay on the server rather than
+ * being shipped to every signed-in page to render three links. What the words
+ * are in each language is the server's test to make; these are stand-ins that
+ * are obviously not translations, so a test asserting on them cannot
+ * accidentally start asserting on the dictionary.
+ */
+const LABELS = {
+  creatorLabel: "CREATOR-LABEL",
+  workersLabel: "WORKERS-LABEL",
+  settingsLabel: "SETTINGS-LABEL",
+} as const;
+
+const render = (
+  pathname: string,
+  labels: Record<string, string> = LABELS,
+) => {
   mocks.usePathname.mockReturnValue(pathname);
 
-  return renderToStaticMarkup(<DashboardNavLinks language={language} />);
+  return renderToStaticMarkup(
+    <DashboardNavLinks
+      creatorLabel={labels.creatorLabel}
+      workersLabel={labels.workersLabel}
+      settingsLabel={labels.settingsLabel}
+    />,
+  );
 };
 
 /**
@@ -153,7 +175,7 @@ describe("routes the bar does not cover", () => {
   it("claims nothing when the pathname cannot be read", () => {
     mocks.usePathname.mockReturnValue(undefined);
 
-    const html = renderToStaticMarkup(<DashboardNavLinks language="en" />);
+    const html = renderToStaticMarkup(<DashboardNavLinks {...LABELS} />);
 
     expect(html).not.toContain("aria-current");
   });
@@ -191,12 +213,42 @@ describe("what the links still are", () => {
     expect(settings).toBeGreaterThan(workers);
   });
 
-  it.each(["en", "ja"] as const)("names them in %s", (language) => {
-    const html = render(CREATOR, language);
+  /**
+   * **Whatever it is handed, in the order it was handed.** Looking a label up
+   * here would mean importing the translation system — and shipping both
+   * dictionaries to the browser for three words. The words come in already
+   * resolved, and the server's own test is where the language is checked.
+   */
+  it("shows the labels it was given", () => {
+    const html = render(CREATOR);
 
-    for (const key of ["nav.creator", "nav.workers", "nav.settings"] as const) {
-      expect(html).toContain(t(language, key));
-    }
+    expect(html).toContain("CREATOR-LABEL");
+    expect(html).toContain("WORKERS-LABEL");
+    expect(html).toContain("SETTINGS-LABEL");
+  });
+
+  it("puts each label on its own destination", () => {
+    const html = render(CREATOR);
+
+    expect(html.indexOf("CREATOR-LABEL")).toBeLessThan(
+      html.indexOf("WORKERS-LABEL"),
+    );
+    expect(html.indexOf("WORKERS-LABEL")).toBeLessThan(
+      html.indexOf("SETTINGS-LABEL"),
+    );
+  });
+
+  /** Japanese words are strings like any other; nothing here inspects them. */
+  it("renders labels in any script unchanged", () => {
+    const html = render(CREATOR, {
+      creatorLabel: "クリエイター",
+      workersLabel: "ワーカー",
+      settingsLabel: "設定",
+    });
+
+    expect(html).toContain("クリエイター");
+    expect(html).toContain("ワーカー");
+    expect(html).toContain("設定");
   });
 
   /**

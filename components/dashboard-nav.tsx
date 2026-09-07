@@ -46,9 +46,18 @@ export async function DashboardNav() {
             the pathname to say which section the reader is standing on, and
             that is the one thing this server component cannot know. Everything
             else — who is signed in, their language, the sign-out action —
-            stays here, and nothing about the session crosses that boundary:
-            the language is the only prop. */}
-        <DashboardNavLinks language={language} />
+            stays here.
+
+            **The words cross, not the dictionary.** Handing over a language
+            would make the client call `t()`, which would pull both translation
+            dictionaries — every string in the product — into the browser bundle
+            of every signed-in page, to render three labels. The lookup happens
+            here, where it already happens for sign out. */}
+        <DashboardNavLinks
+          creatorLabel={t(language, "nav.creator")}
+          workersLabel={t(language, "nav.workers")}
+          settingsLabel={t(language, "nav.settings")}
+        />
 
         <div className="ml-auto flex items-center gap-2 sm:gap-3">
           {/* Narrower before `sm`, so a long address cannot push sign out off

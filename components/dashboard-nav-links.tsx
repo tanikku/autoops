@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { type Language, t } from "@/lib/i18n";
 
 /**
  * The three links in the bar, and which of them the reader is standing on.
@@ -11,8 +10,14 @@ import { type Language, t } from "@/lib/i18n";
  * **A client component for one reason: the bar has to know its own route.**
  * `DashboardNav` around it stays on the server, where the session, the language
  * and the sign-out action belong; nothing about who is signed in crosses into
- * here. The only prop is the language, because that is all a link needs to name
- * itself.
+ * here.
+ *
+ * **The labels arrive already translated, and that is deliberate.** Taking a
+ * language and calling `t()` here would pull `lib/i18n` across the boundary —
+ * and with it both dictionaries, every string in the product, into the browser
+ * bundle of every signed-in page. Three words are what this needs, the server
+ * has already looked them up for its own use, so it hands over the words
+ * instead of the means to find them.
  *
  * **Saying nothing beats saying the wrong thing.** `aria-current="page"` used
  * to be hard-coded on the Worker link, so a screen reader was told Dashboard
@@ -89,7 +94,15 @@ function ariaCurrent(
   return pathname === root ? "page" : "location";
 }
 
-export function DashboardNavLinks({ language }: { language: Language }) {
+export function DashboardNavLinks({
+  creatorLabel,
+  workersLabel,
+  settingsLabel,
+}: {
+  creatorLabel: string;
+  workersLabel: string;
+  settingsLabel: string;
+}) {
   const pathname = usePathname();
   // `usePathname` is typed as a string, but a value this component cannot read
   // is the same situation as a route it does not cover: claim nothing.
@@ -97,9 +110,9 @@ export function DashboardNavLinks({ language }: { language: Language }) {
   const current = currentSection(here);
 
   const links = [
-    { section: "creator", root: CREATOR_ROOT, label: "nav.creator" },
-    { section: "workers", root: WORKERS_ROOT, label: "nav.workers" },
-    { section: "settings", root: SETTINGS_ROOT, label: "nav.settings" },
+    { section: "creator", root: CREATOR_ROOT, label: creatorLabel },
+    { section: "workers", root: WORKERS_ROOT, label: workersLabel },
+    { section: "settings", root: SETTINGS_ROOT, label: settingsLabel },
   ] as const;
 
   return (
@@ -123,7 +136,7 @@ export function DashboardNavLinks({ language }: { language: Language }) {
             />
           }
         >
-          {t(language, label)}
+          {label}
         </Button>
       ))}
     </nav>
