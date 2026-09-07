@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { auth, signOut } from "@/auth";
 import { Button } from "@/components/ui/button";
+import { DashboardNavLinks } from "@/components/dashboard-nav-links";
 import { DEFAULT_LANGUAGE, t } from "@/lib/i18n";
 import { getUserLanguage } from "@/lib/users";
 
@@ -36,51 +37,18 @@ export async function DashboardNav() {
           Koqentra
         </Link>
 
-        {/* **No `aria-current` on any of these links.** It used to be
-            hard-coded on Dashboard, which told a screen reader that Dashboard
-            was the current page while somebody stood on `/creator` or Settings
-            — a wrong answer given confidently. Saying nothing is the accurate
-            state until the bar knows which route it is on, and knowing that
-            needs either the pathname or a prop from every page: a design
-            question for a UX checkpoint rather than something to guess at
-            here. */}
-        <nav className="order-last flex w-full flex-wrap items-center gap-1 sm:order-none sm:w-auto sm:flex-nowrap">
-          {/* **Creator first, because that is what the product opens on.**
-              The order is the whole of the hierarchy here — no link is styled
-              as primary and none is marked as current — so putting Creator
-              ahead of Workers is what says which one Koqentra is about.
+        {/* **Creator first, because that is what the product opens on.** The
+            order is the whole of the hierarchy here — no link is styled as
+            primary — so putting Creator ahead of Workers is what says which one
+            Koqentra is about.
 
-              **The Worker route is untouched.** It is still `/dashboard`, and
-              everything behind it works exactly as it did; only the label and
-              the position changed. `nav.workers` rather than a reworded
-              `nav.dashboard`: the route is still the dashboard, but a bar
-              reading "Dashboard" promises the whole product, and that promise
-              stopped being true when Creator became the first screen. */}
-          <Button
-            variant="ghost"
-            size="sm"
-            nativeButton={false}
-            render={<Link href="/creator" />}
-          >
-            {t(language, "nav.creator")}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            nativeButton={false}
-            render={<Link href="/dashboard" />}
-          >
-            {t(language, "nav.workers")}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            nativeButton={false}
-            render={<Link href="/dashboard/settings" />}
-          >
-            {t(language, "nav.settings")}
-          </Button>
-        </nav>
+            **The links are a client component, and only the links.** They need
+            the pathname to say which section the reader is standing on, and
+            that is the one thing this server component cannot know. Everything
+            else — who is signed in, their language, the sign-out action —
+            stays here, and nothing about the session crosses that boundary:
+            the language is the only prop. */}
+        <DashboardNavLinks language={language} />
 
         <div className="ml-auto flex items-center gap-2 sm:gap-3">
           {/* Narrower before `sm`, so a long address cannot push sign out off

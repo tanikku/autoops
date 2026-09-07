@@ -14,7 +14,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   getUserLanguage: vi.fn(),
+  usePathname: vi.fn(),
 }));
+
+/**
+ * **The links became a client component and are rendered for real here.** They
+ * need the pathname, which only a browser has, so it is replaced — but the
+ * component itself is not, because what these tests check is that the bar still
+ * carries the same three destinations and labels after the split.
+ */
+vi.mock("next/navigation", () => ({ usePathname: mocks.usePathname }));
 
 vi.mock("@/auth", () => ({
   auth: mocks.auth,
@@ -33,6 +42,7 @@ beforeEach(() => {
     user: { id: "user-1", email: "someone@example.com", name: "Someone" },
   });
   mocks.getUserLanguage.mockReset().mockResolvedValue("en");
+  mocks.usePathname.mockReset().mockReturnValue("/creator");
 });
 
 describe("where it can go", () => {
@@ -119,16 +129,37 @@ describe("what a third link must not cost", () => {
 
 describe("which page it claims to be on", () => {
   /**
-   * **It claims none, and that is the fix.** `aria-current="page"` was
-   * hard-coded on the Dashboard link, so a screen reader was told Dashboard was
-   * the current page while somebody stood on `/creator` or Settings — a wrong
-   * answer stated confidently, which is worse than no answer.
+   * **The bar used to claim the wrong one, then none at all.**
+   * `aria-current="page"` was hard-coded on the Worker link, so a screen reader
+   * was told Dashboard was the current page while somebody stood on Creator or
+   * Settings. Removing it left the bar accurate but silent; knowing the route
+   * is what lets it be accurate and useful at once.
    *
-   * Saying nothing is accurate until the bar knows its own route. Doing that
-   * properly needs the pathname or a prop from every page, and that is a design
-   * question rather than something to guess at inside a correctness patch.
+   * The full route classification is checked where it lives, in
+   * `dashboard-nav-links.test.tsx`. What matters here is that the split did not
+   * lose it — that the server bar still renders links which know where they
+   * are.
    */
-  it("marks no link as the current page", async () => {
+  it("marks the section the reader is standing on", async () => {
+    mocks.usePathname.mockReturnValue("/creator");
+
+    expect(await render()).toContain('aria-current="page"');
+  });
+
+  it("claims nothing on a route it does not cover", async () => {
+    mocks.usePathname.mockReturnValue("/privacy");
+
     expect(await render()).not.toContain("aria-current");
+  });
+
+  /** Never two at once, whichever section is current. */
+  it("claims at most one", async () => {
+    for (const pathname of ["/creator", "/dashboard", "/dashboard/settings"]) {
+      mocks.usePathname.mockReturnValue(pathname);
+
+      const html = await render();
+
+      expect(html.match(/aria-current=/g) ?? []).toHaveLength(1);
+    }
   });
 });
