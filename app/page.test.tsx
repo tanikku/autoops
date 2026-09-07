@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactElement } from "react";
 
@@ -18,15 +18,45 @@ import type { ReactElement } from "react";
  * production code, and no assertion about how the file happens to be written.
  */
 
-const mocks = vi.hoisted(() => ({ signIn: vi.fn() }));
+/**
+ * **`redirect` is replaced with something that throws, because the real one
+ * does.** Next.js implements it by throwing a control-flow error the framework
+ * catches, and everything after the call is unreachable. A mock that merely
+ * recorded the call would let the page carry on rendering the English landing
+ * underneath it — and the test would pass while the very thing it exists to
+ * prevent still happened.
+ */
+class RedirectSignal extends Error {
+  constructor(readonly to: string) {
+    super(`redirect(${to})`);
+    this.name = "RedirectSignal";
+  }
+}
+
+const mocks = vi.hoisted(() => ({
+  signIn: vi.fn(),
+  auth: vi.fn(),
+  redirect: vi.fn(),
+}));
 
 vi.mock("@/auth", () => ({
   signIn: mocks.signIn,
-  auth: vi.fn(),
+  auth: mocks.auth,
   signOut: vi.fn(),
 }));
 
+vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
+
 const Home = (await import("@/app/page")).default;
+
+beforeEach(() => {
+  mocks.signIn.mockReset();
+  // Signed out unless a test says otherwise: the landing page's own audience.
+  mocks.auth.mockReset().mockResolvedValue(null);
+  mocks.redirect.mockReset().mockImplementation((to: string) => {
+    throw new RedirectSignal(to);
+  });
+});
 
 type Query = { error?: string | string[] };
 
@@ -224,5 +254,76 @@ describe("on a narrow screen", () => {
 
   it("lets the long sentences balance rather than run off", async () => {
     expect(await render()).toContain("text-balance");
+  });
+});
+
+/**
+ * Who this page is for, and who is sent past it.
+ *
+ * **The regression this closes is a document-language one.** The root layout
+ * now declares the account's language on `<html>`, and everything on this page
+ * is written in English only. A Japanese account opening `/` would therefore
+ * be handed English copy inside a document claiming to be Japanese — worse
+ * than the plain English page it replaced, because the markup is now
+ * confidently wrong. Not rendering it for them is what removes the state
+ * rather than making it rarer.
+ */
+describe("who the landing page is for", () => {
+  it("shows a visitor with no session the page, as before", async () => {
+    mocks.auth.mockResolvedValue(null);
+
+    expect(await render()).toContain("Your AI content editor.");
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+
+  it("sends a signed-in reader to the screen the product opens on", async () => {
+    mocks.auth.mockResolvedValue({ user: { id: "test-user" } });
+
+    await expect(tree()).rejects.toBeInstanceOf(RedirectSignal);
+    expect(mocks.redirect).toHaveBeenCalledWith("/creator");
+  });
+
+  /**
+   * **The English landing must not be rendered underneath the redirect.** This
+   * is the assertion that would fail if `redirect` were ever called without
+   * leaving the function — the whole point of the change.
+   */
+  it("renders none of the English landing for them", async () => {
+    mocks.auth.mockResolvedValue({ user: { id: "test-user" } });
+
+    const thrown = await tree().catch((error: unknown) => error);
+
+    expect(thrown).toBeInstanceOf(RedirectSignal);
+    expect((thrown as RedirectSignal).to).toBe("/creator");
+  });
+
+  /**
+   * A session object without a usable id is not somebody signed in — the shape
+   * an expired or half-established session can arrive in. Treating it as an
+   * account would send a visitor to a screen that would only bounce them back.
+   */
+  it.each([
+    ["a session with no user", {}],
+    ["a user with no id", { user: {} }],
+  ])("treats %s as signed out", async (_name, session) => {
+    mocks.auth.mockResolvedValue(session);
+
+    expect(await render()).toContain("Your AI content editor.");
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **A refused sign-in leaves no session**, so the message it comes back for
+   * is still reachable. The allowlist rejects before a token is minted — there
+   * is nothing to redirect on — and this is the case that would break if the
+   * boundary above were ever widened past "is there a session".
+   */
+  it("still shows a refused visitor why they were turned away", async () => {
+    mocks.auth.mockResolvedValue(null);
+
+    expect(await text({ error: "AccessDenied" })).toContain(
+      "sign-in is limited to invited accounts",
+    );
+    expect(mocks.redirect).not.toHaveBeenCalled();
   });
 });

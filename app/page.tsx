@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { signIn } from "@/auth";
+import { redirect } from "next/navigation";
+import { auth, signIn } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { GitHubIcon } from "@/components/icons";
 
@@ -20,6 +21,24 @@ export default async function Home({
 }: {
   searchParams: Promise<{ error?: string | string[] }>;
 }) {
+  // **Somebody signed in is not the audience for this page.** Everything below
+  // introduces Koqentra to a person who has not seen it, in English, and the
+  // document around it now says which language it is in — so a Japanese
+  // account opening `/` would be handed English copy inside a document
+  // declaring Japanese. Sending them to the screen the product opens on is
+  // what makes that state unreachable rather than merely unlikely.
+  //
+  // **The session, and nothing more.** No account row is read and none is
+  // created: `auth()` decodes what the request already carries, and a visitor
+  // without it falls straight through to the page. That matters most for a
+  // refused sign-in — the beta allowlist mints no token, so there is no session
+  // here and the message below is exactly what they see.
+  const session = await auth();
+
+  if (session?.user?.id) {
+    redirect("/creator");
+  }
+
   const { error } = await searchParams;
   const refused = error === "AccessDenied";
 
