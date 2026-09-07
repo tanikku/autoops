@@ -150,6 +150,8 @@ export const ja: Record<TranslationKey, string> = {
 
   "worker.create.description":
     "Worker は一度定義すれば、あとは Koqentra がスケジュールどおりに実行します。",
+  "worker.create.metadataDescription":
+    "新しい AI Worker をチームに追加します。",
   "worker.create.draftHeading": "Koqentra に何を任せますか?",
   "worker.create.draftPlaceholder":
     "このページを毎日チェックして、重要な変更があれば要約して。",
@@ -513,6 +515,8 @@ export const ja: Record<TranslationKey, string> = {
 
   "worker.detail.noDescription": "説明はありません。",
   "worker.detail.workerType": "Worker の種類",
+  "worker.detail.metadataDescription":
+    "Worker とそのスケジュールの詳細です。",
   "worker.detail.unrecognised": "不明",
   "worker.detail.lastRun": "前回の実行",
   "worker.detail.createdAt": "作成日時",
@@ -530,6 +534,7 @@ export const ja: Record<TranslationKey, string> = {
   "worker.delete.confirmBody": "実行履歴も削除されます。元に戻せません。",
 
   "worker.edit.title": "Worker を編集",
+  "worker.edit.metadataDescription": "AI Worker を更新します。",
   "worker.edit.description": "変更は次回の実行から反映されます。",
   /**
    * 英語版と同じ3点を保つこと。弱めると、目に見えない仕組みについて
@@ -546,6 +551,7 @@ export const ja: Record<TranslationKey, string> = {
     "基準を作り直します。過去の実行履歴はそのまま残ります。",
 
   "run.detail.title": "実行の詳細",
+  "run.detail.metadataDescription": "1 回の Worker 実行の詳細です。",
   "run.detail.back": "ダッシュボードに戻る",
   /** 製品固有の語なので、日本語でもそのまま。 */
   "run.detail.worker": "Worker",
@@ -618,6 +624,7 @@ export const ja: Record<TranslationKey, string> = {
   "run.action.succeeded": "「{name}」を実行しました。",
 
   "settings.title": "設定",
+  "settings.metadataDescription": "アカウント設定です。",
   "settings.description":
     "Koqentra がこのアカウントの時刻をどう読み、いつ実行するか。",
   "settings.timezone.title": "タイムゾーン",

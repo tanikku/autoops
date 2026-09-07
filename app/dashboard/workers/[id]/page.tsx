@@ -13,6 +13,7 @@ import { WorkerRunList } from "@/components/worker-run-list";
 import { formatDateTimeWithSeconds } from "@/lib/datetime";
 import { summarizeRuns } from "@/lib/health";
 import { t, type TranslationKey } from "@/lib/i18n";
+import { getDocumentLanguage } from "@/lib/i18n/server";
 import { isRunOverdue } from "@/lib/overview";
 import { getRoutineWithStoredKind } from "@/lib/routines";
 import { listRecentRunsForWorker, summarizeRunsForWorker } from "@/lib/runs";
@@ -21,10 +22,29 @@ import { getUserLanguage, getUserTimezone } from "@/lib/users";
 import { getWebsiteSource } from "@/lib/website-sources";
 import type { RoutineFrequency, RoutineKind, RoutineStatus } from "@/types";
 
-export const metadata: Metadata = {
-  title: "Worker — Koqentra",
-  description: "A worker and its schedule.",
-};
+/**
+ * The title and description in the language the screen itself is in.
+ *
+ * **The document already declares a language.** `app/layout.tsx` writes the
+ * account's onto `<html>`, and everything visible here follows it — so a title
+ * left in English would be the one part of the page contradicting the
+ * attribute a screen reader chooses its voice from.
+ *
+ * **The heading is reused, and it is generic on purpose.** No id is read and
+ * no owned record is fetched to build a title: what a browser tab says must
+ * not depend on a row this request has not been shown it may see.
+ *
+ * **Read-only.** `getDocumentLanguage` decodes the session and falls back to
+ * English; no account row is read into existence to render a title.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const language = await getDocumentLanguage();
+
+  return {
+    title: `${t(language, "run.detail.worker")} — Koqentra`,
+    description: t(language, "worker.detail.metadataDescription"),
+  };
+}
 
 // Workers live in the database, so this page must not be prerendered.
 export const dynamic = "force-dynamic";

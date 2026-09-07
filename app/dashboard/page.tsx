@@ -7,16 +7,36 @@ import { RunHistoryList } from "@/components/run-history-list";
 import { Button } from "@/components/ui/button";
 import { groupHealthByWorker, NEVER_RUN } from "@/lib/health";
 import { t } from "@/lib/i18n";
+import { getDocumentLanguage } from "@/lib/i18n/server";
 import { latestExecution, summarizeWorkers } from "@/lib/overview";
 import { listRoutines } from "@/lib/routines";
 import { listRecentRuns, summarizeRunsByWorker } from "@/lib/runs";
 import { requireUserId } from "@/lib/session";
 import { getUserLanguage, getUserTimezone } from "@/lib/users";
 
-export const metadata: Metadata = {
-  title: "Dashboard — Koqentra",
-  description: "Manage and monitor your AI workers.",
-};
+/**
+ * The title and description in the language the screen itself is in.
+ *
+ * **The document already declares a language.** `app/layout.tsx` writes the
+ * account's onto `<html>`, and everything visible here follows it — so a title
+ * left in English would be the one part of the page contradicting the
+ * attribute a screen reader chooses its voice from.
+ *
+ * **The heading is reused, and it is generic on purpose.** No id is read and
+ * no owned record is fetched to build a title: what a browser tab says must
+ * not depend on a row this request has not been shown it may see.
+ *
+ * **Read-only.** `getDocumentLanguage` decodes the session and falls back to
+ * English; no account row is read into existence to render a title.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const language = await getDocumentLanguage();
+
+  return {
+    title: `${t(language, "nav.dashboard")} — Koqentra`,
+    description: t(language, "dashboard.description"),
+  };
+}
 
 // Routines live in the database, so this page must not be prerendered.
 export const dynamic = "force-dynamic";

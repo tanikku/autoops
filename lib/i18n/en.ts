@@ -245,6 +245,16 @@ export const en = {
 
   "worker.create.description":
     "Define the worker once. Koqentra runs it on your schedule.",
+  /**
+   * What the screen says about itself in a browser tab, not on the screen.
+   *
+   * **Its own string rather than the description above it.** The two answer
+   * different questions: one introduces the screen to somebody already looking
+   * at it, the other has to say what the screen is to somebody reading a tab
+   * strip or a search result. Reusing the longer one would have reworded the
+   * product to save a string.
+   */
+  "worker.create.metadataDescription": "Add a new AI worker to your team.",
   "worker.create.draftHeading": "What would you like Koqentra to handle?",
   "worker.create.draftPlaceholder":
     "Check this page every day and summarise anything important that changed.",
@@ -785,6 +795,7 @@ Write nothing that is not in the material. Where a section has nothing to draw o
 
   "worker.detail.noDescription": "No description.",
   "worker.detail.workerType": "Worker type",
+  "worker.detail.metadataDescription": "A worker and its schedule.",
   /** A kind stored by a version this one cannot read. It says so; it does not guess. */
   "worker.detail.unrecognised": "Unrecognised",
   "worker.detail.lastRun": "Last Run",
@@ -812,6 +823,7 @@ Write nothing that is not in the material. Where a section has nothing to draw o
     "This also removes its activity history. This cannot be undone.",
 
   "worker.edit.title": "Edit Worker",
+  "worker.edit.metadataDescription": "Update an AI worker.",
   "worker.edit.description": "Changes apply to the next run.",
   /**
    * What moving a watcher costs, said before it is moved.
@@ -838,6 +850,8 @@ Write nothing that is not in the material. Where a section has nothing to draw o
     "the new page as a detected change. Past runs are kept.",
 
   "run.detail.title": "Execution",
+  "run.detail.metadataDescription":
+    "Details of a single worker execution.",
   "run.detail.back": "Back to Dashboard",
   /** The product's own noun, and the one word here that is the same in both. */
   "run.detail.worker": "Worker",
@@ -1008,6 +1022,7 @@ Write nothing that is not in the material. Where a section has nothing to draw o
   "run.action.succeeded": "\"{name}\" ran successfully.",
 
   "settings.title": "Settings",
+  "settings.metadataDescription": "Account settings.",
   "settings.description":
     "How Koqentra reads and schedules times for your account.",
   "settings.timezone.title": "Timezone",

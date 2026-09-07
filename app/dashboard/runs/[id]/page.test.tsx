@@ -29,6 +29,12 @@ vi.mock("next/navigation", () => ({ notFound: mocks.notFound }));
 // way in. Nothing here asks it anything — this only keeps importing the page
 // from pulling in a framework runtime a test has no use for.
 vi.mock("@/auth", () => ({ auth: vi.fn(), signIn: vi.fn(), signOut: vi.fn() }));
+const metadataMocks = vi.hoisted(() => ({ getDocumentLanguage: vi.fn() }));
+
+vi.mock("@/lib/i18n/server", () => ({
+  getDocumentLanguage: metadataMocks.getDocumentLanguage,
+}));
+
 vi.mock("@/lib/session", () => ({ requireUserId: mocks.requireUserId }));
 vi.mock("@/lib/runs", () => ({ getRun: mocks.getRun }));
 vi.mock("@/lib/users", () => ({
@@ -37,6 +43,7 @@ vi.mock("@/lib/users", () => ({
 }));
 
 const RunDetailPage = (await import("@/app/dashboard/runs/[id]/page")).default;
+const { generateMetadata } = await import("@/app/dashboard/runs/[id]/page");
 
 class NotFoundSignal extends Error {}
 
@@ -464,3 +471,62 @@ function strings(node: ReactNode): string[] {
   walk(node);
   return found;
 }
+
+/**
+ * What a browser tab and a search result say this screen is.
+ *
+ * **The document declares a language and the title has to be in it.** The root
+ * layout writes the account's language onto `<html>`; a title left in English
+ * under `lang="ja"` is the one part of the page contradicting the attribute a
+ * screen reader chooses its voice from.
+ *
+ * **The resolver is replaced, not re-tested.** Which language a request is in
+ * is settled in `lib/i18n/server.test.ts`. What is checked here is the mapping
+ * from a language to two strings — including that the English wording is
+ * exactly what it has always been, because a correctness fix must not quietly
+ * reword the product.
+ */
+describe("what the tab says", () => {
+  it("keeps the English title and description exactly as they were", async () => {
+    metadataMocks.getDocumentLanguage.mockResolvedValue("en");
+
+    await expect(generateMetadata()).resolves.toMatchObject({
+      title: "Execution — Koqentra",
+      description: "Details of a single worker execution.",
+    });
+  });
+
+  it("says the same thing in Japanese when the account reads Japanese", async () => {
+    metadataMocks.getDocumentLanguage.mockResolvedValue("ja");
+
+    await expect(generateMetadata()).resolves.toMatchObject({
+      title: "実行の詳細 — Koqentra",
+      description: "1 回の Worker 実行の詳細です。",
+    });
+  });
+
+  /** The product name is a name in both languages. */
+  it("leaves the name untranslated in either language", async () => {
+    for (const language of ["en", "ja"] as const) {
+      metadataMocks.getDocumentLanguage.mockResolvedValue(language);
+
+      expect((await generateMetadata()).title).toContain("Koqentra");
+    }
+  });
+
+  /**
+   * **Generic on purpose.** Nothing about the record is read to build this: a
+   * title carrying a worker's name or a run's id would put an owned row into
+   * the one part of the document that is read before anything checks who is
+   * asking.
+   */
+  it("names no record, in either language", async () => {
+    for (const language of ["en", "ja"] as const) {
+      metadataMocks.getDocumentLanguage.mockResolvedValue(language);
+
+      const { title } = await generateMetadata();
+
+      expect(title).not.toMatch(/[0-9a-f]{8}/i);
+    }
+  });
+});
