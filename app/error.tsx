@@ -22,7 +22,15 @@ export default function Error({
   reset: () => void;
 }) {
   return (
-    <div className="flex flex-1 flex-col bg-background">
+    // **`lang` on the fallback, not on the document.** Everything below is
+    // written in English and is not translated: it stands in for a page that
+    // failed, and a person who cannot see the page they asked for is better
+    // served by words that certainly exist than by a translation of them. The
+    // document around it may well say `lang="ja"` — the root layout writes the
+    // account's language — so without this the browser and any screen reader
+    // would be told to read English sentences as Japanese. Declaring the
+    // exception here is what HTML has language-of-parts for.
+    <div lang="en" className="flex flex-1 flex-col bg-background">
       <header className="mx-auto flex w-full max-w-6xl items-center px-6 py-6 sm:px-10">
         <Link href="/" className="text-lg font-semibold tracking-tight">
           Koqentra

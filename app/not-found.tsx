@@ -2,8 +2,24 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
+/**
+ * A title with no language in it, and no description at all.
+ *
+ * **"404" and "Koqentra" are the same in every language.** The page underneath
+ * is English-only and not translated, but the document around it carries the
+ * account's language — so a title reading "Not Found" would be English words
+ * inside a document declaring Japanese. A number and a product name are
+ * neither.
+ *
+ * **`description: null` rather than a missing key.** Metadata is inherited, so
+ * saying nothing here would leave the root's sentence about evaluating content
+ * for X and Reddit attached to a page that is about none of that — in English,
+ * on a Japanese document. `null` is how Next.js is told to drop an inherited
+ * field rather than fill it in.
+ */
 export const metadata: Metadata = {
-  title: "Not Found — Koqentra",
+  title: "404 — Koqentra",
+  description: null,
 };
 
 /**
@@ -20,7 +36,9 @@ export const metadata: Metadata = {
  */
 export default function NotFound() {
   return (
-    <div className="flex flex-1 flex-col bg-background">
+    // English-only, deliberately, and said so rather than translated — see the
+    // note on `app/error.tsx`. The document around this may be Japanese.
+    <div lang="en" className="flex flex-1 flex-col bg-background">
       <header className="mx-auto flex w-full max-w-6xl items-center px-6 py-6 sm:px-10">
         <Link href="/" className="text-lg font-semibold tracking-tight">
           Koqentra
