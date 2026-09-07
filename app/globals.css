@@ -7,7 +7,25 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
+  /* **Geist first, then whatever the platform has for everything else.**
+
+     This used to read `var(--font-sans)` — a custom property referencing
+     itself, which CSS treats as invalid at computed-value time. The `html`
+     rule below applies it with no fallback, so the whole declaration was
+     dropped and the document fell back to the browser's default font: serif,
+     which for Japanese means mincho. Geist was downloaded and never applied to
+     anything.
+
+     Geist carries Latin only, so a Japanese character never matches it and the
+     browser walks on down this list. The families after it are the ordinary
+     UI sans of each platform — Hiragino on Apple, Yu Gothic or Meiryo on
+     Windows, whatever `system-ui` resolves to elsewhere — and the final
+     `sans-serif` is what guarantees the default serif can never be reached
+     again. No webfont is downloaded for any of it. */
+  --font-sans:
+    var(--font-geist-sans), system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic",
+    "YuGothic", Meiryo, sans-serif;
   --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
