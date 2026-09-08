@@ -810,6 +810,14 @@ Write nothing that is not in the material. Where a section has nothing to draw o
    * the account's activity list has moved on past it.
    */
   "worker.detail.runHistory": "Run History",
+  /**
+   * **"Older runs", not "Load more".** Following this is a navigation to a
+   * different page of history, not an append to the list already on screen —
+   * and a reader who was told the list would grow would be looking for rows
+   * that are no longer there.
+   */
+  "worker.detail.olderRuns": "Older runs",
+  "worker.detail.backToLatestRuns": "Back to latest",
   "worker.detail.runHistoryEmpty": "This worker has not run yet.",
   "worker.detail.dangerZone": "Danger zone",
   "worker.detail.deleteWarning":

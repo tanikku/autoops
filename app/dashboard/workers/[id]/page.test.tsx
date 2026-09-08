@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   requireUserId: vi.fn(),
   getRoutineWithStoredKind: vi.fn(),
   summarizeRunsForWorker: vi.fn(),
-  listRecentRunsForWorker: vi.fn(),
+  listRunsForWorkerPage: vi.fn(),
   getUserTimezone: vi.fn(),
   getUserLanguage: vi.fn(),
   getWebsiteSource: vi.fn(),
@@ -36,7 +36,7 @@ vi.mock("@/lib/routines", () => ({
 }));
 vi.mock("@/lib/runs", () => ({
   summarizeRunsForWorker: mocks.summarizeRunsForWorker,
-  listRecentRunsForWorker: mocks.listRecentRunsForWorker,
+  listRunsForWorkerPage: mocks.listRunsForWorkerPage,
 }));
 vi.mock("@/lib/users", () => ({
   getUserTimezone: mocks.getUserTimezone,
@@ -48,6 +48,7 @@ vi.mock("@/lib/website-sources", () => ({
 
 const WorkerDetailPage = (await import("@/app/dashboard/workers/[id]/page"))
   .default;
+const { t } = await import("@/lib/i18n");
 const { generateMetadata } = await import("@/app/dashboard/workers/[id]/page");
 
 class NotFoundSignal extends Error {}
@@ -117,6 +118,32 @@ function text(node: ReactNode): string[] {
   return found;
 }
 
+/** Every `href` in the returned tree, string or object form. */
+function hrefs(node: ReactNode): unknown[] {
+  const found: unknown[] = [];
+
+  const walk = (current: unknown): void => {
+    if (Array.isArray(current)) {
+      for (const child of current) walk(child);
+      return;
+    }
+
+    if (!current || typeof current !== "object") {
+      return;
+    }
+
+    const props = (current as { props?: Record<string, unknown> }).props;
+    if (!props) return;
+
+    if ("href" in props) found.push(props.href);
+
+    for (const value of Object.values(props)) walk(value);
+  };
+
+  walk(node);
+  return found;
+}
+
 function worker(overrides?: Record<string, unknown>) {
   return {
     id: "worker-1",
@@ -145,9 +172,18 @@ const SOURCE = {
   updatedAt: NOW,
 };
 
-function render() {
-  return WorkerDetailPage({ params: Promise.resolve({ id: "worker-1" }) });
+function render(query: Record<string, string | string[] | undefined> = {}) {
+  return WorkerDetailPage({
+    params: Promise.resolve({ id: "worker-1" }),
+    searchParams: Promise.resolve(query),
+  });
 }
+
+/** One page of runs, as the read layer hands it over. */
+const runPage = (
+  runs: unknown[] = [],
+  nextCursor: { startedAt: Date; id: string } | null = null,
+) => ({ runs, nextCursor });
 
 beforeEach(() => {
   mocks.requireUserId.mockReset().mockResolvedValue("user-1");
@@ -166,7 +202,7 @@ beforeEach(() => {
   // The page also lists the newest few of those runs, so there is a way from a
   // worker to one of its executions once the dashboard's activity list has
   // moved past it.
-  mocks.listRecentRunsForWorker.mockReset().mockResolvedValue([]);
+  mocks.listRunsForWorkerPage.mockReset().mockResolvedValue(runPage());
   mocks.getWebsiteSource.mockReset().mockResolvedValue(null);
   mocks.getRoutineWithStoredKind
     .mockReset()
@@ -382,9 +418,10 @@ describe("worker detail — its own run history", () => {
   it("reads the worker's runs as this account", async () => {
     await render();
 
-    expect(mocks.listRecentRunsForWorker).toHaveBeenCalledWith(
+    expect(mocks.listRunsForWorkerPage).toHaveBeenCalledWith(
       "worker-1",
       "user-1",
+      null,
     );
   });
 
@@ -399,7 +436,7 @@ describe("worker detail — its own run history", () => {
   it("keeps the order it was given", async () => {
     const newest = run({ id: "newest" });
     const older = run({ id: "older" });
-    mocks.listRecentRunsForWorker.mockResolvedValue([newest, older]);
+    mocks.listRunsForWorkerPage.mockResolvedValue(runPage([newest, older]));
 
     const passed = passedRuns(await render());
 
@@ -411,7 +448,7 @@ describe("worker detail — its own run history", () => {
     const runs = Array.from({ length: 20 }, (_, index) =>
       run({ id: `run-${index}` }),
     );
-    mocks.listRecentRunsForWorker.mockResolvedValue(runs);
+    mocks.listRunsForWorkerPage.mockResolvedValue(runPage(runs));
 
     expect(passedRuns(await render())).toBe(runs);
   });
@@ -429,7 +466,7 @@ describe("worker detail — its own run history", () => {
   it("hands the list the account's language and zone", async () => {
     mocks.getUserLanguage.mockResolvedValue("ja");
     mocks.getUserTimezone.mockResolvedValue("Asia/Tokyo");
-    mocks.listRecentRunsForWorker.mockResolvedValue([run()]);
+    mocks.listRunsForWorkerPage.mockResolvedValue(runPage([run()]));
 
     const section = sectionProps(await render());
 
@@ -443,9 +480,9 @@ describe("worker detail — its own run history", () => {
    * for both.
    */
   it("never asks for the output or the diagnostic", async () => {
-    mocks.listRecentRunsForWorker.mockResolvedValue([
-      run({ status: "failed" }),
-    ]);
+    mocks.listRunsForWorkerPage.mockResolvedValue(
+      runPage([run({ status: "failed" })]),
+    );
 
     const passed = passedRuns(await render()) as Record<string, unknown>[];
 
@@ -587,5 +624,163 @@ describe("what the tab says", () => {
 
       expect(title).not.toMatch(/[0-9a-f]{8}/i);
     }
+  });
+});
+
+/**
+ * Getting to a run older than the twenty this page shows.
+ *
+ * **The rows were always there; the route was not.** The list has always been
+ * bounded to twenty, which is what keeps the query small — but nothing named
+ * the twenty-first, so a worker that had run twenty-one times had an execution
+ * recorded and unreachable. Production had a worker sitting exactly on that
+ * boundary, so the next scheduled run would have made it real.
+ *
+ * **A position in the URL, not a page number.** The list grows at the top while
+ * somebody reads it; counting rows from the newest would shift under them.
+ */
+describe("reaching older runs", () => {
+  const AT = new Date("2026-08-10T12:00:00.000Z");
+  const run = () => ({ id: "run-1", status: "completed" as const, startedAt: AT });
+  const OLDER = "Older runs";
+  const LATEST = "Back to latest";
+
+  it("reads the newest page when the address says nothing", async () => {
+    await render();
+
+    expect(mocks.listRunsForWorkerPage).toHaveBeenCalledWith(
+      "worker-1",
+      "user-1",
+      null,
+    );
+  });
+
+  it("continues from the position the address names", async () => {
+    await render({ runBefore: AT.toISOString(), runBeforeId: "run-019" });
+
+    expect(mocks.listRunsForWorkerPage).toHaveBeenCalledWith(
+      "worker-1",
+      "user-1",
+      { startedAt: AT, id: "run-019" },
+    );
+  });
+
+  /**
+   * **Both halves or neither.** The pair names a position in an ordering whose
+   * tie-break is the id, so half of it is not a position. A broken link is a
+   * broken link — the newest page is the honest answer, not a 404.
+   */
+  it.each([
+    ["only a timestamp", { runBefore: AT.toISOString() }],
+    ["only an id", { runBeforeId: "run-019" }],
+    ["a timestamp that is not a date", { runBefore: "yesterday", runBeforeId: "run-019" }],
+    ["a blank id", { runBefore: AT.toISOString(), runBeforeId: "   " }],
+    ["something else entirely", { page: "2" }],
+  ])("falls back to the newest page given %s", async (_name, query) => {
+    await render(query);
+
+    expect(mocks.listRunsForWorkerPage).toHaveBeenCalledWith(
+      "worker-1",
+      "user-1",
+      null,
+    );
+  });
+
+  it("offers a way further back when there is more", async () => {
+    mocks.listRunsForWorkerPage.mockResolvedValue(
+      runPage([run()], { startedAt: AT, id: "run-019" }),
+    );
+
+    expect(text(await render())).toContain(OLDER);
+  });
+
+  it("offers none when the history ends here", async () => {
+    mocks.listRunsForWorkerPage.mockResolvedValue(runPage([run()]));
+
+    const html = await render();
+
+    expect(text(html)).not.toContain(OLDER);
+    expect(text(html)).not.toContain(LATEST);
+  });
+
+  it("offers the way back only once the reader has gone somewhere", async () => {
+    mocks.listRunsForWorkerPage.mockResolvedValue(runPage([run()]));
+
+    expect(
+      text(await render({ runBefore: AT.toISOString(), runBeforeId: "run-019" })),
+    ).toContain(LATEST);
+  });
+
+  /** A middle page has somewhere to go in both directions. */
+  it("offers both on a page with older runs behind it", async () => {
+    mocks.listRunsForWorkerPage.mockResolvedValue(
+      runPage([run()], { startedAt: AT, id: "run-039" }),
+    );
+
+    const shown = text(
+      await render({ runBefore: AT.toISOString(), runBeforeId: "run-019" }),
+    );
+
+    expect(shown).toContain(LATEST);
+    expect(shown).toContain(OLDER);
+  });
+
+  /**
+   * **Handed over as a query object, so the framework escapes it.** An ISO
+   * timestamp carries colons; a hand-built string would put them in a URL
+   * unencoded. Asserting the structure is what fixes that the encoding is
+   * never ours to get wrong.
+   */
+  it("carries the position as a query for the framework to encode", async () => {
+    mocks.listRunsForWorkerPage.mockResolvedValue(
+      runPage([run()], { startedAt: AT, id: "run-019" }),
+    );
+
+    expect(hrefs(await render())).toContainEqual({
+      pathname: "/dashboard/workers/worker-1",
+      query: {
+        runBefore: "2026-08-10T12:00:00.000Z",
+        runBeforeId: "run-019",
+      },
+    });
+  });
+
+  it("keeps this worker's id in the address it offers", async () => {
+    mocks.listRunsForWorkerPage.mockResolvedValue(
+      runPage([run()], { startedAt: AT, id: "run-019" }),
+    );
+
+    const offered = hrefs(await render()).filter(
+      (href): href is { pathname: string } =>
+        typeof href === "object" && href !== null && "pathname" in href,
+    );
+
+    for (const href of offered) {
+      expect(href.pathname).toBe("/dashboard/workers/worker-1");
+    }
+  });
+
+  it("sends the way back to this worker with nothing appended", async () => {
+    mocks.listRunsForWorkerPage.mockResolvedValue(runPage([run()]));
+
+    const found = hrefs(
+      await render({ runBefore: AT.toISOString(), runBeforeId: "run-019" }),
+    );
+
+    expect(found).toContain("/dashboard/workers/worker-1");
+  });
+
+  it.each(["en", "ja"] as const)("names both ways in %s", async (language) => {
+    mocks.getUserLanguage.mockResolvedValue(language);
+    mocks.listRunsForWorkerPage.mockResolvedValue(
+      runPage([run()], { startedAt: AT, id: "run-039" }),
+    );
+
+    const shown = text(
+      await render({ runBefore: AT.toISOString(), runBeforeId: "run-019" }),
+    );
+
+    expect(shown).toContain(t(language, "worker.detail.olderRuns"));
+    expect(shown).toContain(t(language, "worker.detail.backToLatestRuns"));
   });
 });

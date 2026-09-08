@@ -523,6 +523,8 @@ export const ja: Record<TranslationKey, string> = {
   "worker.detail.updatedAt": "更新日時",
   "worker.detail.watchedPage": "監視中のページ",
   "worker.detail.runHistory": "実行履歴",
+  "worker.detail.olderRuns": "過去の実行を見る",
+  "worker.detail.backToLatestRuns": "最新の実行に戻る",
   "worker.detail.runHistoryEmpty": "この Worker はまだ実行されていません。",
   "worker.detail.dangerZone": "危険な操作",
   "worker.detail.deleteWarning":

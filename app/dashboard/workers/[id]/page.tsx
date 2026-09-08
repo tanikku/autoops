@@ -16,7 +16,11 @@ import { t, type TranslationKey } from "@/lib/i18n";
 import { getDocumentLanguage } from "@/lib/i18n/server";
 import { isRunOverdue } from "@/lib/overview";
 import { getRoutineWithStoredKind } from "@/lib/routines";
-import { listRecentRunsForWorker, summarizeRunsForWorker } from "@/lib/runs";
+import {
+  listRunsForWorkerPage,
+  summarizeRunsForWorker,
+  type WorkerRunCursor,
+} from "@/lib/runs";
 import { requireUserId } from "@/lib/session";
 import { getUserLanguage, getUserTimezone } from "@/lib/users";
 import { getWebsiteSource } from "@/lib/website-sources";
@@ -99,12 +103,39 @@ function Detail({
   );
 }
 
+/**
+ * Where in this worker's history to continue from, or null for the newest.
+ *
+ * **Both halves or neither.** The pair names a position in an ordering whose
+ * tie-break is the id; one without the other is not a position, so it is not
+ * used as one. A malformed value is a broken link rather than an attack — the
+ * filter is scoped by worker and account regardless — so the answer is the
+ * first page, not a 404 and not an error.
+ */
+function readRunCursor(
+  query: Record<string, string | string[] | undefined>,
+): WorkerRunCursor | null {
+  const startedAt = typeof query.runBefore === "string" ? query.runBefore : "";
+  const id = typeof query.runBeforeId === "string" ? query.runBeforeId.trim() : "";
+
+  if (startedAt === "" || id === "") {
+    return null;
+  }
+
+  const at = new Date(startedAt);
+
+  return Number.isNaN(at.getTime()) ? null : { startedAt: at, id };
+}
+
 export default async function WorkerDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { id } = await params;
+  const runCursor = readRunCursor(await searchParams);
   const userId = await requireUserId();
   // A worker owned by someone else is indistinguishable from one that does not
   // exist: both 404, so the id is never confirmed.
@@ -144,9 +175,9 @@ export default async function WorkerDetailPage({
   // summary is counted by the database over every run there is; the list is the
   // newest few, and exists so that a run older than the dashboard's activity
   // list still has somewhere to be reached from.
-  const [runSummary, recentRuns, timezone, language] = await Promise.all([
+  const [runSummary, runPage, timezone, language] = await Promise.all([
     summarizeRunsForWorker(worker.id, userId),
-    listRecentRunsForWorker(worker.id, userId),
+    listRunsForWorkerPage(worker.id, userId, runCursor),
     getUserTimezone(userId),
     getUserLanguage(userId),
   ]);
@@ -302,11 +333,58 @@ export default async function WorkerDetailPage({
               {t(language, "worker.detail.runHistory")}
             </h2>
             <WorkerRunList
-              runs={recentRuns}
+              runs={runPage.runs}
               timezone={timezone}
               language={language}
               now={now}
             />
+
+            {/* **Navigation, not an append.** Each of these loads a different
+                page of the same history on the server, which is why the words
+                say "older" and "latest" rather than "load more" — the list
+                below is replaced, not extended.
+
+                Kept quieter than Run, Edit and the danger zone: reaching an
+                older execution is a way through the history, not a task on
+                this page. */}
+            {runPage.nextCursor === null && runCursor === null ? null : (
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                {runCursor === null ? null : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    nativeButton={false}
+                    render={<Link href={`/dashboard/workers/${worker.id}`} />}
+                  >
+                    {t(language, "worker.detail.backToLatestRuns")}
+                  </Button>
+                )}
+                {runPage.nextCursor === null ? null : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    nativeButton={false}
+                    render={
+                      /* Built as a query object so the timestamp's colons and
+                         the id are escaped by the framework rather than by
+                         hand. */
+                      <Link
+                        href={{
+                          pathname: `/dashboard/workers/${worker.id}`,
+                          query: {
+                            runBefore:
+                              runPage.nextCursor.startedAt.toISOString(),
+                            runBeforeId: runPage.nextCursor.id,
+                          },
+                        }}
+                      />
+                    }
+                  >
+                    {t(language, "worker.detail.olderRuns")}
+                  </Button>
+                )}
+              </div>
+            )}
           </section>
 
           <section className="mt-12 border-t border-border pt-8">

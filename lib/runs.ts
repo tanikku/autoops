@@ -251,23 +251,98 @@ export const WORKER_RUN_HISTORY_LIMIT = 20;
  * Scoped by `routineId` *and* `userId`, so the id in a URL cannot reach another
  * account's runs — the same pairing every other read here uses.
  */
-export async function listRecentRunsForWorker(
+export type WorkerRunCursor = {
+  startedAt: Date;
+  id: string;
+};
+
+/**
+ * One page of a worker's runs, and where the next one starts.
+ *
+ * `nextCursor` is null when there is nothing older left — which is how the page
+ * knows whether to offer a way further back at all.
+ */
+export type WorkerRunPage = {
+  runs: WorkerRun[];
+  nextCursor: WorkerRunCursor | null;
+};
+
+/**
+ * A page of one worker's runs, newest first, with a way to keep going back.
+ *
+ * **The bound stayed; the dead end went.** The list has always been the newest
+ * twenty, which is what keeps the query small. What it did not have was a way
+ * to reach the twenty-first: the rows were in the database with nothing in the
+ * product naming them. Production already had a worker sitting exactly on that
+ * boundary, so the next scheduled run would have pushed its oldest execution
+ * out of reach for good.
+ *
+ * **Seek, not offset.** A `skip` of twenty means "past the twenty newest *at
+ * the moment of asking*", and this list grows at the top while somebody reads
+ * it — a run finishing between two pages would shift everything down and show
+ * page two's first row twice. A cursor names a position in the ordering
+ * instead, so a new run appearing above it changes nothing about where the
+ * older page begins.
+ *
+ * **Two keys, because one is not unique.** `startedAt` is a timestamp, and two
+ * runs of the same worker can share one; ordering by it alone leaves the
+ * database free to return same-instant rows in either order, and a page
+ * boundary landing inside such a group would duplicate one row and lose
+ * another. `id` breaks the tie in the same direction, which makes the sequence
+ * total.
+ *
+ * **The cursor is a position, not a permission.** `routineId` and `userId` are
+ * always in the filter and are never derived from it, so a cursor copied from
+ * somebody else's account selects nothing of theirs — it only says where in
+ * *this* worker's runs to continue. That is also why nothing here looks the
+ * cursor row up first: there is no ownership to establish, and one list query
+ * per page is the whole cost.
+ */
+export async function listRunsForWorkerPage(
   routineId: string,
   userId: string,
+  cursor: WorkerRunCursor | null = null,
   limit: number = WORKER_RUN_HISTORY_LIMIT,
-): Promise<WorkerRun[]> {
+): Promise<WorkerRunPage> {
   const records = await prisma.runHistory.findMany({
-    where: { routineId, userId },
-    orderBy: { startedAt: "desc" },
-    take: limit,
+    where: {
+      routineId,
+      userId,
+      ...(cursor === null
+        ? {}
+        : {
+            OR: [
+              { startedAt: { lt: cursor.startedAt } },
+              { startedAt: cursor.startedAt, id: { lt: cursor.id } },
+            ],
+          }),
+    },
+    orderBy: [{ startedAt: "desc" }, { id: "desc" }],
+    // One more than is shown: the extra row is never rendered, it only answers
+    // whether anything older exists.
+    take: limit + 1,
     select: { id: true, status: true, startedAt: true },
   });
 
-  return records.map((record) => ({
+  const visible = records.slice(0, limit);
+  const runs = visible.map((record) => ({
     id: record.id,
     status: isRunStatus(record.status) ? record.status : "running",
     startedAt: record.startedAt,
   }));
+
+  // **The last row shown, not the one beyond it.** Pointing at the extra row
+  // would make the next page start after it, and the run in between would be
+  // skipped entirely.
+  const last = visible[visible.length - 1];
+
+  return {
+    runs,
+    nextCursor:
+      records.length > limit && last !== undefined
+        ? { startedAt: last.startedAt, id: last.id }
+        : null,
+  };
 }
 
 /**
