@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
   requireProvisionedUserId: vi.fn(),
   getUserLanguage: vi.fn(),
   getUserTimezone: vi.fn(),
-  listCreatorHistoryItems: vi.fn(),
+  listCreatorHistoryPage: vi.fn(),
 }));
 
 vi.mock("@/auth", () => ({ auth: vi.fn(), signIn: vi.fn(), signOut: vi.fn() }));
@@ -33,7 +33,7 @@ vi.mock("@/lib/users", () => ({
   getUserTimezone: mocks.getUserTimezone,
 }));
 vi.mock("@/lib/creator/review", () => ({
-  listCreatorHistoryItems: mocks.listCreatorHistoryItems,
+  listCreatorHistoryPage: mocks.listCreatorHistoryPage,
 }));
 vi.mock("@/components/dashboard-nav", () => ({ DashboardNav: () => null }));
 
@@ -64,14 +64,25 @@ const item = {
   ],
 };
 
-const render = async () => renderToStaticMarkup(await CreatorHistoryPage());
+const render = async (
+  query: Record<string, string | string[] | undefined> = {},
+) =>
+  renderToStaticMarkup(
+    await CreatorHistoryPage({ searchParams: Promise.resolve(query) }),
+  );
+
+/** One page of answered analyses, as the read layer hands it over. */
+const historyPage = (
+  items: unknown[] = [],
+  nextCursor: { analyzedAt: Date; contentItemId: string } | null = null,
+) => ({ items, nextCursor });
 
 beforeEach(() => {
   mocks.requireUserId.mockReset().mockResolvedValue(USER);
   mocks.requireProvisionedUserId.mockReset().mockResolvedValue(USER);
   mocks.getUserLanguage.mockReset().mockResolvedValue("en");
   mocks.getUserTimezone.mockReset().mockResolvedValue("Asia/Tokyo");
-  mocks.listCreatorHistoryItems.mockReset().mockResolvedValue([]);
+  mocks.listCreatorHistoryPage.mockReset().mockResolvedValue(historyPage());
 });
 
 describe("who it reads for", () => {
@@ -86,7 +97,7 @@ describe("who it reads for", () => {
 
     await render();
 
-    expect(mocks.listCreatorHistoryItems).toHaveBeenCalledWith("user-9");
+    expect(mocks.listCreatorHistoryPage).toHaveBeenCalledWith("user-9", null);
     expect(mocks.getUserLanguage).toHaveBeenCalledWith("user-9");
     expect(mocks.getUserTimezone).toHaveBeenCalledWith("user-9");
   });
@@ -114,7 +125,7 @@ describe("with nothing answered yet", () => {
 
 describe("with something answered", () => {
   beforeEach(() => {
-    mocks.listCreatorHistoryItems.mockResolvedValue([item]);
+    mocks.listCreatorHistoryPage.mockResolvedValue(historyPage([item]));
   });
 
   it("names the screen and says what it holds", async () => {
@@ -184,9 +195,9 @@ describe("with something answered", () => {
   });
 
   it("calls an untitled piece untitled rather than blank", async () => {
-    mocks.listCreatorHistoryItems.mockResolvedValue([
-      { ...item, title: null },
-    ]);
+    mocks.listCreatorHistoryPage.mockResolvedValue(
+      historyPage([{ ...item, title: null }]),
+    );
 
     expect(await render()).toContain(t("en", "creator.inbox.untitled"));
   });
@@ -222,7 +233,7 @@ describe("the source of an answered analysis", () => {
   });
 
   it("names the page and links to it", async () => {
-    mocks.listCreatorHistoryItems.mockResolvedValue([fromUrl()]);
+    mocks.listCreatorHistoryPage.mockResolvedValue(historyPage([fromUrl()]));
 
     const html = await render();
 
@@ -232,7 +243,7 @@ describe("the source of an answered analysis", () => {
   });
 
   it("opens it away from the history, without a referrer, and lets it wrap", async () => {
-    mocks.listCreatorHistoryItems.mockResolvedValue([fromUrl()]);
+    mocks.listCreatorHistoryPage.mockResolvedValue(historyPage([fromUrl()]));
 
     const link = (await render()).match(
       new RegExp(`<a[^>]*href="${PAGE}"[^>]*>`),
@@ -246,22 +257,22 @@ describe("the source of an answered analysis", () => {
   });
 
   it("says nothing about a source for a pasted piece", async () => {
-    mocks.listCreatorHistoryItems.mockResolvedValue([item]);
+    mocks.listCreatorHistoryPage.mockResolvedValue(historyPage([item]));
 
     expect(await render()).not.toContain(t("en", "creator.source.page"));
   });
 
   /** The record is what was written down, not what the address says today. */
   it("shows the address without asking whether it still works", async () => {
-    mocks.listCreatorHistoryItems.mockResolvedValue([fromUrl()]);
+    mocks.listCreatorHistoryPage.mockResolvedValue(historyPage([fromUrl()]));
 
     await render();
 
-    expect(mocks.listCreatorHistoryItems).toHaveBeenCalledTimes(1);
+    expect(mocks.listCreatorHistoryPage).toHaveBeenCalledTimes(1);
   });
 
   it("leaves the timestamps exactly where they were", async () => {
-    mocks.listCreatorHistoryItems.mockResolvedValue([fromUrl()]);
+    mocks.listCreatorHistoryPage.mockResolvedValue(historyPage([fromUrl()]));
 
     const html = await render();
 
@@ -310,5 +321,191 @@ describe("what the tab says", () => {
 
       expect((await generateMetadata()).title).toContain("Koqentra");
     }
+  });
+});
+
+/**
+ * Reaching an answer older than the twenty this page shows.
+ *
+ * **The rows were always there; the route was not.** The read has always been
+ * bounded to twenty, which is what keeps it one query — but nothing named the
+ * twenty-first, so an answer somebody gave was kept and unreachable.
+ *
+ * **A position in the URL, not a page number.** The record grows at the top as
+ * new analyses are answered; counting rows from the newest would shift under a
+ * reader mid-way through.
+ */
+describe("reaching older answers", () => {
+  const AT = new Date("2026-09-01T01:02:03.000Z");
+  const OLDER = "Older answers";
+  const LATEST = "Back to latest";
+
+  it("reads the newest page when the address says nothing", async () => {
+    await render();
+
+    expect(mocks.listCreatorHistoryPage).toHaveBeenCalledWith(USER, null);
+  });
+
+  it("continues from the position the address names", async () => {
+    await render({
+      historyBefore: AT.toISOString(),
+      historyBeforeId: "content-019",
+    });
+
+    expect(mocks.listCreatorHistoryPage).toHaveBeenCalledWith(USER, {
+      analyzedAt: AT,
+      contentItemId: "content-019",
+    });
+  });
+
+  /**
+   * **Both halves or neither.** The pair names a position in an ordering whose
+   * tie-break is the id, so half of it is not a position. A broken link is a
+   * broken link — the newest page is the honest answer, not a 404.
+   */
+  it.each([
+    ["only a timestamp", { historyBefore: AT.toISOString() }],
+    ["only an id", { historyBeforeId: "content-019" }],
+    [
+      "a timestamp that is not a date",
+      { historyBefore: "last tuesday", historyBeforeId: "content-019" },
+    ],
+    [
+      "a blank id",
+      { historyBefore: AT.toISOString(), historyBeforeId: "   " },
+    ],
+    ["something else entirely", { page: "2" }],
+  ])("falls back to the newest page given %s", async (_name, query) => {
+    await render(query);
+
+    expect(mocks.listCreatorHistoryPage).toHaveBeenCalledWith(USER, null);
+  });
+
+  it("offers a way further back when there is more", async () => {
+    mocks.listCreatorHistoryPage.mockResolvedValue(
+      historyPage([item], { analyzedAt: AT, contentItemId: "content-019" }),
+    );
+
+    expect(await render()).toContain(OLDER);
+  });
+
+  it("offers none when the record ends here", async () => {
+    mocks.listCreatorHistoryPage.mockResolvedValue(historyPage([item]));
+
+    const html = await render();
+
+    expect(html).not.toContain(OLDER);
+    expect(html).not.toContain(LATEST);
+  });
+
+  it("offers the way back only once the reader has gone somewhere", async () => {
+    mocks.listCreatorHistoryPage.mockResolvedValue(historyPage([item]));
+
+    const html = await render({
+      historyBefore: AT.toISOString(),
+      historyBeforeId: "content-019",
+    });
+
+    expect(html).toContain(LATEST);
+  });
+
+  /** A middle page has somewhere to go in both directions. */
+  it("offers both on a page with older answers behind it", async () => {
+    mocks.listCreatorHistoryPage.mockResolvedValue(
+      historyPage([item], { analyzedAt: AT, contentItemId: "content-039" }),
+    );
+
+    const html = await render({
+      historyBefore: AT.toISOString(),
+      historyBeforeId: "content-019",
+    });
+
+    expect(html).toContain(LATEST);
+    expect(html).toContain(OLDER);
+  });
+
+  /**
+   * **A cursor page can legitimately be empty**, and somebody who has walked
+   * back through the record still needs the way out — so the control is not
+   * inside the empty state.
+   */
+  it("still offers the way back from an empty cursor page", async () => {
+    mocks.listCreatorHistoryPage.mockResolvedValue(historyPage([]));
+
+    const html = await render({
+      historyBefore: AT.toISOString(),
+      historyBeforeId: "content-019",
+    });
+
+    expect(html).toContain(LATEST);
+  });
+
+  /**
+   * **Escaped by the framework, not by hand.** An ISO timestamp carries colons,
+   * and a hand-built query string would put them in a URL unencoded.
+   */
+  it("carries the position in the address, encoded", async () => {
+    mocks.listCreatorHistoryPage.mockResolvedValue(
+      historyPage([item], { analyzedAt: AT, contentItemId: "content-019" }),
+    );
+
+    const html = await render();
+
+    expect(html).toContain("historyBefore=2026-09-01T01%3A02%3A03.000Z");
+    expect(html).toContain("historyBeforeId=content-019");
+    expect(html).toContain("/creator/history?");
+  });
+
+  it("sends the way back to the record with nothing appended", async () => {
+    mocks.listCreatorHistoryPage.mockResolvedValue(historyPage([item]));
+
+    const html = await render({
+      historyBefore: AT.toISOString(),
+      historyBeforeId: "content-019",
+    });
+
+    expect(html).toContain('href="/creator/history"');
+  });
+
+  it.each(["en", "ja"] as const)("names both ways in %s", async (language) => {
+    mocks.getUserLanguage.mockResolvedValue(language);
+    mocks.listCreatorHistoryPage.mockResolvedValue(
+      historyPage([item], { analyzedAt: AT, contentItemId: "content-039" }),
+    );
+
+    const html = await render({
+      historyBefore: AT.toISOString(),
+      historyBeforeId: "content-019",
+    });
+
+    expect(html).toContain(t(language, "creator.history.olderAnswers"));
+    expect(html).toContain(t(language, "creator.history.backToLatest"));
+  });
+
+  /**
+   * **Still a record, not a workspace.** Feedback is append-only, so there is
+   * nothing here to undo or redo — and paging back through it must not have
+   * quietly introduced somewhere to write from.
+   */
+  it("adds nothing that writes", async () => {
+    mocks.listCreatorHistoryPage.mockResolvedValue(
+      historyPage([item], { analyzedAt: AT, contentItemId: "content-019" }),
+    );
+
+    const html = await render();
+
+    expect(html).not.toContain("<form");
+    expect(html).not.toContain("<input");
+    expect(html).not.toContain("<textarea");
+    expect(html).not.toContain("<button");
+  });
+
+  it("still never reaches the provisioning boundary", async () => {
+    await render({
+      historyBefore: AT.toISOString(),
+      historyBeforeId: "content-019",
+    });
+
+    expect(mocks.requireProvisionedUserId).not.toHaveBeenCalled();
   });
 });

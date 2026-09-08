@@ -531,18 +531,66 @@ function toHistoryDecision(
  *
  * **One bounded query.** Everything a card shows is selected here, so rendering
  * twenty analyses costs one read rather than one per item.
+ *
+ * **Bounded is not the same as final.** The page shows twenty, which is what
+ * keeps the read small; what it did not have was a way to the twenty-first.
+ * Those rows were in the database with nothing on any screen naming them — the
+ * record of an answer somebody gave, kept and unreachable.
+ *
+ * **Seek, not offset.** A `skip` of twenty means "past the twenty newest *at
+ * the moment of asking*", and this list grows at the top: an analysis run
+ * between two pages would shift everything down and repeat a row. A cursor
+ * names a position in the ordering instead, so something new appearing above
+ * it changes nothing about where the older page begins.
+ *
+ * **Two keys, because one is not unique.** Two analyses can share a
+ * `createdAt`, and ordering on it alone leaves the database free to return
+ * same-instant rows in either order — a page boundary inside such a group
+ * would show one twice and lose another. `id` breaks the tie in the same
+ * direction.
+ *
+ * **The cursor is a position, not a permission.** `userId` stays at the top of
+ * the filter and is never derived from the cursor, so values copied from
+ * another account name a place in *this* account's ordering and nothing more.
+ * That is also why the cursor row is never looked up first: there is no
+ * ownership to establish, and one query per page is the whole cost.
  */
-export async function listCreatorHistoryItems(
+export type CreatorHistoryCursor = {
+  analyzedAt: Date;
+  contentItemId: string;
+};
+
+/** One page of answered analyses, and where the next one starts. */
+export type CreatorHistoryPage = {
+  items: CreatorHistoryItem[];
+  nextCursor: CreatorHistoryCursor | null;
+};
+
+export async function listCreatorHistoryPage(
   userId: string,
+  cursor: CreatorHistoryCursor | null = null,
   client: DbClient = prisma,
-): Promise<CreatorHistoryItem[]> {
+): Promise<CreatorHistoryPage> {
   const rows = (await client.contentItem.findMany({
     where: {
       userId,
       decisions: { some: { userId, feedback: { isNot: null } } },
+      ...(cursor === null
+        ? {}
+        : {
+            OR: [
+              { createdAt: { lt: cursor.analyzedAt } },
+              {
+                createdAt: cursor.analyzedAt,
+                id: { lt: cursor.contentItemId },
+              },
+            ],
+          }),
     },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take: CREATOR_HISTORY_ITEM_LIMIT,
+    // One more than is shown: the extra row is never rendered, it only answers
+    // whether anything older exists.
+    take: CREATOR_HISTORY_ITEM_LIMIT + 1,
     select: {
       id: true,
       title: true,
@@ -574,7 +622,9 @@ export async function listCreatorHistoryItems(
     },
   })) as HistoryItemRow[];
 
-  return rows.map((row) => {
+  const visible = rows.slice(0, CREATOR_HISTORY_ITEM_LIMIT);
+
+  const items = visible.map((row) => {
     if (row.userId !== userId) {
       throw new InvalidCreatorReviewDataError(row.id, "item-owner-mismatch");
     }
@@ -600,4 +650,17 @@ export async function listCreatorHistoryItems(
       decisions,
     };
   });
+
+  // **The last analysis shown, not the one beyond it.** Pointing at the
+  // twenty-first row would make the next page start after it, and the analysis
+  // in between would be skipped entirely.
+  const last = items[items.length - 1];
+
+  return {
+    items,
+    nextCursor:
+      rows.length > CREATOR_HISTORY_ITEM_LIMIT && last !== undefined
+        ? { analyzedAt: last.analyzedAt, contentItemId: last.contentItemId }
+        : null,
+  };
 }

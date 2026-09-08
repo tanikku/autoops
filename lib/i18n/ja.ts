@@ -388,6 +388,8 @@ export const ja: Record<TranslationKey, string> = {
 
   /** 回答済みの判断を見るだけの画面。書き換えの導線は置かない。 */
   "creator.history.title": "回答履歴",
+  "creator.history.olderAnswers": "過去の回答を見る",
+  "creator.history.backToLatest": "最新の回答に戻る",
   "creator.history.metadataDescription": "すでに回答した判断を表示します。",
   "creator.history.description":
     "すでに回答した Koqentra の判断を、新しい分析から順に確認できます。",

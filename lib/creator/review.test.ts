@@ -22,11 +22,23 @@ const {
   CREATOR_HISTORY_ITEM_LIMIT,
   CREATOR_REVIEW_ITEM_LIMIT,
   isInvalidCreatorReviewData,
-  listCreatorHistoryItems,
+  listCreatorHistoryPage,
   listCreatorReviewItems,
 } = await import("@/lib/creator/review");
 
 const USER = "google-sub-1";
+
+/**
+ * The items of one history page.
+ *
+ * **The read now answers two questions**, and most of the tests below are about
+ * the first: what a card is allowed to show, and what a row that cannot be read
+ * is refused for. Where the next page begins has its own block.
+ */
+const listCreatorHistoryItems = async (
+  userId: string,
+  client?: Parameters<typeof listCreatorHistoryPage>[2],
+) => (await listCreatorHistoryPage(userId, null, client)).items;
 const OTHER = "google-sub-2";
 
 /** One stored decision, with only the parts a test cares about spelled out. */
@@ -374,7 +386,9 @@ describe("what the history asks for", () => {
     const query = findMany.mock.calls[0][0];
 
     expect(query.orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
-    expect(query.take).toBe(CREATOR_HISTORY_ITEM_LIMIT);
+    // One more than is shown: the extra row only answers whether the record
+    // continues past this page.
+    expect(query.take).toBe(CREATOR_HISTORY_ITEM_LIMIT + 1);
     expect(CREATOR_HISTORY_ITEM_LIMIT).toBe(20);
   });
 
@@ -728,5 +742,170 @@ describe("where the material came from", () => {
     await listCreatorReviewItems(USER);
 
     expect(findMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Reaching an answer older than the twenty this page shows.
+ *
+ * **The rows were always there; the route was not.** The read has always been
+ * bounded to twenty, which is what keeps it one query — but nothing named the
+ * twenty-first, so an answer somebody gave was kept and unreachable.
+ *
+ * **Seek, not offset.** `skip: 20` means "past the twenty newest *right now*",
+ * and this list grows at the top: an analysis answered between two pages would
+ * shift everything down and repeat a row. A cursor names a position in the
+ * ordering, so something new above it changes nothing.
+ */
+describe("reaching further back than the first page", () => {
+  const answeredItem = (id: string, createdAt: Date = ANALYZED_AT) =>
+    item({ id, createdAt, decisions: [answeredDecision()] });
+
+  const rows = (count: number, createdAt: Date = ANALYZED_AT) =>
+    Array.from({ length: count }, (_, index) =>
+      answeredItem(`content-${String(index).padStart(3, "0")}`, createdAt),
+    );
+
+  it("offers nowhere further back when the record fits", async () => {
+    findMany.mockResolvedValue(rows(20));
+
+    const { items, nextCursor } = await listCreatorHistoryPage(USER);
+
+    expect(items).toHaveLength(20);
+    expect(nextCursor).toBeNull();
+  });
+
+  it("offers nowhere further back when nothing has been answered", async () => {
+    findMany.mockResolvedValue([]);
+
+    const { items, nextCursor } = await listCreatorHistoryPage(USER);
+
+    expect(items).toHaveLength(0);
+    expect(nextCursor).toBeNull();
+  });
+
+  /**
+   * **The last analysis shown, not the one beyond it.** Pointing the cursor at
+   * the twenty-first row would make the next page start *after* it, and the
+   * analysis in between would be skipped entirely.
+   */
+  it("points at the last analysis it showed, not the one past it", async () => {
+    findMany.mockResolvedValue(rows(21));
+
+    const { items, nextCursor } = await listCreatorHistoryPage(USER);
+
+    expect(items).toHaveLength(20);
+    expect(items[19].contentItemId).toBe("content-019");
+    expect(nextCursor).toEqual({
+      analyzedAt: ANALYZED_AT,
+      contentItemId: "content-019",
+    });
+  });
+
+  it("seeks past that position rather than counting rows", async () => {
+    findMany.mockResolvedValue([]);
+
+    await listCreatorHistoryPage(USER, {
+      analyzedAt: ANALYZED_AT,
+      contentItemId: "content-019",
+    });
+
+    const query = findMany.mock.calls[0][0];
+
+    expect(query.where.OR).toEqual([
+      { createdAt: { lt: ANALYZED_AT } },
+      { createdAt: ANALYZED_AT, id: { lt: "content-019" } },
+    ]);
+    expect(query).not.toHaveProperty("skip");
+    expect(query).not.toHaveProperty("cursor");
+  });
+
+  /**
+   * Same instant, so only the id separates them. Without the second clause the
+   * boundary analysis would come back on both pages.
+   */
+  it("continues within a group of analyses sharing one instant", async () => {
+    findMany.mockResolvedValue([]);
+
+    await listCreatorHistoryPage(USER, {
+      analyzedAt: ANALYZED_AT,
+      contentItemId: "content-019",
+    });
+
+    const { OR } = findMany.mock.calls[0][0].where;
+
+    expect(OR[1]).toEqual({ createdAt: ANALYZED_AT, id: { lt: "content-019" } });
+  });
+
+  /**
+   * **The whole point, as one assertion.** Page two begins strictly older than
+   * the last row of page one, so the boundary analysis appears once and the one
+   * after it is not skipped.
+   */
+  it("leaves no duplicate and no gap at the boundary", async () => {
+    const record = rows(40);
+
+    findMany.mockImplementation(async (args: Record<string, unknown>) => {
+      const where = args.where as { OR?: { id?: { lt: string } }[] };
+      const after = where.OR
+        ? record.findIndex((row) => row.id === where.OR?.[1]?.id?.lt)
+        : -1;
+
+      return record.slice(after + 1, after + 1 + (args.take as number));
+    });
+
+    const first = await listCreatorHistoryPage(USER);
+    const second = await listCreatorHistoryPage(USER, first.nextCursor);
+
+    const seen = [...first.items, ...second.items].map(
+      (entry) => entry.contentItemId,
+    );
+
+    expect(first.items[19].contentItemId).toBe("content-019");
+    expect(second.items[0].contentItemId).toBe("content-020");
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(seen).toEqual(record.map((row) => row.id));
+  });
+
+  /**
+   * **A cursor is a position, not a permission.** Values copied from another
+   * account name a place in *this* account's ordering and nothing more — the
+   * filter still says whose record this is, at every level.
+   */
+  it("keeps the owner in the filter whatever the cursor says", async () => {
+    findMany.mockResolvedValue([]);
+
+    await listCreatorHistoryPage(USER, {
+      analyzedAt: new Date("2030-01-01T00:00:00.000Z"),
+      contentItemId: "somebody-elses-analysis",
+    });
+
+    const { where } = findMany.mock.calls[0][0];
+
+    expect(where.userId).toBe(USER);
+    expect(where.decisions.some.userId).toBe(USER);
+    expect(where.decisions.some.feedback).toEqual({ isNot: null });
+  });
+
+  /** One list query per page: nothing looks the cursor row up first. */
+  it("reads the record once and nothing else", async () => {
+    findMany.mockResolvedValue([]);
+
+    await listCreatorHistoryPage(USER, {
+      analyzedAt: ANALYZED_AT,
+      contentItemId: "content-019",
+    });
+
+    expect(findMany).toHaveBeenCalledTimes(1);
+  });
+
+  /** The inbox is a different read with a different bound, and did not move. */
+  it("leaves the inbox's own bound alone", async () => {
+    findMany.mockResolvedValue([]);
+
+    await listCreatorReviewItems(USER);
+
+    expect(findMany.mock.calls[0][0].take).toBe(CREATOR_REVIEW_ITEM_LIMIT);
+    expect(CREATOR_REVIEW_ITEM_LIMIT).toBe(10);
   });
 });

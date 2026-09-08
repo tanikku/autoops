@@ -3,7 +3,10 @@ import Link from "next/link";
 import { CreatorHistoryDecisionCard } from "@/components/creator-history-decision-card";
 import { DashboardNav } from "@/components/dashboard-nav";
 import { Button } from "@/components/ui/button";
-import { listCreatorHistoryItems } from "@/lib/creator/review";
+import {
+  type CreatorHistoryCursor,
+  listCreatorHistoryPage,
+} from "@/lib/creator/review";
 import { formatDateTime } from "@/lib/datetime";
 import { t } from "@/lib/i18n";
 import { getDocumentLanguage } from "@/lib/i18n/server";
@@ -55,13 +58,44 @@ export const dynamic = "force-dynamic";
  * itself; the note below says so, because two headings with the same title
  * would otherwise read as a bug.
  */
-export default async function CreatorHistoryPage() {
+/**
+ * Where in the record to continue from, or null for the newest answers.
+ *
+ * **Both halves or neither.** The pair names a position in an ordering whose
+ * tie-break is the id, so half of it is not a position. A malformed value is a
+ * broken link rather than an attack — the query is scoped to this account
+ * regardless — so the answer is the first page, not a 404 and not an error.
+ */
+function readHistoryCursor(
+  query: Record<string, string | string[] | undefined>,
+): CreatorHistoryCursor | null {
+  const analyzedAt =
+    typeof query.historyBefore === "string" ? query.historyBefore : "";
+  const contentItemId =
+    typeof query.historyBeforeId === "string" ? query.historyBeforeId.trim() : "";
+
+  if (analyzedAt === "" || contentItemId === "") {
+    return null;
+  }
+
+  const at = new Date(analyzedAt);
+
+  return Number.isNaN(at.getTime()) ? null : { analyzedAt: at, contentItemId };
+}
+
+export default async function CreatorHistoryPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const userId = await requireUserId();
-  const [language, timezone, items] = await Promise.all([
+  const cursor = readHistoryCursor(await searchParams);
+  const [language, timezone, page] = await Promise.all([
     getUserLanguage(userId),
     getUserTimezone(userId),
-    listCreatorHistoryItems(userId),
+    listCreatorHistoryPage(userId, cursor),
   ]);
+  const items = page.items;
 
   return (
     <div className="flex flex-1 flex-col bg-background">
@@ -181,6 +215,51 @@ export default async function CreatorHistoryPage() {
               ))}
             </div>
           </>
+        )}
+
+        {/* **Navigation, not an append.** Each of these loads a different page
+            of the same record on the server, which is why the words say
+            "older" and "latest" rather than "load more" — the list above is
+            replaced, not extended.
+
+            **Outside the empty state on purpose.** A cursor page can legitimately
+            come back with nothing on it, and somebody who has walked back
+            through the record still needs the way out. */}
+        {page.nextCursor === null && cursor === null ? null : (
+          <div className="mt-8 flex flex-wrap items-center gap-2">
+            {cursor === null ? null : (
+              <Button
+                variant="ghost"
+                size="sm"
+                nativeButton={false}
+                render={<Link href="/creator/history" />}
+              >
+                {t(language, "creator.history.backToLatest")}
+              </Button>
+            )}
+            {page.nextCursor === null ? null : (
+              <Button
+                variant="ghost"
+                size="sm"
+                nativeButton={false}
+                render={
+                  /* Built as a query object so the timestamp's colons and the
+                     id are escaped by the framework rather than by hand. */
+                  <Link
+                    href={{
+                      pathname: "/creator/history",
+                      query: {
+                        historyBefore: page.nextCursor.analyzedAt.toISOString(),
+                        historyBeforeId: page.nextCursor.contentItemId,
+                      },
+                    }}
+                  />
+                }
+              >
+                {t(language, "creator.history.olderAnswers")}
+              </Button>
+            )}
+          </div>
         )}
       </main>
     </div>

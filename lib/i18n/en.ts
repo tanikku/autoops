@@ -611,6 +611,14 @@ Write nothing that is not in the material. Where a section has nothing to draw o
    * both screens at once — the two show different halves of the same analysis.
    */
   "creator.history.title": "Answer history",
+  /**
+   * **"Older answers", not "Load more".** Following this is a navigation to a
+   * different page of the record, not an append to the list already on screen
+   * — and somebody told the list would grow would be looking for entries that
+   * are no longer there.
+   */
+  "creator.history.olderAnswers": "Older answers",
+  "creator.history.backToLatest": "Back to latest",
   "creator.history.description":
     "The judgements you have already answered, newest analysis first.",
   "creator.history.metadataDescription":
