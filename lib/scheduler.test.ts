@@ -168,3 +168,86 @@ describe("how much of the backlog one tick takes", () => {
     expect(await getDueWorkers(NOW)).toHaveLength(5);
   });
 });
+
+/**
+ * What a tick looks like once more than one person is using AutoOps.
+ *
+ * **The cap is on the tick, not on the account**, and that is the whole of the
+ * fairness story: five accounts with two due workers each produce ten slots,
+ * and a tick takes the five that have been waiting longest whoever owns them.
+ * Nobody is served first because of who they are, and nobody is served first
+ * because they asked for more — a busy account's extra workers are simply
+ * further down the same queue.
+ *
+ * **Not round-robin, and these do not make it one.** Per-account turn-taking
+ * would be a different scheduler with a different failure mode; what is fixed
+ * here is the behaviour that exists, so that a later change to it is a decision
+ * somebody makes rather than one that happens.
+ */
+describe("a tick with several accounts waiting", () => {
+  /** Five owners, two workers each, every slot already past. */
+  function tenDueWorkers() {
+    return Array.from({ length: 10 }, (_, index) => {
+      const owner = Math.floor(index / 2) + 1;
+
+      return dueRecord({
+        id: `worker-${String(index).padStart(2, "0")}`,
+        userId: `user-${owner}`,
+        // A minute apart, oldest first, so "waiting longest" is unambiguous.
+        nextRunAt: new Date(Date.UTC(2026, 7, 10, 8, 50 + index)),
+      });
+    });
+  }
+
+  /**
+   * **Ten due, five taken, and the five are the oldest.** The other five keep
+   * their slots — nothing was claimed for them — so the next tick finds them
+   * exactly where they were, at the front of the same queue.
+   */
+  it("takes the five oldest slots, whoever they belong to", async () => {
+    const due = tenDueWorkers();
+    // The query itself does the ordering and the cap; the double replaces
+    // PostgreSQL doing so, which is what makes this about the request.
+    findMany.mockImplementation(async (args: { take: number }) =>
+      [...due]
+        .sort((a, b) => a.nextRunAt.getTime() - b.nextRunAt.getTime())
+        .slice(0, args.take),
+    );
+
+    const selected = await getDueWorkers(NOW);
+    const owners = new Set(selected.map((worker) => worker.userId));
+
+    expect(selected).toHaveLength(MAX_DISPATCHES_PER_TICK);
+    expect(selected.map((worker) => worker.id)).toEqual([
+      "worker-00",
+      "worker-01",
+      "worker-02",
+      "worker-03",
+      "worker-04",
+    ]);
+    // Three accounts in the first five, which is what "oldest first" produces
+    // here — the point being that it is not one account's five.
+    expect(owners.size).toBeGreaterThan(1);
+  });
+
+  /**
+   * **The scheduler is the one read in AutoOps that is deliberately not an
+   * account's.** Everything a person can reach is scoped by `userId`, several
+   * of them twice over; this runs on behalf of nobody and must see every due
+   * worker there is.
+   *
+   * Scoping it to an account would not look like a leak — it would look like
+   * workers quietly never running, for everyone but whoever the filter named.
+   * That is the regression this exists to catch, and it is a different claim
+   * from the shape assertion above: this one names the hazard, so a filter
+   * added at any depth fails here rather than only where the whole object is
+   * compared.
+   */
+  it("never narrows the query to one account", async () => {
+    const where = (await queryFor()).where as Record<string, unknown>;
+
+    expect(where).not.toHaveProperty("userId");
+    expect(where).not.toHaveProperty("user");
+    expect(JSON.stringify(where)).not.toContain("userId");
+  });
+});

@@ -112,6 +112,81 @@ describe("ensureUser", () => {
     expect(create).not.toHaveProperty("language");
     expect(refreshed).not.toHaveProperty("language");
   });
+
+  /**
+   * Two first writes arriving together, for the same account.
+   *
+   * **The row is created at the provisioning boundary rather than at sign-in**,
+   * so the first thing somebody does after signing in is what creates it — and
+   * two tabs, or a form submitted twice, can reach that boundary at once. What
+   * makes that survivable is that the write is an upsert addressed by the
+   * primary key: both calls name the same row, so the second finds what the
+   * first made instead of trying to make a second one.
+   *
+   * **What this fixes is the shape of the request, not PostgreSQL's answer to
+   * it.** The database is replaced here, so nothing below observes a real
+   * conflict being resolved; it would still pass against an engine that had no
+   * upsert at all. What it catches is the regression that would make the
+   * engine's behaviour matter — a `create` where an upsert used to be, or a
+   * read-then-write pair with a gap between them for the other call to land
+   * in.
+   */
+  it("addresses one row by id however many first writes arrive at once", async () => {
+    const person = { id: USER, email: "someone@example.com" };
+
+    await Promise.all([
+      ensureUser(person),
+      ensureUser(person),
+      ensureUser(person),
+    ]);
+
+    expect(upsert).toHaveBeenCalledTimes(3);
+    // Nothing looked the row up first: a read outside the write is the gap.
+    expect(findUnique).not.toHaveBeenCalled();
+
+    for (const [args] of upsert.mock.calls as [
+      { where: { id: string }; create: { id: string } },
+    ][]) {
+      expect(args.where).toEqual({ id: USER });
+      expect(args.create.id).toBe(USER);
+    }
+  });
+
+  /**
+   * Five different people signing in for the first time at once.
+   *
+   * **Each names its own row and nothing else.** The id is the Google account
+   * id, which is also the key every owned row is scoped by — so a provisioning
+   * write that reached across accounts would not be a duplicate row, it would
+   * be one person's settings landing on another's account.
+   */
+  it("keeps five accounts' first writes apart", async () => {
+    const people = [1, 2, 3, 4, 5].map((n) => ({
+      id: `google-sub-${n}`,
+      email: `someone-${n}@example.com`,
+    }));
+
+    await Promise.all(people.map((person) => ensureUser(person)));
+
+    expect(upsert).toHaveBeenCalledTimes(5);
+
+    const addressed = (upsert.mock.calls as [{ where: { id: string } }][]).map(
+      ([args]) => args.where.id,
+    );
+
+    expect(new Set(addressed).size).toBe(5);
+    expect([...addressed].sort()).toEqual(people.map((person) => person.id));
+
+    // The email written is the one that arrived with that id, not whichever
+    // call happened to finish last.
+    for (const [args] of upsert.mock.calls as [
+      { where: { id: string }; create: { email: string } },
+    ][]) {
+      const person = people.find((candidate) => candidate.id === args.where.id);
+
+      expect(args.create.email).toBe(person?.email);
+    }
+  });
 });
 
 describe("setUserTimezone", () => {

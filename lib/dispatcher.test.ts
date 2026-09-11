@@ -16,10 +16,16 @@ import type { DueWorker } from "@/lib/scheduler";
  * covered, and letting the real arithmetic run means the value handed to
  * `claimRoutineSlot` is the one production would compute.
  *
- * There is no assertion here that workers run one at a time. Nothing depends
- * on it: the result is the same set either way, and pinning it would turn an
- * implementation detail into a contract that a later change to concurrency
- * would have to break before it could be considered.
+ * **Workers running one at a time was left unpinned here, and is not any
+ * more.** The original reason stands on its own terms — the result is the same
+ * set either way, and a contract written around an implementation detail is
+ * one a later change has to break before it can be considered. What changed is
+ * that AutoOps now has more than one account in it. A tick draws from every
+ * owner at once, so "one at a time" is what keeps one account's slow worker
+ * from being the reason another's was skipped, and what makes the execution
+ * lease the only thing deciding whether a worker is already running. That is
+ * worth a test even though changing it later remains allowed: the point is
+ * that somebody decides to, rather than finding out afterwards.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -112,6 +118,77 @@ describe("dispatchDueWorkers", () => {
 
     expect(mocks.acquireManualRunSlot).not.toHaveBeenCalled();
     expect(mocks.consumeManualRunQuota).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Three owners in one tick, and each worker finished with before the next is
+   * started.
+   *
+   * **The claim and the hand-off belong to the same worker.** Interleaved, a
+   * slot won for one account could be followed by a hand-off of another's —
+   * and the pairing is what makes `dispatched` a list of workers that were
+   * actually claimed rather than a count that happens to match.
+   *
+   * The hand-off resolves on a later turn of the event loop, so a dispatcher
+   * that started them together would show both claims before either
+   * enqueue. Ownership is mixed deliberately: whatever orders this tick, it is
+   * not who the workers belong to.
+   */
+  it("finishes with one account's worker before starting another's", async () => {
+    mocks.getDueWorkers.mockResolvedValue([
+      due("worker-1", { userId: "user-1" }),
+      due("worker-2", { userId: "user-2" }),
+      due("worker-3", { userId: "user-3" }),
+    ]);
+    mocks.claimRoutineSlot.mockImplementation(async (id: string) => {
+      mocks.calls.push(`claim:${id}`);
+      return true;
+    });
+    mocks.enqueueRoutine.mockImplementation(async (id: string) => {
+      // Two turns, so an overlapping tick has somewhere to show itself.
+      await Promise.resolve();
+      await Promise.resolve();
+      mocks.calls.push(`enqueue:${id}`);
+      return { status: "completed" };
+    });
+
+    const result = await dispatchDueWorkers(NOW);
+
+    expect(mocks.calls).toEqual([
+      "claim:worker-1",
+      "enqueue:worker-1",
+      "claim:worker-2",
+      "enqueue:worker-2",
+      "claim:worker-3",
+      "enqueue:worker-3",
+    ]);
+    expect(result.dispatched).toEqual(["worker-1", "worker-2", "worker-3"]);
+  });
+
+  /**
+   * **One account's refused worker is one worker, not the end of the tick.**
+   * A worker already running loses its slot and is skipped; everything after
+   * it in the queue belongs to other people, and stopping there would let one
+   * account's long-running worker hold up everybody else's schedule — with
+   * nothing on any screen to say why.
+   */
+  it("keeps going for other accounts when one worker cannot be claimed", async () => {
+    mocks.getDueWorkers.mockResolvedValue([
+      due("worker-1", { userId: "user-1" }),
+      due("worker-2", { userId: "user-2" }),
+      due("worker-3", { userId: "user-3" }),
+    ]);
+    mocks.claimRoutineSlot.mockImplementation(
+      async (id: string) => id !== "worker-1",
+    );
+
+    const result = await dispatchDueWorkers(NOW);
+
+    expect(mocks.enqueueRoutine).not.toHaveBeenCalledWith("worker-1");
+    expect(result).toEqual({
+      dispatched: ["worker-2", "worker-3"],
+      failed: 0,
+    });
   });
 
   it("does not hand off a worker whose slot it lost", async () => {
