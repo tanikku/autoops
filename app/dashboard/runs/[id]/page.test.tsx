@@ -120,7 +120,7 @@ describe("run detail — a prompt run", () => {
   it("shows the prompt and what it rendered to", async () => {
     const sections = labelled(await render());
 
-    expect(sections.Prompt).toBe("Summarise {{today}}.");
+    expect(sections["What to ask the AI"]).toBe("Summarise {{today}}.");
     expect(sections["Rendered Prompt"]).toBe("Summarise 2026-08-13.");
   });
 
@@ -281,7 +281,7 @@ describe("run detail in Japanese", () => {
   it("names a prompt run's sections in Japanese", async () => {
     const sections = labelled(await render());
 
-    expect(sections["プロンプト"]).toBe("Summarise {{today}}.");
+    expect(sections["AI に頼むこと"]).toBe("Summarise {{today}}.");
     expect(sections["展開後のプロンプト"]).toBe("Summarise 2026-08-13.");
     expect(sections).not.toHaveProperty("Prompt");
   });

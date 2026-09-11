@@ -177,7 +177,7 @@ export const en = {
    * once a change has been found, which is why the form asks for it as a
    * condition and both read-only screens call it what it is.
    */
-  "worker.prompt": "Prompt",
+  "worker.prompt": "What to ask the AI",
   "worker.changeInstructions": "Change instructions",
 
   "worker.field.name": "Name",
@@ -185,7 +185,21 @@ export const en = {
   "worker.field.description": "Description",
   "worker.field.descriptionPlaceholder": "What does this worker do?",
   "worker.field.websiteUrl": "Website address",
-  "worker.field.promptPlaceholder": "Instructions sent to the AI on every run.",
+  "worker.field.promptPlaceholder":
+    "Describe what you want this Worker to do.",
+  /**
+   * Shown under the prompt box of a prompt worker, and only that one.
+   *
+   * **Two sentences because two people arrive at the same box.** One came
+   * from a template and is looking for where their own part goes; the
+   * other started from nothing and is looking for permission to write
+   * plainly. Neither is helped by being told what the field is called.
+   *
+   * A website worker gets no such note: its box holds finished
+   * instructions rather than an example waiting to be completed.
+   */
+  "worker.field.promptHelp":
+    "If you used a template, add your own details at the end of this field. If you are starting from scratch, write what you want the AI to do.",
   "worker.field.changePrompt": "When the page changes",
   "worker.field.changePromptPlaceholder":
     "What should the AI do when this page changes?",
@@ -293,7 +307,7 @@ export const en = {
 
   "worker.create.templatesHeading": "Choose a Template",
   "worker.create.templatesHelp":
-    "Start from a template, or fill in the form below yourself.",
+    "Choose a template to fill in an example below. Add your own details where the example leaves space.",
 
   /**
    * The two things a template can be, as headings over the list.
@@ -400,44 +414,42 @@ Leave out anything that did not change. Do not fill in what the page does not sa
 
   "template.dailyWorkPlan.name": "Plan the day's work",
   "template.dailyWorkPlan.description":
-    "From what you write in, AI puts the day's checks and tasks in order of what matters most.",
+    "Write down today's plans, requests, or concerns, and the AI will organize what to do today.",
   "template.dailyWorkPlan.prompt": `Today is {{today}}.
+Using the notes below, put today's tasks in priority order.
+For each task, explain the reason for its priority in one line.
+At the end, list anything that needs a decision from someone else.
+Do not make up details that are not provided.
 
-Using only what is written below, put today's checks and tasks in order of what matters most. Give each one a single line saying why it comes where it does, and finish with anything that has to be decided by somebody else.
-
-Do not add anything that is not written below. If something is unclear, say so rather than filling it in.
-
---- TODAY'S PLANS, REQUESTS AND CONCERNS ---
-(write yours here)`,
+Today's plans, requests, or concerns:
+`,
 
   "template.ideaGenerator.name": "Think up ideas regularly",
   "template.ideaGenerator.description":
-    "On the theme you write in, AI comes up with new ideas and improvements each time it runs.",
-  "template.ideaGenerator.prompt": `Come up with five ideas or improvements for the theme below. Give each one a line on what it is for and a line on the first step it would take.
+    "Give the AI one topic, and it will come up with 5 different ideas.",
+  "template.ideaGenerator.prompt": `Come up with 5 new ideas about the topic below.
+For each one, add one line explaining the idea and one first step.
+Make the 5 ideas meaningfully different.
+Do not make up details that are not provided.
 
-Make them genuinely different from one another rather than five wordings of the same thought.
-
-Work only from what is written below, and do not state anything as fact that is not there.
-
---- THEME ---
-(write yours here)`,
+Topic for ideas:
+`,
 
   "template.recurringReport.name": "Write a recurring report",
   "template.recurringReport.description":
-    "From the material you write in, AI produces a report in the same shape every time.",
-  "template.recurringReport.prompt": `Generated at {{now}}.
+    "Add the information you want to report on, and the AI will organize it into the same format each time.",
+  "template.recurringReport.prompt": `Created: {{now}}
+Using the notes below, make a report with these 4 sections:
 
-Using only the material below, write a report in these four sections:
+1. Summary (3 lines)
+2. What we learned
+3. What needs attention
+4. Next steps
 
-1. Summary, in three lines
-2. What the material shows
-3. What is worth watching
-4. What to do next
+Do not make up details that are not provided.
 
-Write nothing that is not in the material. Where a section has nothing to draw on, write "no information" rather than filling it in.
-
---- MATERIAL ---
-(write yours here)`,
+Notes for the report:
+`,
 
   /**
    * Why drafting produced nothing.

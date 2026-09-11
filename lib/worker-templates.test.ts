@@ -230,15 +230,55 @@ describe("what a prompt example says", () => {
    * cadence would run against instructions with nothing to work from and
    * complete anyway — nothing in the pipeline can tell an answer from an
    * invention.
+   *
+   * **The place is a heading with nothing after it.** It used to be a marker —
+   * `(write yours here)` — and in production a worker went out with the marker
+   * still in: the model read it as the material, said correctly that it had
+   * none, and the run was recorded as a success. A heading followed by a blank
+   * line cannot be left behind, because there is nothing there to leave.
    */
-  it.each(LANGUAGES)("leaves somewhere to write the material, in %s", (language) => {
+  it.each(LANGUAGES)("ends on somewhere to write the material, in %s", (language) => {
     for (const template of prompts) {
       const { prompt } = words(template, language);
 
-      expect(prompt, template.id).toMatch(/---/);
-      expect(prompt, template.id).toMatch(
-        language === "en" ? /\(write yours here\)/ : /\(ここに書いてください\)/,
-      );
+      expect(prompt.trimEnd(), template.id).toMatch(/:$/);
+    }
+  });
+
+  /**
+   * **The failure mode is gone from the copy, not guarded against in code.**
+   * Nothing in the product looks for these strings; this is the one place that
+   * would notice them coming back.
+   */
+  it.each(LANGUAGES)("leaves no marker to be forgotten, in %s", (language) => {
+    for (const template of prompts) {
+      const { prompt } = words(template, language);
+
+      expect(prompt, template.id).not.toMatch(/\(write yours here\)/);
+      expect(prompt, template.id).not.toMatch(/\(ここに書いてください\)/);
+    }
+  });
+
+  /**
+   * **`lib/prompt.ts` resolves two names and leaves every other one where it
+   * is.** So a `{topic}` written to look like a slot would travel to the model
+   * exactly as typed, and the model would be asked about a brace. Plainer copy
+   * must not reach for a variable system that does not exist.
+   */
+  it.each(LANGUAGES)("asks for no variable the engine does not have, in %s", (language) => {
+    for (const template of prompts) {
+      const { prompt } = words(template, language);
+
+      for (const [, name] of prompt.matchAll(/\{\{(\w+)\}\}/g)) {
+        expect(["today", "now"], `${template.id}: {{${name}}}`).toContain(name);
+      }
+
+      // A single brace is not a variable at all — `renderPrompt` only reads
+      // doubled ones — so one here is a slot somebody expected to be filled.
+      expect(
+        prompt.replace(/\{\{\w+\}\}/g, ""),
+        template.id,
+      ).not.toMatch(/[{}]/);
     }
   });
 });

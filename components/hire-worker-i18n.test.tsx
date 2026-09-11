@@ -55,7 +55,7 @@ describe("the hire form in English", () => {
 
   it("offers templates and the fields below them", () => {
     expect(html).toContain("Choose a Template");
-    expect(html).toContain("Start from a template");
+    expect(html).toContain("Choose a template to fill in an example below");
     expect(html).toContain("Have a page watched for you");
     expect(html).toContain("Have AI do a job regularly");
     expect(html).toContain(">Name<");

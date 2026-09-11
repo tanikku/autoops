@@ -170,6 +170,8 @@ function CountedField({
   error,
   required,
   multiline,
+  rows = 5,
+  help,
   hidden,
 }: {
   field: WorkerFieldName;
@@ -179,6 +181,26 @@ function CountedField({
   error?: string;
   required?: boolean;
   multiline?: boolean;
+  /**
+   * How much of a multiline field is visible without scrolling.
+   *
+   * **A box that has to be scrolled to be understood is a box nobody reads to
+   * the end.** A template fills this field with several lines and leaves the
+   * last one for the person; at five rows that line sat below the fold, and in
+   * the Closed Beta somebody saved a worker without ever seeing it. Ignored
+   * when the field is a single-line input.
+   */
+  rows?: number;
+  /**
+   * A sentence under the label saying what to put in the box.
+   *
+   * **Not the placeholder.** A placeholder disappears the moment somebody
+   * types, and this has to stay readable while they are writing — which is
+   * exactly when they are wondering whether they are doing it right. It is tied
+   * to the control through `aria-describedby`, so it is read out with the field
+   * rather than skipped past as loose text.
+   */
+  help?: string;
   /**
    * Kept in the page but out of sight, rather than removed.
    *
@@ -200,6 +222,7 @@ function CountedField({
 
   const countId = `${field}-count`;
   const errorId = `${field}-error`;
+  const helpId = `${field}-help`;
 
   const controlProps = {
     id: field,
@@ -210,9 +233,13 @@ function CountedField({
     onChange: (
       event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
     ) => setLength(event.target.value.length),
-    // Both descriptions are announced, so the reason and the count are read
-    // together rather than one replacing the other.
-    "aria-describedby": error ? `${errorId} ${countId}` : countId,
+    // Every description is announced, so the reason, the guidance and the
+    // count are read together rather than one replacing the others. **The
+    // order is the order they are useful in**: what went wrong, then what to
+    // do, then how much room is left.
+    "aria-describedby": [error ? errorId : null, help ? helpId : null, countId]
+      .filter((id) => id !== null)
+      .join(" "),
     "aria-invalid": error ? (true as const) : undefined,
   };
 
@@ -230,8 +257,14 @@ function CountedField({
         </span>
       </div>
 
+      {help ? (
+        <p id={helpId} className="text-xs text-muted-foreground">
+          {help}
+        </p>
+      ) : null}
+
       {multiline ? (
-        <Textarea {...controlProps} rows={5} />
+        <Textarea {...controlProps} rows={rows} />
       ) : (
         <Input {...controlProps} />
       )}
@@ -367,7 +400,14 @@ export function WorkerFields({
           worker's runs only after a change has been found, with the old and new
           text already in front of the model — asking for "instructions sent on
           every run" there would invite a description of the page rather than of
-          what to do about it. */}
+          what to do about it.
+
+          **Only one of them is a box somebody has to finish.** A prompt
+          worker's holds the whole job, and a template puts several lines in it
+          with the person's own part last — so it gets the taller box and the
+          note saying where that part goes. A website worker's is already
+          complete, and telling its owner to add their own details at the end
+          would be advice about a field that has none to add. */}
       <CountedField
         field="prompt"
         label={t(
@@ -375,6 +415,8 @@ export function WorkerFields({
           website ? "worker.field.changePrompt" : "worker.prompt",
         )}
         multiline
+        rows={website ? 5 : 10}
+        help={website ? undefined : t(language, "worker.field.promptHelp")}
         defaultValue={values.prompt}
         placeholder={t(
           language,

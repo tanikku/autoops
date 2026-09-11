@@ -116,7 +116,7 @@ export const ja: Record<TranslationKey, string> = {
   "worker.status.pausedDescription":
     "予定された実行を停止しています。手動実行はできます。",
 
-  "worker.prompt": "プロンプト",
+  "worker.prompt": "AI に頼むこと",
   "worker.changeInstructions": "変更時の指示",
 
   "worker.field.name": "名前",
@@ -124,7 +124,17 @@ export const ja: Record<TranslationKey, string> = {
   "worker.field.description": "説明",
   "worker.field.descriptionPlaceholder": "この Worker の役割は?",
   "worker.field.websiteUrl": "Web ページのアドレス",
-  "worker.field.promptPlaceholder": "毎回の実行で AI に送る指示。",
+  "worker.field.promptPlaceholder":
+    "この Worker にしてほしいことを書いてください。",
+  /**
+   * Prompt Worker の欄にだけ添える。テンプレートを使った人と、白紙から
+   * 書く人の両方が同じ欄を見るので、両方に一言ずつ。
+   *
+   * Website Worker には出さない。あちらの欄は完成した指示が入っていて、
+   * 書き足す場所ではない。
+   */
+  "worker.field.promptHelp":
+    "テンプレートを使った場合は、この欄の最後にご自身の内容を書いてください。自分で作る場合は、AI にしてほしいことをそのまま書けます。",
   "worker.field.changePrompt": "ページが変わったとき",
   "worker.field.changePromptPlaceholder":
     "このページが変わったら、AI に何をさせますか?",
@@ -174,7 +184,7 @@ export const ja: Record<TranslationKey, string> = {
 
   "worker.create.templatesHeading": "テンプレートを選ぶ",
   "worker.create.templatesHelp":
-    "テンプレートから始めるか、下のフォームに自分で入力してください。",
+    "テンプレートを選ぶと、下のフォームに例が入ります。空いているところに、ご自身の内容を加えてください。",
 
   "template.group.website": "Web を見ておいてもらう",
   "template.group.prompt": "AI に定期的に仕事をしてもらう",
@@ -260,46 +270,42 @@ export const ja: Record<TranslationKey, string> = {
 
   "template.dailyWorkPlan.name": "毎日の仕事を整理",
   "template.dailyWorkPlan.description":
-    "登録した内容をもとに、AI が毎日の確認事項や作業を優先順位付きで整理します。",
+    "今日の予定や依頼、気になっていることを書くだけで、AI が今日やることを整理します。",
   "template.dailyWorkPlan.prompt": `今日は {{today}} です。
+下に書いた内容をもとに、今日やることを大事な順に並べてください。
+それぞれ、なぜその順番なのかを1行で書いてください。
+最後に、自分だけでは決められないことをまとめてください。
+書いていないことは決めつけないでください。
 
-下に書かれた内容だけを使って、今日の確認事項と作業を優先度の高い順に並べてください。
-それぞれに「なぜその順番か」を一行添え、最後に「他の人に決めてもらう必要があること」をまとめてください。
-
-下に書かれていないことは足さないでください。はっきりしない点は、埋めずに「不明」と書いてください。
-
---- 今日の予定・依頼・気になっていること ---
-(ここに書いてください)`,
+今日の予定・依頼・気になっていること:
+`,
 
   "template.ideaGenerator.name": "定期的にアイデアを考える",
   "template.ideaGenerator.description":
-    "登録したテーマについて、AI が実行のたびに新しいアイデアや改善案を考えます。",
-  "template.ideaGenerator.prompt": `下のテーマについて、アイデアと改善案を5つ考えてください。
-それぞれに「ねらい」と「最初の一歩」を一行ずつ添えてください。
+    "アイデアが欲しいテーマを1つ書くと、AI が違う方向から5つの案を考えます。",
+  "template.ideaGenerator.prompt": `下のテーマについて、新しいアイデアを5つ考えてください。
+それぞれに「どんなアイデアか」と「最初にやること」を1行ずつ書いてください。
+5つはできるだけ違う内容にしてください。
+書いていないことは決めつけないでください。
 
-同じ内容の言い換えにならないよう、5つは互いに違う方向のものにしてください。
-
-下に書かれたことだけを前提にし、そこに無いことを事実として書かないでください。
-
---- テーマ ---
-(ここに書いてください)`,
+アイデアがほしいテーマ:
+`,
 
   "template.recurringReport.name": "定期レポートを作成",
   "template.recurringReport.description":
-    "登録した情報やテーマをもとに、AI が毎回同じ形式でレポートを作成します。",
+    "レポートに使いたい内容を書くだけで、AI が毎回同じ形式に整理します。",
   "template.recurringReport.prompt": `作成日時: {{now}}
+下に書いた内容をもとに、次の4つに分けてレポートを作ってください。
 
-下の材料だけを使って、次の4つの見出しでレポートを作成してください。
-
-1. 要約(3行)
-2. 材料から分かること
+1. まとめ（3行）
+2. 分かったこと
 3. 気になること
 4. 次にやること
 
-材料に無いことは書かないでください。書くことが無い見出しには「情報なし」と書いてください。
+書いていないことは決めつけないでください。
 
---- 材料 ---
-(ここに書いてください)`,
+レポートに使う内容:
+`,
 
   "worker.draft.notConfigured":
     "Koqentra に AI が設定されていないため、下書きを作成できません。",

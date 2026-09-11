@@ -48,9 +48,44 @@ function render(
 describe("a prompt worker's fields", () => {
   const html = render({ values: {} });
 
-  it("asks for a prompt, in those words", () => {
-    expect(html).toContain(">Prompt<");
-    expect(html).toContain("Instructions sent to the AI on every run.");
+  /**
+   * **Not "Prompt" any more.** The box holds what somebody is asking for, and
+   * naming it after the mechanism made a reader who had never written one
+   * wonder whether they were qualified to fill it in — which is what a Closed
+   * Beta user said in as many words.
+   */
+  it("asks what to ask the AI, in those words", () => {
+    expect(html).toContain(">What to ask the AI<");
+    expect(html).toContain("Describe what you want this Worker to do.");
+    expect(html).not.toContain(">Prompt<");
+  });
+
+  /**
+   * **A note that survives typing.** The placeholder vanishes at the first
+   * keystroke, which is a moment too early: somebody completing a template is
+   * still deciding where their own part goes while they are writing it.
+   */
+  it("says where to add your own details, and ties it to the field", () => {
+    expect(html).toContain('id="prompt-help"');
+    expect(html).toContain("add your own details at the end of this field");
+  });
+
+  /**
+   * The reason, the guidance and the count are all announced, in the order
+   * they are useful in. Dropping any of them would silence something a screen
+   * reader is the only way to reach.
+   */
+  it("announces the guidance alongside the count", () => {
+    expect(html).toContain('aria-describedby="prompt-help prompt-count"');
+  });
+
+  /**
+   * **Ten rows, because a template fills this box past five.** The line the
+   * person is meant to finish is the last one; at five rows it sat below the
+   * fold, and in production somebody saved a worker having never seen it.
+   */
+  it("shows the whole of a template without scrolling", () => {
+    expect(html).toContain('rows="10"');
   });
 
   it("does not ask what to do when a page changes", () => {
@@ -97,7 +132,18 @@ describe("a website worker's fields", () => {
   it("asks what to do about a change, rather than for a prompt", () => {
     expect(html).toContain("When the page changes");
     expect(html).toContain("What should the AI do when this page changes?");
-    expect(html).not.toContain("Instructions sent to the AI on every run.");
+    expect(html).not.toContain("Describe what you want this Worker to do.");
+  });
+
+  /**
+   * **Its instructions arrive finished.** A note telling this owner to add
+   * their own details at the end would be advice about a field that has none
+   * to add, and the shorter box is enough for one instruction.
+   */
+  it("offers no note about adding your own details, and no taller box", () => {
+    expect(html).not.toContain('id="prompt-help"');
+    expect(html).not.toContain("add your own details at the end of this field");
+    expect(html).not.toContain('rows="10"');
   });
 
   it("keeps the schedule and status fields every worker has", () => {
@@ -345,7 +391,7 @@ describe("a form in Japanese", () => {
   it("labels each field", () => {
     expect(html).toContain("名前");
     expect(html).toContain("説明");
-    expect(html).toContain("プロンプト");
+    expect(html).toContain("AI に頼むこと");
     expect(html).toContain("実行頻度");
     expect(html).toContain("ステータス");
   });
