@@ -149,6 +149,15 @@ model Routine {
   /// kind, which is why the relation is optional rather than the `kind` column
   /// being the only thing that says so.
   websiteSource       WebsiteSource?
+  /// What to look for, when this is a `discovery` worker. Optional for the same
+  /// reason `websiteSource` is: the relation says which workers have one, and
+  /// the `kind` column is not the only thing standing behind that.
+  ///
+  /// **Nothing reads this yet.** The kind it belongs to is not in
+  /// `routineKinds`, so no worker can be saved as one — see the note on
+  /// `DiscoverySource`.
+  discoverySource     DiscoverySource?
+  discoverySeenItems  DiscoverySeenItem[]
 
   @@index([userId])
   /// The scheduler's only query: `status = 'active' AND nextRunAt <= now()`,
@@ -296,6 +305,69 @@ model WebsiteSnapshot {
 /// `status`, `frequency` and `kind` are. Today there is exactly one value —
 /// `worker-draft` (`AI_DRAFT_SCOPE`) — and adding another should be a constant
 /// rather than a migration.
+/// What a `discovery` worker looks for, one row per worker.
+///
+/// **Nothing in the application can create one yet.** `routineKinds` does not
+/// contain `discovery`, so `isRoutineKind` refuses the value on the way in and
+/// no worker can be saved as that kind — which means these two tables exist and
+/// are reachable by nothing. That is deliberate: the shape is settled and
+/// migrated before anything depends on it, so the release that turns the kind
+/// on is a code change rather than a code change and a migration at once.
+///
+/// **The owner is the routine's and is not copied here.** `Routine.userId` is
+/// the only place that says who anything belongs to; a second column saying it
+/// would eventually disagree, and a source pointing at one account while its
+/// worker points at another is a state worth making unrepresentable. Every
+/// read and write reaches it through the relation — see `lib/discovery/repository.ts`.
+model DiscoverySource {
+  id         String   @id @default(cuid())
+  routineId  String   @unique
+  /// Which provider to ask. A plain String narrowed by `isDiscoverySourceKind`
+  /// on the way out, the same shape as `kind`, `status` and `frequency` — so
+  /// adding a provider is a line in code rather than a migration.
+  source     String
+  /// What to search for, as the owner wrote it.
+  query      String
+  /// How many items one run may choose. **Not how many are fetched**: the
+  /// number of candidates asked for is a constant the owner does not set.
+  maxResults Int
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  routine    Routine  @relation(fields: [routineId], references: [id], onDelete: Cascade)
+}
+
+/// Something a discovery worker has already chosen, so it is not chosen again.
+///
+/// **Only what was selected.** "Do not show me what I picked yesterday" is the
+/// requirement; "never show me anything I have ever scrolled past" is not. The
+/// candidates a run saw and passed over are not recorded, which keeps this
+/// table proportional to what was useful rather than to what was fetched.
+///
+/// **A record of a past choice, not a live mirror.** The video may since have
+/// been renamed, made private, or removed; these columns say what it was when
+/// it was chosen, and nothing goes back to check.
+model DiscoverySeenItem {
+  id          String    @id @default(cuid())
+  routineId   String
+  /// Provider-prefixed, so two sources cannot collide on an id that means
+  /// different things to each — `youtube:<videoId>`. The prefix is here from
+  /// the start because adding one later would mean rewriting existing rows.
+  itemKey     String
+  title       String
+  author      String
+  url         String
+  /// Null when the source did not say. Never inferred.
+  publishedAt DateTime?
+  selectedAt  DateTime  @default(now())
+  routine     Routine   @relation(fields: [routineId], references: [id], onDelete: Cascade)
+
+  /// The last line of defence against choosing the same thing twice, and what
+  /// makes a second run writing the same item safe rather than a conflict.
+  @@unique([routineId, itemKey])
+  /// The exclusion set is read per worker, newest first.
+  @@index([routineId, selectedAt])
+}
+
 model RateLimitBucket {
   id              String   @id @default(cuid())
   /// The account the allowance belongs to. **The owner, not a session** — a
