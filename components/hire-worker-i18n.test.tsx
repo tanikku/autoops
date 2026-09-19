@@ -183,3 +183,84 @@ describe("a drafted cadence", () => {
     }
   });
 });
+
+/**
+ * The third option, and the words it is offered in.
+ *
+ * **What the hire form asks is what somebody wants done**, which is why none of
+ * the three options names a mechanism: "Watch a page", "Run a prompt", "Find
+ * recommendations". The provider behind the third one is not on this screen at
+ * all — naming it would make adding a second one a rename of the feature.
+ */
+describe("the hire form's third option", () => {
+  const en = form("en");
+  const ja = form("ja");
+
+  it("offers finding recommendations, in English", () => {
+    expect(en).toContain("Find recommendations");
+    expect(en).toContain(
+      "Looks for new things on a topic and recommends a few, with a reason for each.",
+    );
+  });
+
+  it("offers it in Japanese", () => {
+    expect(ja).toContain("おすすめを探す");
+    expect(ja).toContain(
+      "テーマに沿って新しいものを探し、理由を添えていくつかおすすめします。",
+    );
+  });
+
+  it("offers it as a third radio beside the other two", () => {
+    expect(en).toContain('value="discovery"');
+    expect(en).toContain('value="prompt"');
+    expect(en).toContain('value="website"');
+  });
+
+  /**
+   * **The product is not named after its current provider.** YouTube is what
+   * this version asks; what is being chosen is that somebody wants things found
+   * for them.
+   */
+  it.each([
+    ["en", () => en],
+    ["ja", () => ja],
+  ])("names no provider anywhere on the form, in %s", (_language, html) => {
+    expect(html().toLowerCase()).not.toContain("youtube");
+  });
+
+  /**
+   * **Availability is not a question this screen answers.** No deployment state
+   * is exposed: a missing key is refused by the create action, which is the only
+   * thing that can decide it, and a form that hid the option would be a second
+   * source of truth for the same question.
+   */
+  it.each([
+    ["en", () => en],
+    ["ja", () => ja],
+  ])("says nothing about whether a key is configured, in %s", (_l, html) => {
+    const text = html().toLowerCase();
+
+    expect(text).not.toContain("api key");
+    expect(text).not.toContain("not configured");
+    expect(text).not.toContain("設定されていません");
+  });
+
+  /** The example group, offered beside the other two. */
+  it("groups its example under a heading of its own", () => {
+    expect(en).toContain("Have things found for you");
+    expect(en).toContain("Find daily recommendations");
+    expect(ja).toContain("外から探してきてもらう");
+    expect(ja).toContain("おすすめを毎日さがす");
+  });
+
+  /**
+   * **The two kinds that were already here read exactly as they did.** A third
+   * option arriving must not reword the other two.
+   */
+  it("leaves the other two options as they were", () => {
+    expect(en).toContain("Run a prompt");
+    expect(en).toContain("Watch a page");
+    expect(ja).toContain("AI に依頼する");
+    expect(ja).toContain("Web ページを監視する");
+  });
+});

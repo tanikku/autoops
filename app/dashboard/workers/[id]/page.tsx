@@ -23,6 +23,7 @@ import {
 } from "@/lib/runs";
 import { requireUserId } from "@/lib/session";
 import { getUserLanguage, getUserTimezone } from "@/lib/users";
+import { getDiscoverySource } from "@/lib/discovery/repository";
 import { getWebsiteSource } from "@/lib/website-sources";
 import type { RoutineFrequency, RoutineKind, RoutineStatus } from "@/types";
 
@@ -82,6 +83,19 @@ const frequencyKeys: Record<RoutineFrequency, TranslationKey> = {
  * There, somebody is deciding what they want done — "Run a prompt", "Watch a
  * page". Here it has been decided, and the row reports the answer.
  */
+/**
+ * What each provider calls itself.
+ *
+ * **Not a translation key**, because a service's name is not language: YouTube
+ * spells itself the same way on both sides of the switch, and a key holding the
+ * same string twice is one the parity check would have to be told to ignore.
+ * The stored value is shown as-is if this version does not recognise it —
+ * noticing an unknown source is better than hiding one.
+ */
+const discoverySourceNames: Record<string, string> = {
+  youtube: "YouTube",
+};
+
 const kindKeys: Record<RoutineKind, TranslationKey> = {
   prompt: "worker.kind.prompt",
   website: "worker.kind.website",
@@ -162,6 +176,16 @@ export default async function WorkerDetailPage({
   // that looks perfectly ordinary — so it gets the same answer as a worker
   // that is not here, which is what it effectively is.
   if (kind === "website" && !source) {
+    notFound();
+  }
+
+  // **The same shape for the kind that has a search instead of a page**, and
+  // the same answer when it is missing: a discovery worker rendered as a prompt
+  // worker would look perfectly ordinary and be wrong about what it does.
+  const discovery =
+    kind === "discovery" ? await getDiscoverySource(worker.id, userId) : null;
+
+  if (kind === "discovery" && !discovery) {
     notFound();
   }
 
@@ -297,6 +321,51 @@ export default async function WorkerDetailPage({
               `break-all` because an address may be thousands of characters and
               carries no spaces to wrap at; the whole of it stays selectable
               rather than being cut short. */}
+          {/* **What a discovery worker is set to do, on the page that reports
+              it.** Where it looks is shown because a worker's own page should
+              say where its results came from — not because it is a setting, and
+              not as a claim that the service was reached. Nothing here asks a
+              provider anything.
+
+              The provider's own name is written as it spells itself, in either
+              language: it is a name rather than a word, the same standing
+              `creator.channel.x` has. */}
+          {discovery ? (
+            <Card className="mt-4">
+              <CardContent>
+                <h2 className="text-sm font-medium tracking-tight">
+                  {t(language, "worker.detail.discoverySource")}
+                </h2>
+                <p className="mt-2 text-sm">
+                  {discoverySourceNames[discovery.source] ?? discovery.source}
+                </p>
+
+                <h2 className="mt-6 text-sm font-medium tracking-tight">
+                  {t(language, "worker.detail.discoveryQuery")}
+                </h2>
+                {/* The search is the worker's own words and is never looked
+                    up, in either language. */}
+                <p className="mt-2 text-sm break-words">
+                  {discovery.query || "—"}
+                </p>
+
+                <h2 className="mt-6 text-sm font-medium tracking-tight">
+                  {t(language, "worker.detail.discoveryMaxResults")}
+                </h2>
+                <p className="mt-2 text-sm tabular-nums">
+                  {discovery.maxResults}
+                </p>
+
+                <h2 className="mt-6 text-sm font-medium tracking-tight">
+                  {t(language, "worker.field.discoveryInstruction")}
+                </h2>
+                <p className="mt-2 text-sm whitespace-pre-wrap break-words">
+                  {worker.prompt || "—"}
+                </p>
+              </CardContent>
+            </Card>
+          ) : null}
+
           {source ? (
             <Card className="mt-4">
               <CardContent>

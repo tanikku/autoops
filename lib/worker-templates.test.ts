@@ -7,6 +7,7 @@ import {
   workerTemplates,
   type WorkerTemplate,
 } from "@/lib/worker-templates";
+import { injectTemplate } from "@/components/worker-draft-form";
 import { validateWorkerFormForKind, workerFieldLimits } from "@/lib/worker-input";
 import type { WorkerFormInput } from "@/lib/worker-input";
 
@@ -33,8 +34,8 @@ function words(template: WorkerTemplate, language: string) {
 }
 
 describe("what the set is made of", () => {
-  it("offers eight examples", () => {
-    expect(workerTemplates).toHaveLength(8);
+  it("offers nine examples", () => {
+    expect(workerTemplates).toHaveLength(9);
   });
 
   it("offers five for watching a page", () => {
@@ -45,9 +46,15 @@ describe("what the set is made of", () => {
     expect(templatesOfKind("prompt")).toHaveLength(3);
   });
 
+  it("offers one for having things found", () => {
+    expect(templatesOfKind("discovery")).toHaveLength(1);
+  });
+
   it("puts every example in exactly one group", () => {
     expect(
-      templatesOfKind("website").length + templatesOfKind("prompt").length,
+      templatesOfKind("website").length +
+        templatesOfKind("prompt").length +
+        templatesOfKind("discovery").length,
     ).toBe(workerTemplates.length);
   });
 
@@ -59,7 +66,7 @@ describe("what the set is made of", () => {
 
   it("says which kind each one makes", () => {
     for (const template of workerTemplates) {
-      expect(["website", "prompt"]).toContain(template.kind);
+      expect(["website", "prompt", "discovery"]).toContain(template.kind);
     }
   });
 });
@@ -310,10 +317,11 @@ describe("prompt variables", () => {
 /**
  * What a template produces has to be something the form would accept.
  *
- * **The address is the one thing left for the person**, so a website example is
- * checked twice: rejected without one, and accepted with one. That is the
- * existing rule rather than a new one — `validateWorkerFormForKind` is called
- * here exactly as the hire action calls it.
+ * **One thing is always left for the person**, and which one depends on the
+ * kind: a website example leaves the address, a discovery example leaves the
+ * search. Both are checked twice — rejected without it, and accepted with it.
+ * That is the existing rule rather than a new one: `validateWorkerFormForKind`
+ * is called here exactly as the hire action calls it.
  */
 describe("what the form makes of an applied template", () => {
   function applied(template: WorkerTemplate, language: string): WorkerFormInput {
@@ -322,9 +330,10 @@ describe("what the form makes of an applied template", () => {
       description: "",
       prompt: t(language, template.promptKey),
       websiteUrl: "",
-      // **A template never makes a discovery worker**, so these are the blanks
-      // a form that did not ask for them submits. See the assertion below.
-      discoverySource: "",
+      // **The source is what the form submits for a discovery worker**, hidden
+      // and fixed; the search is the blank it leaves for the person. See the
+      // two assertions below.
+      discoverySource: template.kind === "discovery" ? "youtube" : "",
       discoveryQuery: "",
       discoveryMaxResults: null,
       discoveryMaxResultsSubmitted: false,
@@ -356,15 +365,31 @@ describe("what the form makes of an applied template", () => {
       const values = applied(template, language);
       const websiteUrl =
         template.kind === "website" ? "https://example.com/news" : "";
+      const discoveryQuery =
+        template.kind === "discovery" ? "ハリネズミ" : "";
 
       const errors = validateWorkerFormForKind(
-        { ...values, websiteUrl },
+        { ...values, websiteUrl, discoveryQuery },
         { status: "active", frequency: template.defaultFrequency },
         template.kind,
         language,
       );
 
       expect(errors, template.id).toEqual({});
+    }
+  });
+
+  /** The search is still asked for, which is what leaves it to the person. */
+  it("still requires a search of a discovery worker", () => {
+    for (const template of templatesOfKind("discovery")) {
+      const errors = validateWorkerFormForKind(
+        applied(template, "en"),
+        { status: "draft", frequency: template.defaultFrequency },
+        "discovery",
+        "en",
+      );
+
+      expect(errors.discoveryQuery, template.id).toBeTruthy();
     }
   });
 
@@ -405,14 +430,63 @@ describe("what the form makes of an applied template", () => {
  * Fixed here rather than left to the eye, because a template is one line in an
  * array and this is the file that would notice.
  */
-describe("what the templates do not make", () => {
-  it("offers only the two kinds the hire form can configure", () => {
-    expect([...new Set(workerTemplates.map((template) => template.kind))].sort())
-      .toEqual(["prompt", "website"]);
+/**
+ * The discovery example, and the two things it deliberately leaves out.
+ *
+ * **This block used to say no template made a discovery worker**, which was the
+ * boundary the phase before this one held. It has been replaced rather than
+ * kept: the hire form now offers the kind, so a template for it is the ordinary
+ * thing rather than the exception.
+ */
+describe("the discovery example", () => {
+  const discovery = workerTemplates.find(
+    (template) => template.id === "recommendation-finder",
+  );
+
+  it("exists, and makes a discovery worker every day", () => {
+    expect(discovery).toBeDefined();
+    expect(discovery?.kind).toBe("discovery");
+    expect(discovery?.defaultFrequency).toBe("daily");
   });
 
-  it("makes no discovery worker", () => {
-    expect(workerTemplates.some((template) => template.kind === "discovery"))
-      .toBe(false);
+  /**
+   * **No provider in the name.** YouTube is what this version asks; a second
+   * one should be a stored value rather than a rename of the example.
+   */
+  it.each(["en", "ja"] as const)("names no provider in %s", (language) => {
+    const name = t(language, discovery!.nameKey);
+    const description = t(language, discovery!.descriptionKey);
+
+    expect(`${name} ${description}`.toLowerCase()).not.toContain("youtube");
   });
+
+  /**
+   * **It carries no search**, for the reason a website template carries no
+   * address: what to look for is the one thing only the person choosing knows.
+   */
+  it("fills in everything except what to look for", () => {
+    const values = injectTemplate(discovery!, "ja", "token");
+
+    expect(values.values.prompt).not.toBe("");
+    expect(values.values.discoveryQuery ?? "").toBe("");
+  });
+
+  /** The default count lives on the form, not repeated here. */
+  it("sets no count of its own", () => {
+    expect(injectTemplate(discovery!, "en", "token").values.discoveryMaxResults)
+      .toBeUndefined();
+  });
+
+  it.each(["en", "ja"] as const)(
+    "says how to choose rather than what to choose, in %s",
+    (language) => {
+      const instruction = t(language, discovery!.promptKey);
+
+      expect(instruction.trim()).not.toBe("");
+      // Nothing that claims the model watched, read or judged quality.
+      for (const overclaim of ["視聴", "内容を確認", "質が高い", "watched", "high quality"]) {
+        expect(instruction).not.toContain(overclaim);
+      }
+    },
+  );
 });

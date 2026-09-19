@@ -155,8 +155,10 @@ export const en = {
    * "Recommendations" is the word for that in a row that answers "what is
    * this".
    *
-   * **There is no `discoveryOption` yet.** The hire form offers two kinds, and
-   * a third option is the phase that gives it a form — not this one.
+   * **Not the same words the hire form uses**, which is the pattern the other
+   * two already follow: somebody choosing is deciding what they want done
+   * (`discoveryOption`, "Find recommendations"), and a worker that exists
+   * reports what it is.
    */
   "worker.kind.discovery": "Recommendations",
   "worker.kind.promptOption": "Run a prompt",
@@ -165,6 +167,18 @@ export const en = {
   "worker.kind.websiteOption": "Watch a page",
   "worker.kind.websiteOptionDescription":
     "Checks a page and only involves the AI when it changes.",
+  /**
+   * The third option, named for what somebody wants rather than for where it
+   * looks.
+   *
+   * **"YouTube" is not in it, deliberately.** YouTube is the provider this
+   * version asks; what the person is deciding is that they want things found
+   * for them. Naming the provider here would make a second one a rename of the
+   * feature.
+   */
+  "worker.kind.discoveryOption": "Find recommendations",
+  "worker.kind.discoveryOptionDescription":
+    "Looks for new things on a topic and recommends a few, with a reason for each.",
 
   /**
    * A cadence as a menu option, which is not how a schedule reads in a
@@ -199,7 +213,49 @@ export const en = {
   "worker.field.descriptionPlaceholder": "What does this worker do?",
   "worker.field.websiteUrl": "Website address",
   /** Named in a length message, which is the only place it is read so far. */
-  "worker.field.discoveryQuery": "Search",
+  "worker.field.discoveryQuery": "What to look for",
+  "worker.field.discoveryQueryPlaceholder": "hedgehog care",
+  "worker.field.discoveryMaxResults": "How many to recommend",
+  /**
+   * Said before anybody counts what came back.
+   *
+   * **Nothing pads the list out.** A run recommends what met the conditions and
+   * stops, so asking for five is a ceiling rather than a promise — and a
+   * recommendation nobody stands behind is worse than a short list.
+   */
+  "worker.field.discoveryMaxResultsHelp":
+    "If fewer items match your criteria, Koqentra may return fewer than the requested number.",
+  /**
+   * What Koqentra actually knows about what it has already offered.
+   *
+   * **"Previously recommended" and nothing wider.** Koqentra does not know what
+   * has been watched, what is new to the world, or what anybody has already
+   * seen elsewhere — it knows which items it has itself recommended for this
+   * worker. Saying more would be claiming a fact nothing records.
+   */
+  "worker.field.discoveryDedupNote":
+    "Previously recommended items are excluded.",
+  /**
+   * The rule the code enforces after the model has chosen.
+   *
+   * **A note rather than part of the instruction.** It is applied in code, so
+   * putting it in the editable box would let somebody delete a rule that would
+   * still be applied — and leave the box describing something it does not
+   * decide.
+   */
+  "worker.field.discoveryDiversityNote":
+    "At most one recommendation is selected from the same creator.",
+  "worker.field.discoveryInstruction": "How to choose",
+  /**
+   * What the model is working from, said plainly.
+   *
+   * **Three fields and no more.** The model sees a title, who published it and
+   * when; it has not watched anything, read a description, or seen how anything
+   * was received. An instruction written as though it had would be asking for
+   * an answer nothing can support.
+   */
+  "worker.field.discoveryInstructionHelp":
+    "The AI sees each item's title, who published it and when — nothing else. It has not watched or read anything.",
   "worker.field.promptPlaceholder":
     "Describe what you want this Worker to do.",
   /**
@@ -320,6 +376,18 @@ export const en = {
   "worker.create.websiteFirstRunNote":
     "The first check records the page as it is now and does not notify you — there is nothing to compare it against yet. Every check after that is compared with what was recorded, and you hear about it when something differs.",
 
+  /**
+   * Where Koqentra stops and the person starts.
+   *
+   * **Said on the form rather than discovered afterwards.** A worker that finds
+   * things could reasonably be expected to do something with them — follow,
+   * like, comment, subscribe, post. It does none of that and never will on this
+   * path: it hands over a short list and a reason for each, and every action
+   * after that is somebody's own.
+   */
+  "worker.create.discoveryHumanNote":
+    "Koqentra finds candidates and recommends a few. Watching, following, commenting and everything else stays with you.",
+
   "worker.create.templatesHeading": "Choose a Template",
   "worker.create.templatesHelp":
     "Choose a template to fill in an example below. Add your own details where the example leaves space.",
@@ -334,6 +402,22 @@ export const en = {
    */
   "template.group.website": "Have a page watched for you",
   "template.group.prompt": "Have AI do a job regularly",
+  "template.group.discovery": "Have things found for you",
+  /**
+   * The one discovery example, named for the habit rather than the source.
+   *
+   * **No provider in the name.** A second provider would otherwise make
+   * renaming the example part of adding it.
+   *
+   * **It carries no search.** What to look for is the one thing only the
+   * person choosing can know — the same reason a website template carries no
+   * address.
+   */
+  "template.recommendationFinder.name": "Find daily recommendations",
+  "template.recommendationFinder.description":
+    "Looks for new things on a topic every day and recommends a few.",
+  "template.recommendationFinder.prompt":
+    "Prefer recent items and choose recommendations that are likely to be interesting.",
 
   /**
    * The examples themselves.
@@ -837,6 +921,17 @@ Notes for the report:
   "worker.detail.createdAt": "Created At",
   "worker.detail.updatedAt": "Updated At",
   "worker.detail.watchedPage": "Watched page",
+  /**
+   * What a discovery worker is configured to do, on the page that reports it.
+   *
+   * **`discoverySource` names where it looks and is not a setting.** One
+   * provider exists and the form does not offer a choice; the row is here
+   * because a worker's page should say where its results came from, and because
+   * a second provider would otherwise arrive as an unexplained change.
+   */
+  "worker.detail.discoverySource": "Where it looks",
+  "worker.detail.discoveryQuery": "What to look for",
+  "worker.detail.discoveryMaxResults": "How many to recommend",
   /**
    * The way from a worker to one of its executions.
    *

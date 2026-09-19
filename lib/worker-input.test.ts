@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DISCOVERY_QUERY_MAX_CHARS } from "@/lib/discovery/limits";
 import {
   hasWorkerFormErrors,
   readWorkerForm,
@@ -884,6 +885,61 @@ describe("validateWorkerFormForKind — discovery", () => {
       expect(errors.discoverySource).toBeUndefined();
       expect(errors.discoveryQuery).toBeUndefined();
       expect(errors.discoveryMaxResults).toBeUndefined();
+    },
+  );
+});
+
+/**
+ * The search box, now that it is a box.
+ *
+ * **It joined `workerFieldLimits` when the form gained a control for it**, so
+ * it gets the counter and the length message every other field gets — and the
+ * number is still `DISCOVERY_QUERY_MAX_CHARS`, decided beside the other
+ * discovery limits rather than invented here.
+ */
+describe("the search field's length", () => {
+  it("is bounded by the discovery limit rather than a number of its own", () => {
+    expect(workerFieldLimits.discoveryQuery).toBe(DISCOVERY_QUERY_MAX_CHARS);
+    expect(workerFieldLimits.discoveryQuery).toBe(300);
+  });
+
+  it("is named in the length message the way the form names it", () => {
+    const errors = validateWorkerFormForKind(
+      input({
+        discoverySource: "youtube",
+        discoveryQuery: "x".repeat(301),
+      }),
+      { status: "draft", frequency: "manual" },
+      "discovery",
+      "en",
+    );
+
+    expect(errors.discoveryQuery).toBe(
+      "What to look for must be 300 characters or fewer.",
+    );
+  });
+
+  /**
+   * **Not part of the shared sweep.** The generic loop covers the fields every
+   * worker has; this one is asked about only when the kind is discovery, so a
+   * prompt worker carrying a long search in a stale submission is not told
+   * about a field it does not have.
+   */
+  it.each(["prompt", "website"] as const)(
+    "says nothing about a long search on a %s worker",
+    (kind) => {
+      const errors = validateWorkerFormForKind(
+        input({
+          prompt: "Do the thing.",
+          websiteUrl: kind === "website" ? "https://example.com" : "",
+          discoveryQuery: "x".repeat(400),
+        }),
+        { status: "draft", frequency: "manual" },
+        kind,
+        "en",
+      );
+
+      expect(errors.discoveryQuery).toBeUndefined();
     },
   );
 });

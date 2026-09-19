@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   getUserTimezone: vi.fn(),
   getUserLanguage: vi.fn(),
   getWebsiteSource: vi.fn(),
+  getDiscoverySource: vi.fn(),
   notFound: vi.fn(),
 }));
 
@@ -44,6 +45,9 @@ vi.mock("@/lib/users", () => ({
 }));
 vi.mock("@/lib/website-sources", () => ({
   getWebsiteSource: mocks.getWebsiteSource,
+}));
+vi.mock("@/lib/discovery/repository", () => ({
+  getDiscoverySource: mocks.getDiscoverySource,
 }));
 
 const WorkerDetailPage = (await import("@/app/dashboard/workers/[id]/page"))
@@ -85,13 +89,24 @@ function labelled(node: ReactNode): Record<string, unknown> {
   return found;
 }
 
-/** Every string the page put on screen itself, headings and values alike. */
+/**
+ * Every text node the page put on screen itself, headings and values alike.
+ *
+ * **Numbers count as text**, because React renders them as such: a count shown
+ * as `{3}` reaches the screen exactly as `"3"` does, and a collector that
+ * skipped it would let a row be asserted on by its heading alone.
+ */
 function text(node: ReactNode): string[] {
   const found: string[] = [];
 
   const walk = (current: unknown): void => {
     if (typeof current === "string") {
       found.push(current);
+      return;
+    }
+
+    if (typeof current === "number") {
+      found.push(String(current));
       return;
     }
 
@@ -204,6 +219,7 @@ beforeEach(() => {
   // moved past it.
   mocks.listRunsForWorkerPage.mockReset().mockResolvedValue(runPage());
   mocks.getWebsiteSource.mockReset().mockResolvedValue(null);
+  mocks.getDiscoverySource.mockReset().mockResolvedValue(null);
   mocks.getRoutineWithStoredKind
     .mockReset()
     .mockResolvedValue({ routine: worker(), kind: "prompt" });
@@ -782,5 +798,127 @@ describe("reaching older runs", () => {
 
     expect(shown).toContain(t(language, "worker.detail.olderRuns"));
     expect(shown).toContain(t(language, "worker.detail.backToLatestRuns"));
+  });
+});
+
+/**
+ * What a discovery worker's page reports.
+ *
+ * **Every row is a claim about a stored value**, exactly as the website rows
+ * are: where it looks, what it looks for, and how many it may recommend all
+ * come from `DiscoverySource`. Nothing here asks a provider anything, and
+ * nothing says whether one could be reached.
+ */
+describe("worker detail — a discovery worker", () => {
+  const DISCOVERY_SOURCE = {
+    id: "discovery-source-1",
+    routineId: "worker-1",
+    source: "youtube",
+    query: "ハリネズミ 飼い方",
+    maxResults: 3,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+
+  beforeEach(() => {
+    mocks.getRoutineWithStoredKind.mockResolvedValue({
+      routine: worker({ kind: "discovery" }),
+      kind: "discovery",
+    });
+    mocks.getDiscoverySource.mockResolvedValue(DISCOVERY_SOURCE);
+  });
+
+  it("says what it is, in the words a worker that exists is described in", async () => {
+    expect(labelled(await render())["Worker type"]).toBe("Recommendations");
+  });
+
+  it("says where it looks, what it looks for and how many it keeps", async () => {
+    const shown = text(await render());
+
+    expect(shown).toContain("Where it looks");
+    expect(shown).toContain("YouTube");
+    expect(shown).toContain("What to look for");
+    expect(shown).toContain("ハリネズミ 飼い方");
+    expect(shown).toContain("How many to recommend");
+    expect(shown).toContain("3");
+  });
+
+  it("shows the instruction under its own heading", async () => {
+    const shown = text(await render());
+
+    expect(shown).toContain("How to choose");
+  });
+
+  /**
+   * **The provider's name is written as it spells itself**, in either language:
+   * it is a name rather than a word.
+   */
+  it("names the provider the same way in Japanese", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+
+    const shown = text(await render());
+
+    expect(shown).toContain("YouTube");
+    expect(shown).toContain("探す場所");
+    expect(shown).toContain("おすすめ探し");
+  });
+
+  /** A stored source this version does not recognise is shown, not hidden. */
+  it("shows a source it does not recognise rather than inventing a name", async () => {
+    mocks.getDiscoverySource.mockResolvedValue({
+      ...DISCOVERY_SOURCE,
+      source: "vimeo",
+    });
+
+    expect(text(await render())).toContain("vimeo");
+  });
+
+  /**
+   * **A discovery worker with no search should not exist**, and rendering it as
+   * a prompt worker would hide that behind a perfectly ordinary screen.
+   */
+  it("is not found when its search is missing", async () => {
+    mocks.getDiscoverySource.mockResolvedValue(null);
+
+    await expect(render()).rejects.toBeInstanceOf(NotFoundSignal);
+  });
+
+  it("reads the search as the signed-in account", async () => {
+    await render();
+
+    expect(mocks.getDiscoverySource).toHaveBeenCalledWith("worker-1", "user-1");
+  });
+
+  /** Nothing on the page claims a key is configured, or that one is not. */
+  it("says nothing about whether the provider can be reached", async () => {
+    const shown = text(await render()).join(" ").toLowerCase();
+
+    expect(shown).not.toContain("api key");
+    expect(shown).not.toContain("not configured");
+  });
+});
+
+/**
+ * The other two kinds, unchanged by the third arriving.
+ */
+describe("worker detail — the other kinds are unchanged", () => {
+  it("asks nothing about a search for a prompt worker", async () => {
+    await render();
+
+    expect(mocks.getDiscoverySource).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing about a search for a website worker", async () => {
+    mocks.getRoutineWithStoredKind.mockResolvedValue({
+      routine: worker({ kind: "website" }),
+      kind: "website",
+    });
+    mocks.getWebsiteSource.mockResolvedValue(SOURCE);
+
+    const shown = text(await render());
+
+    expect(mocks.getDiscoverySource).not.toHaveBeenCalled();
+    expect(shown).toContain("Watched page");
+    expect(shown).not.toContain("Where it looks");
   });
 });

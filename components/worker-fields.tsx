@@ -5,6 +5,10 @@ import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  DISCOVERY_DEFAULT_MAX_RESULTS,
+  DISCOVERY_MAX_RESULTS_CEILING,
+} from "@/lib/discovery/limits";
 import { t, type TranslationKey } from "@/lib/i18n";
 import { weekdayKeys } from "@/lib/schedule-label";
 import {
@@ -69,6 +73,9 @@ export type WorkerFieldValues = {
   description?: string;
   prompt?: string;
   websiteUrl?: string;
+  /** What a discovery worker searches for, and how many it may recommend. */
+  discoveryQuery?: string;
+  discoveryMaxResults?: number | null;
   frequency?: RoutineFrequency | null;
   status?: RoutineStatus | null;
   /** `HH:mm`, as an `<input type="time">` carries it. */
@@ -89,10 +96,36 @@ export type WorkerFieldValues = {
  * Kept beside the markup deliberately: reordering the fields without
  * reordering this list would send the user to the wrong one.
  */
+/**
+ * The one source a discovery worker can be given, submitted rather than chosen.
+ *
+ * **A constant here rather than a selector on screen.** One provider exists, so
+ * there is nothing to decide; the field is still sent because the server reads
+ * it and because a second provider should arrive as an option in this list
+ * rather than as a new field. **The form does not ask whether it is reachable**
+ * — the create action does, and it is the only thing that can answer.
+ */
+const DISCOVERY_SOURCE = "youtube";
+
+/**
+ * What the instruction box is called, which is a different question per kind.
+ *
+ * A prompt worker's is the whole job. A website worker's runs after a change
+ * has been found. A discovery worker's decides which of the things that were
+ * found are worth recommending — none of the three is asking for the same
+ * thing, and one label for all three would make two of the forms read wrong.
+ */
+const promptLabelKeys: Record<RoutineKind, TranslationKey> = {
+  prompt: "worker.prompt",
+  website: "worker.field.changePrompt",
+  discovery: "worker.field.discoveryInstruction",
+};
+
 const fieldOrder: WorkerFieldName[] = [
   "name",
   "description",
   "websiteUrl",
+  "discoveryQuery",
   "prompt",
 ];
 
@@ -357,6 +390,7 @@ export function WorkerFields({
   );
 
   const website = kind === "website";
+  const discovery = kind === "discovery";
 
   return (
     <>
@@ -395,6 +429,70 @@ export function WorkerFields({
         <p className="-mt-4 text-xs text-muted-foreground">{websiteUrlNote}</p>
       ) : null}
 
+      {/* **Where a discovery worker looks is not asked.** One provider exists,
+          the form has nothing to choose between, and a selector with one option
+          is a question with one answer. It is submitted as a hidden value so
+          the server receives the same field it will receive when there is a
+          second — and the server, not the form, is what decides whether that
+          source can be reached. */}
+      {discovery ? (
+        <input type="hidden" name="discoverySource" value={DISCOVERY_SOURCE} />
+      ) : null}
+
+      <CountedField
+        field="discoveryQuery"
+        label={t(language, "worker.field.discoveryQuery")}
+        hidden={!discovery}
+        defaultValue={values.discoveryQuery}
+        placeholder={t(language, "worker.field.discoveryQueryPlaceholder")}
+        help={t(language, "worker.field.discoveryDedupNote")}
+        error={errors.discoveryQuery}
+      />
+
+      {/* **A number, and the two sentences that keep it honest.** One says the
+          list may come back shorter than the number asked for; the other says
+          the same creator is only ever represented once. Both describe what the
+          run already does — neither is a setting, and neither goes into the
+          instruction box, where somebody could delete a rule that would still
+          be applied. */}
+      {discovery ? (
+        <div className="grid gap-2">
+          <Label htmlFor="discoveryMaxResults">
+            {t(language, "worker.field.discoveryMaxResults")}
+          </Label>
+          <p
+            id="discoveryMaxResults-help"
+            className="text-xs text-muted-foreground"
+          >
+            {t(language, "worker.field.discoveryMaxResultsHelp")}{" "}
+            {t(language, "worker.field.discoveryDiversityNote")}
+          </p>
+          <Input
+            id="discoveryMaxResults"
+            name="discoveryMaxResults"
+            type="number"
+            min={1}
+            max={DISCOVERY_MAX_RESULTS_CEILING}
+            step={1}
+            className="max-w-24"
+            defaultValue={
+              values.discoveryMaxResults ?? DISCOVERY_DEFAULT_MAX_RESULTS
+            }
+            aria-describedby={
+              errors.discoveryMaxResults
+                ? "discoveryMaxResults-error discoveryMaxResults-help"
+                : "discoveryMaxResults-help"
+            }
+            aria-invalid={errors.discoveryMaxResults ? true : undefined}
+          />
+          {errors.discoveryMaxResults ? (
+            <p id="discoveryMaxResults-error" className="text-sm text-destructive">
+              {errors.discoveryMaxResults}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* **The prompt means something different for each kind**, so it is asked
           for differently. A prompt worker's prompt is the whole job. A website
           worker's runs only after a change has been found, with the old and new
@@ -410,13 +508,16 @@ export function WorkerFields({
           would be advice about a field that has none to add. */}
       <CountedField
         field="prompt"
-        label={t(
-          language,
-          website ? "worker.field.changePrompt" : "worker.prompt",
-        )}
+        label={t(language, promptLabelKeys[kind])}
         multiline
-        rows={website ? 5 : 10}
-        help={website ? undefined : t(language, "worker.field.promptHelp")}
+        rows={kind === "prompt" ? 10 : 5}
+        help={
+          kind === "prompt"
+            ? t(language, "worker.field.promptHelp")
+            : discovery
+              ? t(language, "worker.field.discoveryInstructionHelp")
+              : undefined
+        }
         defaultValue={values.prompt}
         placeholder={t(
           language,

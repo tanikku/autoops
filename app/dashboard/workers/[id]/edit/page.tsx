@@ -7,6 +7,7 @@ import { t } from "@/lib/i18n";
 import { getDocumentLanguage } from "@/lib/i18n/server";
 import { requireUserId } from "@/lib/session";
 import { getUserLanguage, getUserTimezone } from "@/lib/users";
+import { getDiscoverySource } from "@/lib/discovery/repository";
 import { getWebsiteSource } from "@/lib/website-sources";
 import { minutesToTimeValue } from "@/lib/worker-input";
 
@@ -65,10 +66,21 @@ export default async function EditWorkerPage({
   const source =
     worker.kind === "website" ? await getWebsiteSource(id, userId) : null;
 
+  // **The same shape for the kind that has a search instead of a page.**
+  const discovery =
+    worker.kind === "discovery" ? await getDiscoverySource(id, userId) : null;
+
   // A website worker with nothing to watch is a state that should not exist.
   // Rendering it as a prompt worker would hide that, and saving the form would
   // then be a conversion nobody asked for — so it is treated as no worker.
   if (worker.kind === "website" && !source) {
+    notFound();
+  }
+
+  // A discovery worker with no search is the same state and gets the same
+  // answer. **Nothing is recreated here** — the form would otherwise render as
+  // a worker of another kind, and saving it would make that permanent.
+  if (worker.kind === "discovery" && !discovery) {
     notFound();
   }
 
@@ -92,6 +104,8 @@ export default async function EditWorkerPage({
             description: worker.description,
             prompt: worker.prompt,
             websiteUrl: source?.url,
+            discoveryQuery: discovery?.query,
+            discoveryMaxResults: discovery?.maxResults,
             frequency: worker.frequency,
             status: worker.status,
             runAt: minutesToTimeValue(worker.runAtMinutes),

@@ -347,6 +347,48 @@ One consequence is worth knowing: a component that unmounts on success — a car
 that deletes itself — cannot raise its toast from an effect, because the effect
 never runs. Those call sites raise it from the action's result directly.
 
+### Discovery Workers
+
+**A third kind, which asks somewhere outside Koqentra what exists.** A prompt
+worker works from the text it holds and a website worker from one address it was
+given; a discovery worker is given a search instead, and what comes back is a
+short list of things somebody might want to look at — a title, who published it,
+where to find it, and why it was picked.
+
+**The current provider is the YouTube Data API v3, and that is an
+implementation detail rather than the feature.** Nothing above the adapter names
+it: the domain types, the selection step and the stored history are
+provider-neutral, and `DiscoverySource.source` is the column that says which one
+was asked. The kind is called `discovery` in the code and "Recommendations" on
+screen for the same reason — a second provider should be a value in that column,
+not a rename.
+
+**`YOUTUBE_API_KEY` is what makes it available**, and it is a server-side secret
+like every other key here: it is read when a provider is asked for, it travels
+in the request's query string and never into a log or an error, and it is in no
+file in this repository. A deployment without one refuses to create a discovery
+worker and fails the runs of any that already exist — see [Setup](#setup).
+**Nothing else is affected**: prompt and website workers do not reach a
+provider, and the application starts normally without the variable.
+
+**What a run does, and what it deliberately does not:**
+
+| | |
+| --- | --- |
+| Asks the source | One `search.list`, one page, videos published in the last thirty days |
+| Sets aside | Everything this worker has *already recommended*, over its whole history |
+| Chooses | A model ranks what is left and says why, from a title, an author and a date — it has watched nothing |
+| Keeps | At most one item per creator, and at most the number the owner asked for |
+| Records | Only what it chose, so the same thing is never recommended twice |
+| Does **not** | Follow, like, comment, subscribe, post, or open anything. Every action after the list is the owner's |
+
+**Ending with nothing is an ordinary outcome.** A source with nothing in it, a
+source whose every result has been recommended before, a model that judged none
+of them worth it, and two candidates from one creator where only one could be
+kept all finish the same way: a completed run that says nothing was found for
+this search. **Nothing pads the list out** — the number an owner sets is a
+ceiling rather than a promise.
+
 ### Email Notifications
 
 **A toast reaches somebody who is looking at Koqentra. This is for the runs
@@ -994,6 +1036,8 @@ the next one, so a changed setting would appear to do nothing.
 **Execution**
 
 - Manual Run
+- Discovery Run — asks a source what exists, sets aside what this worker has
+  already recommended, and has a model pick a few of what is left
 - Scheduled Run — `daily`, `weekly` or `monthly`, at a chosen time of day, on a
   chosen weekday or day of the month
 - Scheduler — decides what is due
@@ -1208,6 +1252,7 @@ cp .env.example .env
 | `SUPPORT_EMAIL` | No | The address Settings and the privacy notice offer as a way to reach a person. **Without it there is no support link at all** — see below |
 | `RESEND_API_KEY` | No | Sends [email notifications](#email-notifications). Without it, nothing is sent and a line is logged |
 | `EMAIL_FROM` | No | The sender those are from, e.g. `Koqentra <notifications@example.com>`. Needed alongside the key; either one missing sends nothing |
+| `YOUTUBE_API_KEY` | No | A YouTube Data API v3 key, used by [discovery workers](#discovery-workers). Without it, a discovery worker cannot be created and an existing one fails its runs; nothing else is affected |
 
 `.env` is gitignored; `.env.example` is committed and holds no real values.
 

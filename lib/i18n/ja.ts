@@ -107,6 +107,10 @@ export const ja: Record<TranslationKey, string> = {
   "worker.kind.websiteOption": "Web ページを監視する",
   "worker.kind.websiteOptionDescription":
     "ページを確認し、変更があったときだけ AI を使います。",
+  /** 提供元(YouTube)ではなく、利用者がやりたいことで名前を付ける。 */
+  "worker.kind.discoveryOption": "おすすめを探す",
+  "worker.kind.discoveryOptionDescription":
+    "テーマに沿って新しいものを探し、理由を添えていくつかおすすめします。",
 
   "worker.frequency.daily": "毎日",
   "worker.frequency.weekly": "毎週",
@@ -126,7 +130,17 @@ export const ja: Record<TranslationKey, string> = {
   "worker.field.description": "説明",
   "worker.field.descriptionPlaceholder": "この Worker の役割は?",
   "worker.field.websiteUrl": "Web ページのアドレス",
-  "worker.field.discoveryQuery": "検索キーワード",
+  "worker.field.discoveryQuery": "探したい内容",
+  "worker.field.discoveryQueryPlaceholder": "ハリネズミ",
+  "worker.field.discoveryMaxResults": "おすすめする最大件数",
+  /** 英語版が Koqentra を主語にしているので、日本語も主語を落とさない。 */
+  "worker.field.discoveryMaxResultsHelp":
+    "条件に合うものが少ない場合は、Koqentra がおすすめする数が指定した件数より少なくなることがあります。",
+  "worker.field.discoveryDedupNote": "前におすすめしたものは除きます。",
+  "worker.field.discoveryDiversityNote": "同じ投稿者からは1件まで選びます。",
+  "worker.field.discoveryInstruction": "AI への選び方の指示",
+  "worker.field.discoveryInstructionHelp":
+    "AI が見るのはタイトル・投稿者・公開日だけです。動画そのものは見ていません。",
   "worker.field.promptPlaceholder":
     "この Worker にしてほしいことを書いてください。",
   /**
@@ -185,12 +199,21 @@ export const ja: Record<TranslationKey, string> = {
   "worker.create.websiteFirstRunNote":
     "最初のチェックでは、いまのページの状態を記録するだけで通知は送りません。比べる相手がまだないためです。次回以降は記録した状態と比べて、変わったところがあればお知らせします。",
 
+  "worker.create.discoveryHumanNote":
+    "Koqentra が候補を探しておすすめします。視聴・フォロー・コメントなどの操作は自分で行います。",
+
   "worker.create.templatesHeading": "テンプレートを選ぶ",
   "worker.create.templatesHelp":
     "テンプレートを選ぶと、下のフォームに例が入ります。空いているところに、ご自身の内容を加えてください。",
 
   "template.group.website": "Web を見ておいてもらう",
   "template.group.prompt": "AI に定期的に仕事をしてもらう",
+  "template.group.discovery": "外から探してきてもらう",
+  "template.recommendationFinder.name": "おすすめを毎日さがす",
+  "template.recommendationFinder.description":
+    "テーマに沿って毎日新しいものを探し、いくつかおすすめします。",
+  "template.recommendationFinder.prompt":
+    "最近のものを優先して、興味を持ちやすいものを選んでください。",
 
   /**
    * テンプレートは名前・説明・指示の3つとも訳す。**適用した後に人が書いたものは
@@ -533,6 +556,9 @@ export const ja: Record<TranslationKey, string> = {
   "worker.detail.createdAt": "作成日時",
   "worker.detail.updatedAt": "更新日時",
   "worker.detail.watchedPage": "監視中のページ",
+  "worker.detail.discoverySource": "探す場所",
+  "worker.detail.discoveryQuery": "探したい内容",
+  "worker.detail.discoveryMaxResults": "おすすめする最大件数",
   "worker.detail.runHistory": "実行履歴",
   "worker.detail.olderRuns": "過去の実行を見る",
   "worker.detail.backToLatestRuns": "最新の実行に戻る",

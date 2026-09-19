@@ -582,3 +582,178 @@ describe("the email notification setting", () => {
     expect(html).not.toContain('type="email"');
   });
 });
+
+/**
+ * A discovery worker's fields, and the promises the copy beside them makes.
+ *
+ * **The words are the subject as much as the boxes are.** What Koqentra knows
+ * about what it has offered before, what it does when fewer things match, and
+ * where it stops and the person starts are all decided by the run — and a form
+ * that described any of them differently would be teaching somebody to expect
+ * something that does not happen.
+ */
+describe("a discovery worker's fields", () => {
+  const html = render({ values: {}, kind: "discovery" });
+  const ja = render({ values: {}, kind: "discovery", language: "ja" });
+
+  it("asks what to look for", () => {
+    expect(html).toContain(">What to look for<");
+    expect(html).toContain('id="discoveryQuery"');
+    expect(ja).toContain(">探したい内容<");
+  });
+
+  it("asks how many to recommend, starting at five", () => {
+    expect(html).toContain(">How many to recommend<");
+    expect(html).toContain('id="discoveryMaxResults"');
+    expect(html).toContain('value="5"');
+    expect(html).toContain('min="1"');
+    expect(html).toContain('max="10"');
+  });
+
+  /**
+   * **One provider exists, so there is nothing to choose between.** The field
+   * is still submitted, because the server reads it and because a second
+   * provider should arrive as an option rather than as a new field.
+   */
+  it("submits the source without asking about it", () => {
+    expect(html).toContain('name="discoverySource"');
+    expect(html).toContain('value="youtube"');
+    expect(html).toContain('type="hidden"');
+    // Nothing on the form names the service or claims anything about a key.
+    expect(html).not.toContain(">YouTube<");
+    expect(html.toLowerCase()).not.toContain("api key");
+  });
+
+  it("asks how to choose rather than what to ask", () => {
+    expect(html).toContain(">How to choose<");
+    expect(ja).toContain(">AI への選び方の指示<");
+  });
+
+  /**
+   * **Three fields and no more.** Saying so on the form is what keeps somebody
+   * from writing an instruction about how well made something is.
+   */
+  it("says what the AI can actually see", () => {
+    expect(html).toContain(
+      "The AI sees each item&#x27;s title, who published it and when",
+    );
+    expect(ja).toContain("AI が見るのはタイトル・投稿者・公開日だけです");
+  });
+
+  /** The existing cadence control, reused rather than reinvented. */
+  it("reuses the frequency control", () => {
+    expect(html).toContain('name="frequency"');
+    expect(html).toContain(">Daily<");
+  });
+
+  /**
+   * **Kept and hidden, not removed.** An unmounted field forgets what was typed
+   * in it, and somebody comparing the kinds should not lose an address by
+   * looking at the other one.
+   */
+  it("keeps the website address out of sight rather than dropping it", () => {
+    expect(html).toContain('id="websiteUrl"');
+    expect(html).toContain('class="hidden"');
+    // The search, by contrast, is the one on screen for this kind.
+    expect(html).toContain('id="discoveryQuery"');
+  });
+});
+
+/**
+ * What the copy promises, in both languages.
+ *
+ * Each of these is a sentence the run has to be able to stand behind.
+ */
+describe("what a discovery form says it does", () => {
+  const en = render({ values: {}, kind: "discovery" });
+  const ja = render({ values: {}, kind: "discovery", language: "ja" });
+
+  /**
+   * **Koqentra knows what it has recommended, and nothing wider.** Not what has
+   * been watched, not what is new to the world, not what somebody saw
+   * elsewhere — so the sentence says exactly that and no more.
+   */
+  it("says previously recommended items are excluded", () => {
+    expect(en).toContain("Previously recommended items are excluded.");
+    expect(ja).toContain("前におすすめしたものは除きます。");
+  });
+
+  it.each([
+    ["新しいものだけ", ja],
+    ["未視聴", ja],
+    ["まだ見ていない", ja],
+    ["only new", en],
+    ["never seen", en],
+    ["unwatched", en],
+  ])("does not claim %o", (overclaim, html) => {
+    expect(html).not.toContain(overclaim);
+  });
+
+  it("says one recommendation per creator at most", () => {
+    expect(en).toContain(
+      "At most one recommendation is selected from the same creator.",
+    );
+    expect(ja).toContain("同じ投稿者からは1件まで選びます。");
+  });
+
+  /** A ceiling rather than a promise: nothing pads the list out. */
+  it("says the list may come back shorter than asked for", () => {
+    expect(en).toContain("Koqentra may return fewer than the requested number");
+    expect(ja).toContain("指定した件数より少なくなることがあります");
+  });
+
+  it.each([
+    ["必ず5件", ja],
+    ["always 5", en],
+    ["exactly 5", en],
+  ])("does not promise a fixed count with %o", (promise, html) => {
+    expect(html).not.toContain(promise);
+  });
+
+  /**
+   * **Nothing on this path acts on what it finds.** A form that implied
+   * otherwise would be describing a product that does not exist.
+   */
+  it.each([
+    ["自動フォロー", ja],
+    ["自動いいね", ja],
+    ["自動投稿", ja],
+    ["自動視聴", ja],
+    ["auto-follow", en],
+    ["automatically like", en],
+    ["automatically post", en],
+    ["automatically comment", en],
+  ])("never offers %o", (action, html) => {
+    expect(html).not.toContain(action);
+  });
+});
+
+/**
+ * The other two kinds, unchanged by the third arriving.
+ *
+ * The instruction box is labelled per kind now; these fix that the two labels
+ * that already existed still read the way they did.
+ */
+describe("the other kinds are unchanged", () => {
+  /**
+   * **The search box is kept and hidden, not removed**, exactly as the address
+   * box already was: somebody who types a search, looks at another kind and
+   * comes back should find it still there. What is genuinely absent is the
+   * source and the count, which belong to no other kind.
+   */
+  it("still asks a prompt worker what to ask the AI", () => {
+    const html = render({ values: {} });
+
+    expect(html).toContain(">What to ask the AI<");
+    expect(html).not.toContain('name="discoverySource"');
+    expect(html).not.toContain('id="discoveryMaxResults"');
+  });
+
+  it("still asks a website worker what to do when the page changes", () => {
+    const html = render({ values: {}, kind: "website" });
+
+    expect(html).toContain(">When the page changes<");
+    expect(html).not.toContain('name="discoverySource"');
+    expect(html).not.toContain('id="discoveryMaxResults"');
+  });
+});

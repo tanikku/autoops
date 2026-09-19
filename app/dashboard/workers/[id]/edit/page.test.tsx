@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   getUserTimezone: vi.fn(),
   getUserLanguage: vi.fn(),
   getWebsiteSource: vi.fn(),
+  getDiscoverySource: vi.fn(),
   notFound: vi.fn(),
 }));
 
@@ -36,6 +37,9 @@ vi.mock("@/lib/users", () => ({
 }));
 vi.mock("@/lib/website-sources", () => ({
   getWebsiteSource: mocks.getWebsiteSource,
+}));
+vi.mock("@/lib/discovery/repository", () => ({
+  getDiscoverySource: mocks.getDiscoverySource,
 }));
 
 const EditWorkerPage = (await import(
@@ -114,6 +118,7 @@ beforeEach(() => {
   mocks.getUserLanguage.mockReset().mockResolvedValue("en");
   mocks.getRoutineForEdit.mockReset().mockResolvedValue(worker());
   mocks.getWebsiteSource.mockReset().mockResolvedValue(null);
+  mocks.getDiscoverySource.mockReset().mockResolvedValue(null);
   mocks.notFound.mockReset().mockImplementation(() => {
     throw new Error("not found");
   });
@@ -235,5 +240,86 @@ describe("what the tab says", () => {
 
       expect(title).not.toMatch(/[0-9a-f]{8}/i);
     }
+  });
+});
+
+/**
+ * What the edit page hands the form for a worker that searches.
+ *
+ * **The search is loaded rather than left to the form**, exactly as the watched
+ * address is: `DiscoverySource` is the only place it lives, and a form given
+ * nothing would render an empty box over a worker that does have one — and
+ * saving it would write the blank over the search.
+ */
+describe("edit worker page — a discovery worker", () => {
+  const DISCOVERY_SOURCE = {
+    id: "discovery-source-1",
+    routineId: "worker-1",
+    source: "youtube",
+    query: "ハリネズミ 飼い方",
+    maxResults: 3,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+
+  beforeEach(() => {
+    mocks.getRoutineForEdit.mockResolvedValue(worker({ kind: "discovery" }));
+    mocks.getDiscoverySource.mockResolvedValue(DISCOVERY_SOURCE);
+  });
+
+  it("hands the stored search and count to the form", async () => {
+    const passed = passedProp(await render(), "worker") as Record<
+      string,
+      unknown
+    >;
+
+    expect(passed.kind).toBe("discovery");
+    expect(passed.discoveryQuery).toBe("ハリネズミ 飼い方");
+    expect(passed.discoveryMaxResults).toBe(3);
+  });
+
+  it("reads the search as the signed-in account", async () => {
+    await render();
+
+    expect(mocks.getDiscoverySource).toHaveBeenCalledWith("worker-1", "user-1");
+  });
+
+  /**
+   * **Fail closed, and nothing is recreated.** A discovery worker with no
+   * search should not exist; rendering it as a worker of another kind would
+   * hide that, and saving the form would make it permanent.
+   */
+  it("is not found when its search is missing", async () => {
+    mocks.getDiscoverySource.mockResolvedValue(null);
+
+    await expect(render()).rejects.toThrow("not found");
+  });
+
+  it("still hands the account's timezone to the form", async () => {
+    expect(passedTimezone(await render())).toBe("Asia/Tokyo");
+  });
+});
+
+/** The other two kinds never reach for a search. */
+describe("edit worker page — the other kinds are unchanged", () => {
+  it("asks nothing about a search for a prompt worker", async () => {
+    await render();
+
+    expect(mocks.getDiscoverySource).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing about a search for a website worker", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(worker({ kind: "website" }));
+    mocks.getWebsiteSource.mockResolvedValue({
+      id: "source-1",
+      routineId: "worker-1",
+      url: "https://example.com/news",
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+
+    await render();
+
+    expect(mocks.getDiscoverySource).not.toHaveBeenCalled();
   });
 });

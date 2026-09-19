@@ -36,6 +36,13 @@ export const workerFieldLimits = {
   description: 500,
   prompt: 10_000,
   websiteUrl: 8_192,
+  /**
+   * **Not a number of this file's own.** The search a discovery worker sends is
+   * bounded by `DISCOVERY_QUERY_MAX_CHARS`, decided in C2.19C alongside the
+   * other discovery limits; this entry is what puts a counter beside the box
+   * and gives the length message the same wording every other field gets.
+   */
+  discoveryQuery: DISCOVERY_QUERY_MAX_CHARS,
 } as const;
 
 export type WorkerFieldName = keyof typeof workerFieldLimits;
@@ -44,29 +51,25 @@ export type WorkerFieldName = keyof typeof workerFieldLimits;
  * Field-level messages, keyed by field. Empty means the input is acceptable.
  *
  * **`status` carries messages without being one of the fields above.** Those
- * four are the ones with a length to count against (`workerFieldLimits`), and a
+ * are the ones with a length to count against (`workerFieldLimits`), and a
  * dropdown has none; what it does have is a rule that can reject it — the
  * account's active-worker limit — and the message for that belongs beside the
- * control it is about rather than in a toast on its own.
+ * control it is about rather than in a toast on its own. `DiscoveryFieldName`
+ * is here for the same reason.
  */
 export type WorkerFieldErrors = Partial<
   Record<WorkerFieldName | "status" | DiscoveryFieldName, string>
 >;
 
 /**
- * The three fields a discovery worker has, named the way the form sends them.
+ * The two discovery fields that have no length to count against.
  *
- * **Alongside `status` rather than inside `workerFieldLimits`.** That constant
- * is the set of fields with a character counter beside them, read by
- * `components/worker-fields.tsx`; these have no control yet, and putting them
- * there would add a counter to a form that has nowhere to show one. What they
- * do have is rules that can reject them, and a message belongs beside the field
- * it is about whenever there is one to put it beside.
+ * **`discoveryQuery` is not among them**, because it does have one and is in
+ * `workerFieldLimits` with the rest. These two are here for the same reason
+ * `status` is: a rule can reject them, so a message has to be able to name
+ * them, but there is no character count to show beside either.
  */
-export type DiscoveryFieldName =
-  | "discoverySource"
-  | "discoveryQuery"
-  | "discoveryMaxResults";
+export type DiscoveryFieldName = "discoverySource" | "discoveryMaxResults";
 
 /**
  * What each field is called inside a message about it.
@@ -80,6 +83,7 @@ const fieldLabelKeys: Record<WorkerFieldName, TranslationKey> = {
   description: "worker.field.description",
   prompt: "worker.prompt",
   websiteUrl: "worker.field.websiteUrl",
+  discoveryQuery: "worker.field.discoveryQuery",
 };
 
 export type WorkerFormInput = {
@@ -501,14 +505,11 @@ function validateDiscoveryFields(
       language,
       "worker.validation.discoveryQueryRequired",
     );
-  } else if (input.discoveryQuery.length > DISCOVERY_QUERY_MAX_CHARS) {
-    // The shared sentence, filled the way `applyLengthLimit` fills it — the
-    // field is not one of `workerFieldLimits`, but a reader being told a length
-    // should be told it in the same words wherever they are.
-    errors.discoveryQuery = t(language, "worker.validation.tooLong", {
-      label: t(language, "worker.field.discoveryQuery"),
-      limit: DISCOVERY_QUERY_MAX_CHARS.toLocaleString("en-US"),
-    });
+  } else {
+    // The shared length check, so a reader being told about a length is told it
+    // in the same words wherever they are — and against the same constant the
+    // adapter obeys.
+    applyLengthLimit(errors, "discoveryQuery", input.discoveryQuery, language);
   }
 
   // **Null is only wrong when the form said something.** An absent field is

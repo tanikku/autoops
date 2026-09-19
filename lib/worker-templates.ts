@@ -135,6 +135,30 @@ export const workerTemplates: WorkerTemplate[] = [
     promptKey: "template.recurringReport.prompt",
     defaultFrequency: "weekly",
   },
+  /**
+   * The one discovery example.
+   *
+   * **It carries no search, for the reason a website template carries no
+   * address**: what to look for is the one thing only the person choosing can
+   * know. Everything else is filled in — a daily cadence, and an instruction
+   * that says how to choose rather than what to choose.
+   *
+   * **Nothing here names a provider.** The template makes a worker that finds
+   * things; which service is asked is `DiscoverySource.source`, set by the form
+   * to the one this version has. A second provider changes that value and
+   * leaves this entry alone.
+   *
+   * **It sets no count.** The form's default is five, and a template repeating
+   * it would be a second place to change when it moves.
+   */
+  {
+    id: "recommendation-finder",
+    kind: "discovery",
+    nameKey: "template.recommendationFinder.name",
+    descriptionKey: "template.recommendationFinder.description",
+    promptKey: "template.recommendationFinder.prompt",
+    defaultFrequency: "daily",
+  },
 ];
 
 /**

@@ -37,11 +37,16 @@ import { templatesOfKind, type WorkerTemplate } from "@/lib/worker-templates";
 import { isRoutineStatus, type RoutineKind, type RoutineStatus } from "@/types";
 
 /**
- * The two kinds, as the person choosing one reads them.
+ * The three kinds, as the person choosing one reads them.
  *
  * Wording rather than jargon: `website` is the stored value, "Watch a page" is
  * the thing being decided. The second line says what each one needs from them,
  * because that is the difference that matters while filling the form in.
+ *
+ * **None of them names a provider.** "Find recommendations" is what somebody
+ * wants; YouTube is what this version asks to get it. Putting the service in
+ * the option would make adding a second one a rename of the feature — and would
+ * describe the product by its current implementation.
  */
 const kindOptions: {
   value: RoutineKind;
@@ -57,6 +62,11 @@ const kindOptions: {
     value: "website",
     label: "worker.kind.websiteOption",
     description: "worker.kind.websiteOptionDescription",
+  },
+  {
+    value: "discovery",
+    label: "worker.kind.discoveryOption",
+    description: "worker.kind.discoveryOptionDescription",
   },
 ];
 
@@ -74,6 +84,7 @@ const kindOptions: {
  */
 const templateGroups: { kind: RoutineKind; heading: TranslationKey }[] = [
   { kind: "website", heading: "template.group.website" },
+  { kind: "discovery", heading: "template.group.discovery" },
   { kind: "prompt", heading: "template.group.prompt" },
 ];
 
@@ -331,7 +342,7 @@ export function RoutineForm({
           {t(language, "worker.create.kindHeading")}
         </h2>
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
           {kindOptions.map((option) => (
             <label key={option.value} className="cursor-pointer">
               <input
@@ -437,6 +448,17 @@ export function RoutineForm({
 
             **Nothing about execution changes here.** This says out loud what a
             first run already does. */}
+        {/* **Where Koqentra stops, said before the worker exists.** A worker
+            that finds things could reasonably be expected to act on them; this
+            one hands over a list and a reason for each, and every action after
+            that is the person's own. It sits with the fields rather than in a
+            help page because that is where the expectation is formed. */}
+        {kind === "discovery" ? (
+          <p className="text-sm text-muted-foreground">
+            {t(language, "worker.create.discoveryHumanNote")}
+          </p>
+        ) : null}
+
         <WorkerFields
           values={
             injected?.values ??

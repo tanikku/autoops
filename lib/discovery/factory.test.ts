@@ -136,11 +136,29 @@ describe("discovery after the runtime arrived", () => {
   });
 
   /**
-   * **The UI boundary, which this phase did not cross.** A kind being runnable
-   * is not a kind being offerable: the hire form still shows two options, and
-   * the third one arrives with the form that can configure it.
+   * **The UI boundary, now crossed.** A kind being runnable and a kind being
+   * offerable are different things, and they arrived one phase apart: the
+   * runtime shipped while the hire form still showed two options, and the third
+   * option came with the form that can configure it. What the factory answers
+   * did not change either time — availability is still decided by a variable,
+   * and still without asking anybody.
    */
-  it("is not offered as a kind to choose on the hire form", () => {
-    expect(Object.keys(en)).not.toContain("worker.kind.discoveryOption");
+  it("is offered as a kind to choose on the hire form", () => {
+    expect(Object.keys(en)).toContain("worker.kind.discoveryOption");
+  });
+
+  /**
+   * **The form does not gate on availability**, which is the decision worth
+   * fixing here: no screen says whether a key is configured, and a deployment
+   * without one refuses at the create action rather than by hiding the option.
+   * A UI that hid it would be a second source of truth for the same question.
+   */
+  it("is offered whether or not this deployment has a key", () => {
+    expect(process.env.YOUTUBE_API_KEY).toBeUndefined();
+    expect(createDiscoveryProvider("youtube")).toEqual({
+      available: false,
+      reason: "not-configured",
+    });
+    expect(Object.keys(en)).toContain("worker.kind.discoveryOption");
   });
 });
