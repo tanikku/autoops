@@ -1,6 +1,7 @@
 import "server-only";
 
 import { type DbClient, prisma } from "@/lib/prisma";
+import { DISCOVERY_MAX_CANDIDATES } from "@/lib/discovery/limits";
 import type { DiscoveryCandidate } from "@/lib/discovery/types";
 
 /**
@@ -118,27 +119,56 @@ export async function saveDiscoverySource(
 }
 
 /**
- * The keys this worker has already chosen, newest first.
+ * Which of these this worker has already chosen, over its whole history.
  *
- * **Bounded, and the bound is the caller's.** The exclusion set is compared
- * against one run's candidates, so it needs to reach back far enough to cover
- * what a provider is likely to return again — not to the beginning of time. An
- * unbounded read would grow with the worker's age and be spent almost entirely
- * on items no search would surface again.
+ * **The question is membership, not recency, and the difference is
+ * correctness.** An earlier draft of this read the most recent N rows and
+ * compared candidates against that. It is wrong for the case the feature exists
+ * for: a channel that publishes weekly is surfaced by the same search every day,
+ * and a worker that has been running for a year has a history longer than any N
+ * — so the item it chose eleven months ago falls out of the window and is
+ * offered again as new. There is no N that is both small enough to be worth
+ * bounding and large enough to be correct.
  *
- * Keys only: what is wanted is whether something has been seen, and the title
- * it had when it was chosen answers a different question.
+ * **Asking about the candidates instead makes the bound the right one.** A run
+ * has at most `DISCOVERY_MAX_CANDIDATES` of them, so the query is bounded by the
+ * size of the question rather than by the age of the worker, and it reaches the
+ * whole history because `itemKey` is indexed for this pair by the unique
+ * constraint on `(routineId, itemKey)`. No cursor, no `take`, no `orderBy`:
+ * order means nothing to a set.
+ *
+ * **Nothing is asked when there is nothing to ask about.** An empty candidate
+ * list issues no statement at all — `IN ()` is a query whose answer is already
+ * known.
+ *
+ * Keys only: what is wanted is whether something has been seen, and the title it
+ * had when it was chosen answers a different question.
  */
-export async function listRecentSeenKeys(
+export async function findSeenKeys(
   routineId: string,
   userId: string,
-  limit: number,
+  candidateItemKeys: readonly string[],
   client: DbClient = prisma,
 ): Promise<Set<string>> {
+  if (candidateItemKeys.length === 0) {
+    return new Set();
+  }
+
+  if (candidateItemKeys.length > DISCOVERY_MAX_CANDIDATES) {
+    // Not a database error and not something a provider did: a run asking about
+    // more candidates than a run may have is a bug in Koqentra, and answering
+    // it would make the bound advisory.
+    throw new Error(
+      `A discovery run may ask about at most ${DISCOVERY_MAX_CANDIDATES} candidates.`,
+    );
+  }
+
   const rows = await client.discoverySeenItem.findMany({
-    where: { routineId, routine: { userId } },
-    orderBy: [{ selectedAt: "desc" }, { id: "desc" }],
-    take: limit,
+    where: {
+      routineId,
+      routine: { userId },
+      itemKey: { in: [...candidateItemKeys] },
+    },
     select: { itemKey: true },
   });
 

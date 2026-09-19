@@ -44,8 +44,8 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 const {
+  findSeenKeys,
   getDiscoverySource,
-  listRecentSeenKeys,
   recordSeenItems,
   saveDiscoverySource,
 } = await import("@/lib/discovery/repository");
@@ -166,16 +166,41 @@ describe("saving what a worker searches for", () => {
   });
 });
 
-describe("the keys a worker has already chosen", () => {
-  it("asks for this worker's history, as this account", async () => {
-    await listRecentSeenKeys("worker-1", "user-1", 50);
+/**
+ * Which of a run's candidates this worker has already chosen.
+ *
+ * **The question is membership over the whole history, and that is the
+ * correction this phase made.** Reading the most recent N rows and comparing
+ * against them is wrong for the case the feature exists for: a channel that
+ * publishes weekly is surfaced by the same search every day, so an item chosen
+ * eleven months ago falls out of any window and is offered again as new.
+ * Asking about the candidates instead bounds the query by the size of the
+ * question rather than by the age of the worker.
+ */
+describe("which of these a worker has already chosen", () => {
+  it("asks about exactly the candidates, as this account, over the whole history", async () => {
+    await findSeenKeys("worker-1", "user-1", ["youtube:a", "youtube:b"]);
 
     expect(mocks.seenFindMany).toHaveBeenCalledWith({
-      where: { routineId: "worker-1", routine: { userId: "user-1" } },
-      orderBy: [{ selectedAt: "desc" }, { id: "desc" }],
-      take: 50,
+      where: {
+        routineId: "worker-1",
+        routine: { userId: "user-1" },
+        itemKey: { in: ["youtube:a", "youtube:b"] },
+      },
       select: { itemKey: true },
     });
+  });
+
+  /** No cursor, no limit, no ordering — order means nothing to a set. */
+  it("takes no recent-history window with it", async () => {
+    await findSeenKeys("worker-1", "user-1", ["youtube:a"]);
+
+    const call = mocks.seenFindMany.mock.calls[0][0] as Record<string, unknown>;
+
+    expect(call.take).toBeUndefined();
+    expect(call.orderBy).toBeUndefined();
+    expect(call.cursor).toBeUndefined();
+    expect(call.skip).toBeUndefined();
   });
 
   /**
@@ -183,26 +208,35 @@ describe("the keys a worker has already chosen", () => {
    * account's exclusion set be read by whoever guessed a worker id.
    */
   it("never scopes on the worker alone", async () => {
-    await listRecentSeenKeys("worker-1", "user-1", 50);
+    await findSeenKeys("worker-1", "user-1", ["youtube:a"]);
 
     const where = mocks.seenFindMany.mock.calls[0][0].where as Record<
       string,
       unknown
     >;
 
-    expect(Object.keys(where).sort()).toEqual(["routine", "routineId"]);
+    expect(Object.keys(where).sort()).toEqual([
+      "itemKey",
+      "routine",
+      "routineId",
+    ]);
     expect(where.routine).toEqual({ userId: "user-1" });
   });
 
   /**
-   * **Bounded, because the exclusion set is compared against one run.** An
-   * unbounded read would grow with the worker's age and be spent almost
-   * entirely on items no search would surface again.
+   * **The whole point of the correction.** An item chosen long ago is still
+   * something this worker has seen, however many rows have been written since.
    */
-  it("reaches back only as far as it was asked to", async () => {
-    await listRecentSeenKeys("worker-1", "user-1", 20);
+  it("finds an item chosen long ago", async () => {
+    mocks.seenFindMany.mockResolvedValue([{ itemKey: "youtube:ancient" }]);
 
-    expect(mocks.seenFindMany.mock.calls[0][0].take).toBe(20);
+    const seen = await findSeenKeys("worker-1", "user-1", [
+      "youtube:ancient",
+      "youtube:new",
+    ]);
+
+    expect(seen.has("youtube:ancient")).toBe(true);
+    expect(seen.has("youtube:new")).toBe(false);
   });
 
   it("answers with a set, so a lookup is one question", async () => {
@@ -211,17 +245,66 @@ describe("the keys a worker has already chosen", () => {
       { itemKey: "youtube:b" },
     ]);
 
-    const seen = await listRecentSeenKeys("worker-1", "user-1", 50);
+    const seen = await findSeenKeys("worker-1", "user-1", [
+      "youtube:a",
+      "youtube:b",
+      "youtube:c",
+    ]);
 
+    expect(seen).toBeInstanceOf(Set);
     expect(seen.has("youtube:a")).toBe(true);
     expect(seen.has("youtube:c")).toBe(false);
     expect(seen.size).toBe(2);
   });
 
   it("answers with an empty set for a worker that has chosen nothing", async () => {
-    const seen = await listRecentSeenKeys("worker-1", "user-1", 50);
+    const seen = await findSeenKeys("worker-1", "user-1", ["youtube:a"]);
 
     expect(seen.size).toBe(0);
+  });
+
+  /** `IN ()` is a query whose answer is already known. */
+  it("asks nothing at all when there is nothing to ask about", async () => {
+    const seen = await findSeenKeys("worker-1", "user-1", []);
+
+    expect(seen.size).toBe(0);
+    expect(mocks.seenFindMany).not.toHaveBeenCalled();
+  });
+
+  it("takes a full run's worth of candidates", async () => {
+    const keys = Array.from({ length: 25 }, (_, i) => `youtube:${i}`);
+
+    await findSeenKeys("worker-1", "user-1", keys);
+
+    expect(
+      (mocks.seenFindMany.mock.calls[0][0].where.itemKey as { in: string[] }).in,
+    ).toHaveLength(25);
+  });
+
+  /** More than a run may have is a bug in Koqentra, not a bigger query. */
+  it("refuses more candidates than a run may have, and asks nothing", async () => {
+    const keys = Array.from({ length: 26 }, (_, i) => `youtube:${i}`);
+
+    await expect(findSeenKeys("worker-1", "user-1", keys)).rejects.toThrow(
+      /at most 25 candidates/,
+    );
+    expect(mocks.seenFindMany).not.toHaveBeenCalled();
+  });
+
+  it("reads through whichever client it was handed", async () => {
+    const tx = {
+      discoverySeenItem: { findMany: vi.fn().mockResolvedValue([]) },
+    };
+
+    await findSeenKeys(
+      "worker-1",
+      "user-1",
+      ["youtube:a"],
+      tx as unknown as Parameters<typeof findSeenKeys>[3],
+    );
+
+    expect(tx.discoverySeenItem.findMany).toHaveBeenCalledTimes(1);
+    expect(mocks.seenFindMany).not.toHaveBeenCalled();
   });
 });
 
@@ -310,17 +393,35 @@ describe("two accounts", () => {
   });
 
   it("reads each account's history with its own owner in the filter", async () => {
-    await listRecentSeenKeys("worker-1", "user-1", 50);
-    await listRecentSeenKeys("worker-2", "user-2", 50);
+    await findSeenKeys("worker-1", "user-1", ["youtube:a"]);
+    await findSeenKeys("worker-2", "user-2", ["youtube:a"]);
 
     expect(mocks.seenFindMany.mock.calls[0][0].where).toEqual({
       routineId: "worker-1",
       routine: { userId: "user-1" },
+      itemKey: { in: ["youtube:a"] },
     });
     expect(mocks.seenFindMany.mock.calls[1][0].where).toEqual({
       routineId: "worker-2",
       routine: { userId: "user-2" },
+      itemKey: { in: ["youtube:a"] },
     });
+  });
+
+  /**
+   * **One account having seen something says nothing about another.** The same
+   * key asked about by two workers is two independent questions, which is what
+   * keeps an exclusion set private as well as correct.
+   */
+  it("does not let one account's history answer for another's", async () => {
+    mocks.seenFindMany.mockResolvedValueOnce([{ itemKey: "youtube:a" }]);
+    mocks.seenFindMany.mockResolvedValueOnce([]);
+
+    const mine = await findSeenKeys("worker-1", "user-1", ["youtube:a"]);
+    const theirs = await findSeenKeys("worker-2", "user-2", ["youtube:a"]);
+
+    expect(mine.has("youtube:a")).toBe(true);
+    expect(theirs.has("youtube:a")).toBe(false);
   });
 
   /**
