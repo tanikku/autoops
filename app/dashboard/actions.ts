@@ -7,7 +7,10 @@ import {
   releaseManualRunSlot,
 } from "@/lib/manual-run-slot";
 import { enqueueRoutine } from "@/lib/queue";
-import { consumeManualRunQuota } from "@/lib/rate-limit";
+import {
+  consumeDiscoveryRunQuota,
+  consumeManualRunQuota,
+} from "@/lib/rate-limit";
 import { deleteRoutine, getRoutine } from "@/lib/routines";
 import { isRunPersistenceError } from "@/lib/runs";
 import { DEFAULT_LANGUAGE, t } from "@/lib/i18n";
@@ -170,6 +173,46 @@ export async function runRoutineAction(
       // "already running": that says a run of theirs is in progress, this says
       // they have started as many as they may for now.
       return { status: "error", message: t(language, "run.action.rateLimited") };
+    }
+
+    // **A second allowance, asked after the first and only for one kind.** A
+    // discovery run spends everything an ordinary manual run spends and then a
+    // search against an API whose quota belongs to whoever operates this
+    // deployment, shared by every account on it. `MANUAL_RUN_LIMIT` bounds what
+    // this account asks of Koqentra; this bounds what it can have Koqentra ask
+    // of somebody else.
+    //
+    // **The manual run already spent is not given back**, and there is
+    // deliberately no function that could give it back — the account asked, and
+    // what `MANUAL_RUN_LIMIT` bounds is the asking. Refunding here would make
+    // this the one count in `lib/rate-limit.ts` that can move backwards, and a
+    // rollback across two independent windows is a transaction this does not
+    // have and should not grow.
+    if (routine.kind === "discovery") {
+      let discoveryAllowed: boolean;
+      try {
+        discoveryAllowed = await consumeDiscoveryRunQuota(userId);
+      } catch (error) {
+        // Fail closed, exactly as above: not knowing how much of the allowance
+        // is left is not the same as knowing there is some.
+        console.error(
+          "[worker] discovery run rate limit could not be read",
+          error,
+        );
+        return {
+          status: "error",
+          message: t(language, "run.action.couldNotStart", {
+            name: routine.name,
+          }),
+        };
+      }
+
+      if (!discoveryAllowed) {
+        return {
+          status: "error",
+          message: t(language, "run.action.discoveryRateLimited"),
+        };
+      }
     }
 
     run = await enqueueRoutine(routineId);

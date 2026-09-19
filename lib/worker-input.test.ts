@@ -26,6 +26,10 @@ function input(overrides?: Partial<WorkerFormInput>): WorkerFormInput {
     description: "",
     prompt: "",
     websiteUrl: "",
+    discoverySource: "",
+    discoveryQuery: "",
+    discoveryMaxResults: null,
+    discoveryMaxResultsSubmitted: false,
     kind: null,
     status: null,
     frequency: null,
@@ -550,6 +554,10 @@ describe("in Japanese", () => {
     description: "",
     prompt: "",
     websiteUrl: "",
+    discoverySource: "",
+    discoveryQuery: "",
+    discoveryMaxResults: null,
+    discoveryMaxResultsSubmitted: false,
     kind: null,
     status: null,
     frequency: null,
@@ -645,6 +653,10 @@ describe("what the language does not change", () => {
     description: "",
     prompt: "",
     websiteUrl: "",
+    discoverySource: "",
+    discoveryQuery: "",
+    discoveryMaxResults: null,
+    discoveryMaxResultsSubmitted: false,
     kind: null,
     status: null,
     frequency: null,
@@ -683,4 +695,195 @@ describe("what the language does not change", () => {
     expect(validateWorkerForm(base, { status: "draft", frequency: "manual" }).name)
       .toBe("Name is required.");
   });
+});
+
+/**
+ * Reading the three fields a discovery worker has.
+ *
+ * **Read as submitted, like the address**, and acted on only by whoever knows
+ * the kind: editing takes the kind from the stored worker, so a reader that
+ * dropped these on the strength of the submitted one would be deciding from the
+ * field the boundary distrusts most.
+ */
+describe("readWorkerForm — discovery fields", () => {
+  function form(fields: Record<string, string> = {}) {
+    const data = new FormData();
+    data.set("name", "Recommendations");
+    for (const [key, value] of Object.entries(fields)) {
+      data.set(key, value);
+    }
+    return data;
+  }
+
+  it("reads the source, the search and the count", () => {
+    const parsed = readWorkerForm(
+      form({
+        discoverySource: "youtube",
+        discoveryQuery: "  ハリネズミ  ",
+        discoveryMaxResults: "3",
+      }),
+    );
+
+    expect(parsed.discoverySource).toBe("youtube");
+    expect(parsed.discoveryQuery).toBe("ハリネズミ");
+    expect(parsed.discoveryMaxResults).toBe(3);
+    expect(parsed.discoveryMaxResultsSubmitted).toBe(true);
+  });
+
+  it("reads a submission that names none of them as blanks", () => {
+    const parsed = readWorkerForm(form());
+
+    expect(parsed.discoverySource).toBe("");
+    expect(parsed.discoveryQuery).toBe("");
+    expect(parsed.discoveryMaxResults).toBeNull();
+    expect(parsed.discoveryMaxResultsSubmitted).toBe(false);
+  });
+
+  /**
+   * **"Did not say" and "said something wrong" are different answers**, and the
+   * count collapses both into null — so the boolean beside it is what keeps the
+   * validator from having to guess which happened.
+   */
+  it.each(["0", "11", "many", "2.5", "-1"])(
+    "reads a count of %o as unreadable but submitted",
+    (value) => {
+      const parsed = readWorkerForm(form({ discoveryMaxResults: value }));
+
+      expect(parsed.discoveryMaxResults).toBeNull();
+      expect(parsed.discoveryMaxResultsSubmitted).toBe(true);
+    },
+  );
+
+  it("now reads the discovery kind, which execution has a branch for", () => {
+    expect(readWorkerForm(form({ kind: "discovery" })).kind).toBe("discovery");
+  });
+});
+
+/**
+ * What a discovery worker needs before it can be saved.
+ *
+ * **Three fields, each refused rather than defaulted.** A search nobody wrote
+ * is not a search, a source this version does not know is one nothing can ask,
+ * and a count outside the range is a number the form was supposed to stop.
+ */
+describe("validateWorkerFormForKind — discovery", () => {
+  const CONTEXT: WorkerFormContext = { status: "draft", frequency: "manual" };
+
+  function discovery(overrides?: Partial<WorkerFormInput>): WorkerFormInput {
+    return input({
+      discoverySource: "youtube",
+      discoveryQuery: "ハリネズミ 飼い方",
+      ...overrides,
+    });
+  }
+
+  function errorsFor(overrides?: Partial<WorkerFormInput>) {
+    return validateWorkerFormForKind(discovery(overrides), CONTEXT, "discovery");
+  }
+
+  it("accepts a source, a search and no count at all", () => {
+    expect(hasWorkerFormErrors(errorsFor())).toBe(false);
+  });
+
+  it.each([1, 5, 10])("accepts a count of %i", (count) => {
+    expect(
+      hasWorkerFormErrors(
+        errorsFor({
+          discoveryMaxResults: count,
+          discoveryMaxResultsSubmitted: true,
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses a source that was left blank", () => {
+    expect(errorsFor({ discoverySource: "" }).discoverySource).toBe(
+      "Choose where to search.",
+    );
+  });
+
+  /** Unknown rather than invalid: it names something real that Koqentra cannot ask. */
+  it.each(["vimeo", "YouTube", "rss", "prompt"])(
+    "refuses the source %o",
+    (source) => {
+      expect(errorsFor({ discoverySource: source }).discoverySource).toBe(
+        "Koqentra cannot search that source.",
+      );
+    },
+  );
+
+  it("refuses a search that was left blank", () => {
+    expect(errorsFor({ discoveryQuery: "" }).discoveryQuery).toBe(
+      "Enter what to search for.",
+    );
+  });
+
+  it("refuses a search past the limit and accepts one exactly at it", () => {
+    expect(
+      errorsFor({ discoveryQuery: "x".repeat(301) }).discoveryQuery,
+    ).toContain("300");
+    expect(
+      errorsFor({ discoveryQuery: "x".repeat(300) }).discoveryQuery,
+    ).toBeUndefined();
+  });
+
+  /** A count that was named and could not be read is refused, not clamped. */
+  it("refuses a count the form named and got wrong", () => {
+    expect(
+      errorsFor({
+        discoveryMaxResults: null,
+        discoveryMaxResultsSubmitted: true,
+      }).discoveryMaxResults,
+    ).toBe("Choose how many to recommend, from 1 to 10.");
+  });
+
+  it("says nothing about a count the form did not name", () => {
+    expect(errorsFor().discoveryMaxResults).toBeUndefined();
+  });
+
+  /**
+   * **The address belongs to the other kind.** A discovery submission carrying
+   * one is not asked about it, exactly as a prompt submission is not.
+   */
+  it("asks nothing about a website address", () => {
+    expect(
+      errorsFor({ websiteUrl: "" }).websiteUrl,
+    ).toBeUndefined();
+  });
+
+  /**
+   * **The general rule still applies.** A worker Koqentra runs on its own has
+   * to have something to run, and that is decided by `validateWorkerForm`
+   * rather than restated per kind.
+   */
+  it("still requires a prompt on a scheduled active worker", () => {
+    const errors = validateWorkerFormForKind(
+      discovery({ prompt: "" }),
+      { status: "active", frequency: "daily" },
+      "discovery",
+    );
+
+    expect(errors.prompt).toBe(
+      "Prompt is required for scheduled active workers.",
+    );
+  });
+
+  /** The two other kinds are not asked about a search. */
+  it.each(["prompt", "website"] as const)(
+    "asks a %s worker nothing about a search",
+    (kind) => {
+      const errors = validateWorkerFormForKind(
+        input({
+          prompt: "Do the thing.",
+          websiteUrl: kind === "website" ? "https://example.com" : "",
+        }),
+        CONTEXT,
+        kind,
+      );
+
+      expect(errors.discoverySource).toBeUndefined();
+      expect(errors.discoveryQuery).toBeUndefined();
+      expect(errors.discoveryMaxResults).toBeUndefined();
+    },
+  );
 });

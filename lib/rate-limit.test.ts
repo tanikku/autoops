@@ -34,6 +34,7 @@ const {
   AI_DRAFT_WINDOW_MS,
   consumeAiDraftQuota,
   consumeCreatorAnalysisQuota,
+  consumeDiscoveryRunQuota,
   consumeManualRunQuota,
   CREATOR_ANALYSIS_LIMIT,
   CREATOR_ANALYSIS_SCOPE,
@@ -312,13 +313,15 @@ describe("the allowances", () => {
     expect(exported.sort()).toEqual([
       "consumeAiDraftQuota",
       "consumeCreatorAnalysisQuota",
+      "consumeDiscoveryRunQuota",
       "consumeManualRunQuota",
     ]);
     expect(consumeManualRunQuota.length).toBeLessThanOrEqual(2);
     expect(consumeCreatorAnalysisQuota.length).toBeLessThanOrEqual(2);
+    expect(consumeDiscoveryRunQuota.length).toBeLessThanOrEqual(2);
   });
 
-  /** Nothing gives a count back, for any of the three. */
+  /** Nothing gives a count back, for any of them. */
   it("offers no way to refund one", () => {
     const refundish = Object.keys(rateLimit).filter((name) =>
       /refund|release|restore|giveBack/i.test(name),

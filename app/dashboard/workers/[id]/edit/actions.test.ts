@@ -18,6 +18,9 @@ const mocks = vi.hoisted(() => ({
   getWebsiteSource: vi.fn(),
   updateWebsiteSourceUrl: vi.fn(),
   deleteWebsiteSnapshot: vi.fn(),
+  createDiscoveryProvider: vi.fn(),
+  getDiscoverySource: vi.fn(),
+  saveDiscoverySource: vi.fn(),
   transaction: vi.fn(),
   lockUser: vi.fn(),
   countRoutines: vi.fn(),
@@ -46,6 +49,13 @@ vi.mock("@/lib/website-sources", () => ({
 }));
 vi.mock("@/lib/website-snapshots", () => ({
   deleteWebsiteSnapshot: mocks.deleteWebsiteSnapshot,
+}));
+vi.mock("@/lib/discovery/factory", () => ({
+  createDiscoveryProvider: mocks.createDiscoveryProvider,
+}));
+vi.mock("@/lib/discovery/repository", () => ({
+  getDiscoverySource: mocks.getDiscoverySource,
+  saveDiscoverySource: mocks.saveDiscoverySource,
 }));
 // The transaction is the boundary under test, so the fake runs the callback and
 // hands it a marker: what the assertions want is that all three writes were
@@ -123,6 +133,14 @@ beforeEach(() => {
   mocks.getWebsiteSource.mockReset().mockResolvedValue(null);
   mocks.updateWebsiteSourceUrl.mockReset().mockResolvedValue(true);
   mocks.deleteWebsiteSnapshot.mockReset().mockResolvedValue(1);
+  mocks.createDiscoveryProvider.mockReset().mockReturnValue({
+    available: true,
+    provider: { source: "youtube", search: vi.fn() },
+  });
+  mocks.getDiscoverySource.mockReset().mockResolvedValue(null);
+  mocks.saveDiscoverySource
+    .mockReset()
+    .mockResolvedValue({ id: "discovery-source-1" });
   mocks.transaction
     .mockReset()
     .mockImplementation((run: (tx: unknown) => Promise<unknown>) => run(TX));
@@ -961,5 +979,253 @@ describe("updateRoutineAction — the words it answers in", () => {
     const call = mocks.updateRoutine.mock.calls.at(-1) as unknown[];
 
     expect(call[1]).toMatchObject({ name: "Watcher" });
+  });
+});
+
+/**
+ * Editing a worker that searches.
+ *
+ * **The kind comes from the stored worker, never from the submission**, which
+ * is what makes a conversion unrepresentable rather than merely unattempted.
+ * What is new here is the second row: a search that has to be saved with the
+ * worker, and a missing one that has to stop the save rather than be invented.
+ */
+describe("updateRoutineAction — discovery", () => {
+  const SOURCE = {
+    id: "discovery-source-1",
+    routineId: "worker-1",
+    source: "youtube",
+    query: "ハリネズミ",
+    maxResults: 5,
+    createdAt: new Date("2026-09-14T00:00:00.000Z"),
+    updatedAt: new Date("2026-09-14T00:00:00.000Z"),
+  };
+
+  function discoveryWorker(overrides?: Record<string, unknown>) {
+    mocks.getRoutineForEdit.mockResolvedValue(
+      stored({ kind: "discovery", prompt: "", ...overrides }),
+    );
+    mocks.getDiscoverySource.mockResolvedValue(SOURCE);
+  }
+
+  function discoveryForm(fields: Record<string, string> = {}) {
+    return form({
+      name: "Hedgehog recommendations",
+      status: "draft",
+      frequency: "manual",
+      discoverySource: "youtube",
+      discoveryQuery: "ハリネズミ 飼い方",
+      ...fields,
+    });
+  }
+
+  it("saves the worker and its search in one transaction", async () => {
+    discoveryWorker();
+
+    const result = await save(discoveryForm());
+
+    expect(result).toMatchObject({ status: "success" });
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.updateRoutine).toHaveBeenCalledWith(
+      "worker-1",
+      expect.objectContaining({ name: "Hedgehog recommendations" }),
+      "google-sub-1",
+      TX,
+    );
+    expect(mocks.saveDiscoverySource).toHaveBeenCalledWith(
+      "worker-1",
+      "google-sub-1",
+      { source: "youtube", query: "ハリネズミ 飼い方", maxResults: 5 },
+      TX,
+    );
+  });
+
+  /** A submission that leaves the count out keeps whatever the worker had. */
+  it("keeps the stored count when the form did not say", async () => {
+    discoveryWorker();
+    mocks.getDiscoverySource.mockResolvedValue({ ...SOURCE, maxResults: 8 });
+
+    await save(discoveryForm());
+
+    expect(mocks.saveDiscoverySource.mock.calls[0][2]).toMatchObject({
+      maxResults: 8,
+    });
+  });
+
+  it("writes a changed count", async () => {
+    discoveryWorker();
+
+    await save(discoveryForm({ discoveryMaxResults: "2" }));
+
+    expect(mocks.saveDiscoverySource.mock.calls[0][2]).toMatchObject({
+      maxResults: 2,
+    });
+  });
+
+  /**
+   * **Changing the search does not clear the history.** What a worker has
+   * already recommended belongs to the worker rather than to the words it was
+   * searching for.
+   */
+  it("leaves the history alone when the search changes", async () => {
+    discoveryWorker();
+
+    await save(discoveryForm({ discoveryQuery: "something else entirely" }));
+
+    expect(mocks.deleteWebsiteSnapshot).not.toHaveBeenCalled();
+    expect(mocks.saveDiscoverySource.mock.calls[0][2]).toMatchObject({
+      query: "something else entirely",
+    });
+  });
+
+  /**
+   * **Fail closed, and nothing is recreated.** A search this action invented
+   * would be a search nobody chose, running on a schedule somebody else set.
+   */
+  it("refuses to save a discovery worker whose search is missing", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(
+      stored({ kind: "discovery", prompt: "" }),
+    );
+    mocks.getDiscoverySource.mockResolvedValue(null);
+
+    const result = await save(discoveryForm());
+
+    expect(result).toMatchObject({ status: "error" });
+    expect(result?.message).toMatch(/no search configured/);
+    expect(mocks.updateRoutine).not.toHaveBeenCalled();
+    expect(mocks.saveDiscoverySource).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A key can go away after a worker was made, and saving then would save a
+   * worker that cannot run.
+   */
+  it("refuses to save when the source is no longer reachable", async () => {
+    discoveryWorker();
+    mocks.createDiscoveryProvider.mockReturnValue({
+      available: false,
+      reason: "not-configured",
+    });
+
+    const result = await save(discoveryForm());
+
+    expect(result).toMatchObject({ status: "error" });
+    expect(mocks.updateRoutine).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a source this version does not know", { discoverySource: "vimeo" }],
+    ["no search", { discoveryQuery: "" }],
+    ["a search past the limit", { discoveryQuery: "x".repeat(301) }],
+    ["a count past the ceiling", { discoveryMaxResults: "11" }],
+  ])("refuses %s, and writes nothing", async (_label, fields) => {
+    discoveryWorker();
+
+    const result = await save(discoveryForm(fields));
+
+    expect(result).toMatchObject({ status: "error" });
+    expect(mocks.updateRoutine).not.toHaveBeenCalled();
+    expect(mocks.saveDiscoverySource).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **The kind is read from the stored worker.** A submission claiming another
+   * one is a stale form or an attempt to convert, and this reads past both.
+   */
+  it("ignores a kind the submission claims", async () => {
+    discoveryWorker();
+
+    await save(discoveryForm({ kind: "prompt" }));
+
+    expect(mocks.saveDiscoverySource).toHaveBeenCalledTimes(1);
+  });
+
+  it("cannot turn a prompt worker into a discovery one", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(stored({ kind: "prompt" }));
+
+    await save(
+      form({
+        name: "Daily digest",
+        prompt: "Summarise the news.",
+        kind: "discovery",
+        discoverySource: "youtube",
+        discoveryQuery: "anything",
+      }),
+    );
+
+    expect(mocks.getDiscoverySource).not.toHaveBeenCalled();
+    expect(mocks.saveDiscoverySource).not.toHaveBeenCalled();
+  });
+
+  /** Another account's worker is indistinguishable from one that does not exist. */
+  it("does not reach a search for somebody else's worker", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(null);
+
+    await expect(save(discoveryForm())).rejects.toBeInstanceOf(NotFoundSignal);
+    expect(mocks.getDiscoverySource).not.toHaveBeenCalled();
+    expect(mocks.saveDiscoverySource).not.toHaveBeenCalled();
+  });
+
+  it("reads the search as the signed-in account", async () => {
+    discoveryWorker();
+
+    await save(discoveryForm());
+
+    expect(mocks.getDiscoverySource).toHaveBeenCalledWith(
+      "worker-1",
+      "google-sub-1",
+    );
+  });
+
+  it("reports not found when the worker vanished during the save", async () => {
+    discoveryWorker();
+    mocks.saveDiscoverySource.mockResolvedValue(null);
+
+    const result = await save(discoveryForm());
+
+    expect(result).toMatchObject({ status: "error" });
+    expect(result?.message).toMatch(/not found/i);
+  });
+});
+
+/**
+ * What editing the other two kinds still does.
+ *
+ * Neither goes near a discovery source, and the cheapest way to say so is to
+ * check that the new collaborators are never reached.
+ */
+describe("updateRoutineAction — the other kinds are unchanged", () => {
+  it("edits a prompt worker without touching discovery", async () => {
+    const result = await save(
+      form({ name: "Renamed", prompt: "Summarise the news." }),
+    );
+
+    expect(result).toMatchObject({ status: "success" });
+    expect(mocks.getDiscoverySource).not.toHaveBeenCalled();
+    expect(mocks.createDiscoveryProvider).not.toHaveBeenCalled();
+    expect(mocks.saveDiscoverySource).not.toHaveBeenCalled();
+  });
+
+  it("edits a website worker without touching discovery", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(stored({ kind: "website" }));
+    mocks.getWebsiteSource.mockResolvedValue({
+      id: "source-1",
+      routineId: "worker-1",
+      url: "https://example.com/news",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const result = await save(
+      form({
+        name: "Watcher",
+        prompt: "Say what changed.",
+        websiteUrl: "https://example.com/news",
+      }),
+    );
+
+    expect(result).toMatchObject({ status: "success" });
+    expect(mocks.getDiscoverySource).not.toHaveBeenCalled();
+    expect(mocks.saveDiscoverySource).not.toHaveBeenCalled();
   });
 });

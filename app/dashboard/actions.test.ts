@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ExecutionSuppressedError } from "@/lib/execution-lease";
 import { RunPersistenceError } from "@/lib/runs";
@@ -23,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   acquireManualRunSlot: vi.fn(),
   releaseManualRunSlot: vi.fn(),
   consumeManualRunQuota: vi.fn(),
+  consumeDiscoveryRunQuota: vi.fn(),
   claimRoutineSlot: vi.fn(),
   revalidatePath: vi.fn(),
 }));
@@ -44,9 +46,17 @@ vi.mock("@/lib/manual-run-slot", () => ({
 // The allowance is a boundary of its own — what it does with the row it keeps
 // is fixed in `lib/rate-limit.test.ts`. What these need from it is the answer,
 // when it was asked for, and that it is asked exactly once.
-vi.mock("@/lib/rate-limit", () => ({
-  consumeManualRunQuota: mocks.consumeManualRunQuota,
-}));
+vi.mock("@/lib/rate-limit", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/rate-limit")>(
+      "@/lib/rate-limit",
+    );
+  return {
+    ...actual,
+    consumeManualRunQuota: mocks.consumeManualRunQuota,
+    consumeDiscoveryRunQuota: mocks.consumeDiscoveryRunQuota,
+  };
+});
 vi.mock("@/lib/routines", () => ({
   getRoutine: mocks.getRoutine,
   deleteRoutine: mocks.deleteRoutine,
@@ -56,6 +66,14 @@ vi.mock("@/lib/routines", () => ({
 const { deleteWorkerAction, runRoutineAction } = await import(
   "@/app/dashboard/actions"
 );
+// The numbers belong to the allowance module; these read them rather than
+// restating them, so moving one does not leave these testing nothing.
+const rateLimit = await import("@/lib/rate-limit");
+const {
+  DISCOVERY_RUN_LIMIT,
+  DISCOVERY_RUN_SCOPE,
+  DISCOVERY_RUN_WINDOW_MS,
+} = rateLimit;
 
 /** `requireUserId` leaves by throwing when there is no session, as `redirect` does. */
 class RedirectSignal extends Error {}
@@ -84,6 +102,7 @@ beforeEach(() => {
     .mockResolvedValue({ slotNumber: 0, token: "slot-token", expiresAt: NOW });
   mocks.releaseManualRunSlot.mockReset().mockResolvedValue("released");
   mocks.consumeManualRunQuota.mockReset().mockResolvedValue(true);
+  mocks.consumeDiscoveryRunQuota.mockReset().mockResolvedValue(true);
   mocks.claimRoutineSlot.mockReset();
   mocks.revalidatePath.mockReset();
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -888,5 +907,197 @@ describe("a submission with no worker in it", () => {
       status: "error",
       message: "No worker selected.",
     });
+  });
+});
+
+/**
+ * What a hand-started discovery run costs.
+ *
+ * **Two allowances rather than one, and the second only for one kind.** A
+ * discovery run spends everything an ordinary manual run spends and then a
+ * search against an API whose quota belongs to whoever operates the deployment,
+ * shared by every account on it. `MANUAL_RUN_LIMIT` bounds what this account
+ * asks of Koqentra; `DISCOVERY_RUN_LIMIT` bounds what it can have Koqentra ask
+ * of somebody else.
+ *
+ * **The order is fixed and the first is never given back.** That is the
+ * existing contract for every allowance in `lib/rate-limit.ts` — spent on the
+ * way in, and deliberately no function that could refund one — and these fix
+ * that this path did not invent an exception to it.
+ */
+describe("runRoutineAction — discovery allowances", () => {
+  function discovery() {
+    mocks.getRoutine.mockResolvedValue({
+      id: "worker-1",
+      name: "Hedgehog recommendations",
+      kind: "discovery",
+    });
+  }
+
+  it("spends both allowances for a hand-started discovery run", async () => {
+    discovery();
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.consumeManualRunQuota).toHaveBeenCalledTimes(1);
+    expect(mocks.consumeManualRunQuota).toHaveBeenCalledWith("user-1");
+    expect(mocks.consumeDiscoveryRunQuota).toHaveBeenCalledTimes(1);
+    expect(mocks.consumeDiscoveryRunQuota).toHaveBeenCalledWith("user-1");
+  });
+
+  /** Five an hour, read from the module rather than restated here. */
+  it("bounds discovery runs at five an hour for one account", () => {
+    expect(DISCOVERY_RUN_LIMIT).toBe(5);
+    expect(DISCOVERY_RUN_WINDOW_MS).toBe(60 * 60 * 1000);
+    expect(DISCOVERY_RUN_SCOPE).toBe("discovery-run");
+  });
+
+  it("does not start the run when the discovery allowance is spent", async () => {
+    discovery();
+    mocks.consumeDiscoveryRunQuota.mockResolvedValue(false);
+
+    const result = await runRoutineAction(null, form("worker-1"));
+
+    expect(result?.status).toBe("error");
+    expect(mocks.enqueueRoutine).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **A different sentence from the manual-run limit.** Somebody told they have
+   * reached the manual run limit and can still run other workers would
+   * reasonably think something is broken; only searching is out.
+   */
+  it("says which allowance ran out", async () => {
+    discovery();
+    mocks.consumeDiscoveryRunQuota.mockResolvedValue(false);
+    const searchLimited = await runRoutineAction(null, form("worker-1"));
+
+    mocks.consumeDiscoveryRunQuota.mockResolvedValue(true);
+    mocks.consumeManualRunQuota.mockResolvedValue(false);
+    const runLimited = await runRoutineAction(null, form("worker-1"));
+
+    expect(searchLimited?.message).not.toBe(runLimited?.message);
+    expect(searchLimited?.message).toMatch(/search/i);
+  });
+
+  /**
+   * **The manual run is not given back**, and there is deliberately no function
+   * that could give it back — the account asked, and what `MANUAL_RUN_LIMIT`
+   * bounds is the asking. A rollback across two independent windows would be
+   * the first refund in `lib/rate-limit.ts`.
+   */
+  it("keeps the manual run spent when the search allowance refuses", async () => {
+    discovery();
+    mocks.consumeDiscoveryRunQuota.mockResolvedValue(false);
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.consumeManualRunQuota).toHaveBeenCalledTimes(1);
+    expect(Object.keys(rateLimit)).not.toContain("refundManualRunQuota");
+  });
+
+  /** The manual allowance is asked first, so a full account never reaches the second. */
+  it("does not ask the search allowance when the manual one already refused", async () => {
+    discovery();
+    mocks.consumeManualRunQuota.mockResolvedValue(false);
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.consumeDiscoveryRunQuota).not.toHaveBeenCalled();
+  });
+
+  it("gives the account slot back when the search allowance refuses", async () => {
+    discovery();
+    mocks.consumeDiscoveryRunQuota.mockResolvedValue(false);
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.releaseManualRunSlot).toHaveBeenCalledWith(
+      "user-1",
+      0,
+      "slot-token",
+    );
+  });
+
+  /** Fail closed: not knowing how much is left is not knowing there is some. */
+  it("does not start the run when the search allowance could not be read", async () => {
+    discovery();
+    mocks.consumeDiscoveryRunQuota.mockRejectedValue(new Error("connection lost"));
+
+    const result = await runRoutineAction(null, form("worker-1"));
+
+    expect(result?.status).toBe("error");
+    expect(mocks.enqueueRoutine).not.toHaveBeenCalled();
+  });
+
+  it("asks each account's own allowance", async () => {
+    discovery();
+
+    await runRoutineAction(null, form("worker-1"));
+    mocks.requireUserId.mockResolvedValue("user-2");
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.consumeDiscoveryRunQuota.mock.calls).toEqual([
+      ["user-1"],
+      ["user-2"],
+    ]);
+  });
+});
+
+/**
+ * What the other two kinds still cost.
+ *
+ * The second allowance is for the kind that spends somebody else's API quota,
+ * and nothing else may reach it.
+ */
+describe("runRoutineAction — the other kinds spend one allowance", () => {
+  it.each(["prompt", "website"] as const)(
+    "does not spend a search allowance for a %s worker",
+    async (kind) => {
+      mocks.getRoutine.mockResolvedValue({
+        id: "worker-1",
+        name: "Daily digest",
+        kind,
+      });
+
+      const result = await runRoutineAction(null, form("worker-1"));
+
+      expect(result?.status).toBe("success");
+      expect(mocks.consumeManualRunQuota).toHaveBeenCalledTimes(1);
+      expect(mocks.consumeDiscoveryRunQuota).not.toHaveBeenCalled();
+    },
+  );
+});
+
+/**
+ * What a scheduled run costs, which is neither.
+ *
+ * **A tick is bounded by its own limits** — five workers at most, worked
+ * through one at a time, on the tick's own budget — and refusing one because
+ * its owner had been pressing Run would make the schedule depend on what
+ * somebody happened to be doing. The allowances live in this action rather than
+ * anywhere below the queue, which is what makes that structural: a scheduled
+ * run reaches `runRoutine` without passing through here at all.
+ */
+describe("a scheduled discovery run", () => {
+  it("spends neither allowance, because it never reaches this action", () => {
+    const source = readFileSync(
+      new URL("../../lib/dispatcher.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).not.toContain("consumeManualRunQuota");
+    expect(source).not.toContain("consumeDiscoveryRunQuota");
+    expect(source).not.toContain("dashboard/actions");
+  });
+
+  it("reaches execution through the queue rather than through the button", () => {
+    const source = readFileSync(
+      new URL("../../lib/queue.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).not.toContain("consumeDiscoveryRunQuota");
+    expect(source).not.toContain("consumeManualRunQuota");
   });
 });

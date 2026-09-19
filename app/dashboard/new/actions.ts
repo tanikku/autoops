@@ -9,6 +9,9 @@ import {
   type WorkerDraft,
 } from "@/lib/ai/worker-draft";
 import { createWorkerDraftGenerator } from "@/lib/ai/worker-draft-factory";
+import { createDiscoveryProvider } from "@/lib/discovery/factory";
+import { DISCOVERY_DEFAULT_MAX_RESULTS } from "@/lib/discovery/limits";
+import { saveDiscoverySource } from "@/lib/discovery/repository";
 import { t, type TranslationKey } from "@/lib/i18n";
 import { prisma } from "@/lib/prisma";
 import { consumeAiDraftQuota } from "@/lib/rate-limit";
@@ -185,6 +188,37 @@ export async function createRoutineAction(
     }
   }
 
+  // **Asked before anything is written, and it asks nobody.** A deployment
+  // with no key for the chosen source cannot run this worker, so creating one
+  // would produce something that fails every slot for as long as it exists —
+  // the same failure a website worker with no address would have, and refused
+  // in the same place. `createDiscoveryProvider` reads an environment variable
+  // and constructs an object; it makes no request and spends no quota.
+  //
+  // **Refused rather than saved as a draft.** A worker that cannot be run is
+  // not a worker somebody meant to make, and the thing that would fix it is not
+  // on this form.
+  let discovery: { source: string; query: string; maxResults: number } | null =
+    null;
+  if (kind === "discovery") {
+    if (!createDiscoveryProvider(input.discoverySource).available) {
+      return {
+        status: "error",
+        message: t(language, "worker.validation.discoveryUnavailable"),
+        values: input,
+      };
+    }
+
+    discovery = {
+      source: input.discoverySource,
+      query: input.discoveryQuery,
+      // **The default lands here rather than in the reader.** A submission that
+      // named the field and got it wrong was already refused by validation, so
+      // null at this point can only mean the field was absent.
+      maxResults: input.discoveryMaxResults ?? DISCOVERY_DEFAULT_MAX_RESULTS,
+    };
+  }
+
   // The owner comes from the session, never from the submitted form — the same
   // session the check above read. JWT sessions never write the account row, so
   // this is also what makes sure it exists before the first row that references
@@ -231,7 +265,39 @@ export async function createRoutineAction(
   let rejection: WorkerQuotaRejection | null = null;
 
   try {
-    if (websiteUrl === null) {
+    if (discovery !== null) {
+      // **Both rows or neither**, for the reason a website worker's pair is one
+      // transaction: a routine saying it searches somewhere, with nothing
+      // saying where, is a worker that appears in the dashboard and fails every
+      // run — and nobody looking at it could tell it from one made correctly.
+      const configured = discovery;
+
+      await prisma.$transaction(async (tx) => {
+        rejection = await claimWorkerCreation(tx, provisionedUserId, status);
+        if (rejection !== null) {
+          return;
+        }
+
+        const created = await createRoutine(routine, provisionedUserId, tx);
+        // **The existing writer, ownership check and all.** It reads the
+        // routine as this account before it writes, which inside this
+        // transaction is the row created one statement earlier — so the check
+        // costs a statement and buys the guarantee that this function only ever
+        // attaches a search to a worker of the account asking. A null answer
+        // cannot happen here; throwing on it is what rolls the pair back rather
+        // than leaving a worker with no search.
+        if (
+          (await saveDiscoverySource(
+            created.id,
+            provisionedUserId,
+            configured,
+            tx,
+          )) === null
+        ) {
+          throw new Error("the worker vanished before its search was attached");
+        }
+      });
+    } else if (websiteUrl === null) {
       // **A transaction for one write, because it is not one write.** The lock,
       // the counts and the insert have to commit or roll back together — a hire
       // that failed after its slot was counted would have spent capacity on a

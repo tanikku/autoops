@@ -322,6 +322,12 @@ describe("what the form makes of an applied template", () => {
       description: "",
       prompt: t(language, template.promptKey),
       websiteUrl: "",
+      // **A template never makes a discovery worker**, so these are the blanks
+      // a form that did not ask for them submits. See the assertion below.
+      discoverySource: "",
+      discoveryQuery: "",
+      discoveryMaxResults: null,
+      discoveryMaxResultsSubmitted: false,
       kind: template.kind,
       status: null,
       frequency: template.defaultFrequency,
@@ -385,5 +391,28 @@ describe("what the form makes of an applied template", () => {
     for (const template of workerTemplates) {
       expect(Object.keys(template)).not.toContain("emailNotificationsEnabled");
     }
+  });
+});
+
+/**
+ * What the presets deliberately do not offer.
+ *
+ * **Discovery is runnable and not offerable**, and those are different
+ * questions. Execution has a branch for it, `isRoutineKind` accepts it, and a
+ * stored worker of that kind runs — but nothing on the hire form makes one, and
+ * a template that did would be the first thing to.
+ *
+ * Fixed here rather than left to the eye, because a template is one line in an
+ * array and this is the file that would notice.
+ */
+describe("what the templates do not make", () => {
+  it("offers only the two kinds the hire form can configure", () => {
+    expect([...new Set(workerTemplates.map((template) => template.kind))].sort())
+      .toEqual(["prompt", "website"]);
+  });
+
+  it("makes no discovery worker", () => {
+    expect(workerTemplates.some((template) => template.kind === "discovery"))
+      .toBe(false);
   });
 });

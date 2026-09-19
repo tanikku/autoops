@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDiscoveryProvider } from "@/lib/discovery/factory";
+import { en } from "@/lib/i18n/en";
 import { routineKinds, isRoutineKind } from "@/types";
 import { readWorkerForm } from "@/lib/worker-input";
 import { YouTubeDiscoveryProvider } from "@/lib/discovery/youtube";
@@ -97,42 +98,49 @@ describe("a source this deployment cannot reach", () => {
 });
 
 /**
- * The property this whole phase is measured by.
+ * What changed when the runtime arrived, and what deliberately did not.
  *
- * A provider, a trusted client and a selection step now exist. **None of it is
- * reachable**, and these are the assertions that say so — kept here rather than
- * spread across the suites of the modules they name, because what is being
- * fixed is a property of this phase rather than of those modules.
+ * **These assertions used to say discovery was unreachable**, and that was the
+ * property the phase before this one was measured by. It has been replaced
+ * rather than kept: a kind is now accepted, a crafted submission now reads as
+ * one, and execution has a branch for it. Leaving the old expectations behind
+ * would have left a suite asserting a dormancy that no longer holds.
+ *
+ * **What has not changed is the key.** Nothing reads `YOUTUBE_API_KEY` at boot,
+ * and a deployment without one has a discovery kind that can be named and a
+ * provider that refuses — which is what the last two tests here fix.
  */
-describe("discovery is still dormant", () => {
-  it("leaves RoutineKind at prompt and website", () => {
-    expect([...routineKinds]).toEqual(["prompt", "website"]);
+describe("discovery after the runtime arrived", () => {
+  it("is a routine kind execution has a branch for", () => {
+    expect([...routineKinds]).toEqual(["prompt", "website", "discovery"]);
+    expect(isRoutineKind("discovery")).toBe(true);
   });
 
-  it("does not make discovery a routine kind", () => {
-    expect(isRoutineKind("discovery")).toBe(false);
-  });
-
-  /**
-   * **A crafted submission cannot make one.** `readWorkerForm` reads a kind it
-   * does not know as null, and every caller that acts on a kind requires one —
-   * so a `discovery` in a form post is not a worker of a kind nothing executes.
-   */
-  it("reads a crafted discovery submission as no kind at all", () => {
+  /** A submission naming the kind now reads as that kind rather than as null. */
+  it("reads a discovery submission as the discovery kind", () => {
     const form = new FormData();
-    form.set("name", "Crafted");
+    form.set("name", "Recommendations");
     form.set("kind", "discovery");
 
-    expect(readWorkerForm(form).kind).toBeNull();
+    expect(readWorkerForm(form).kind).toBe("discovery");
   });
 
   /**
-   * **Nothing requires the key at boot.** It is read when a provider is asked
-   * for, which nothing does; an unset variable makes discovery unavailable
-   * rather than stopping the application.
+   * **Still nothing at boot.** The key is read when a provider is asked for,
+   * and an unset variable makes the source unavailable rather than stopping the
+   * application — which is what lets this phase ship before the key is set.
    */
   it("needs no key to be imported or asked", () => {
     expect(process.env.YOUTUBE_API_KEY).toBeUndefined();
     expect(() => createDiscoveryProvider("youtube")).not.toThrow();
+  });
+
+  /**
+   * **The UI boundary, which this phase did not cross.** A kind being runnable
+   * is not a kind being offerable: the hire form still shows two options, and
+   * the third one arrives with the form that can configure it.
+   */
+  it("is not offered as a kind to choose on the hire form", () => {
+    expect(Object.keys(en)).not.toContain("worker.kind.discoveryOption");
   });
 });

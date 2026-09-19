@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   getUserLanguage: vi.fn(),
   createRoutine: vi.fn(),
   createWebsiteSource: vi.fn(),
+  createDiscoveryProvider: vi.fn(),
+  saveDiscoverySource: vi.fn(),
   transaction: vi.fn(),
   lockUser: vi.fn(),
   countRoutines: vi.fn(),
@@ -44,6 +46,14 @@ vi.mock("@/lib/rate-limit", () => ({
 }));
 vi.mock("@/lib/website-sources", () => ({
   createWebsiteSource: mocks.createWebsiteSource,
+}));
+// **Availability is a read of the environment, not a request.** Standing it in
+// is what lets these fix both answers without a key existing either way.
+vi.mock("@/lib/discovery/factory", () => ({
+  createDiscoveryProvider: mocks.createDiscoveryProvider,
+}));
+vi.mock("@/lib/discovery/repository", () => ({
+  saveDiscoverySource: mocks.saveDiscoverySource,
 }));
 // The generator itself is the boundary being stood in for. The module that
 // decides whether one exists is what fails closed, so it is what these
@@ -117,6 +127,13 @@ beforeEach(() => {
   mocks.getUserLanguage.mockReset().mockResolvedValue("en");
   mocks.createRoutine.mockReset().mockResolvedValue({ id: "worker-1" });
   mocks.createWebsiteSource.mockReset().mockResolvedValue({ id: "source-1" });
+  mocks.createDiscoveryProvider.mockReset().mockReturnValue({
+    available: true,
+    provider: { source: "youtube", search: vi.fn() },
+  });
+  mocks.saveDiscoverySource
+    .mockReset()
+    .mockResolvedValue({ id: "discovery-source-1" });
   mocks.transaction
     .mockReset()
     .mockImplementation((run: (tx: unknown) => Promise<unknown>) => run(TX));
@@ -1372,4 +1389,208 @@ describe("createRoutineAction — the words it answers in", () => {
       frequency: "daily",
     });
   });
+});
+
+/**
+ * Hiring a worker that searches, which is a pair of rows rather than one.
+ *
+ * **The transaction is the subject.** A routine saying it searches somewhere,
+ * with nothing saying where, is a worker that appears in the dashboard and
+ * fails every run — and nobody looking at it could tell it from one made
+ * correctly. Everything below is about that state being unreachable rather than
+ * merely unlikely.
+ *
+ * **No key exists in any of these**, and none is needed: availability is
+ * stood in, and nothing reaches a provider.
+ */
+describe("createRoutineAction — discovery", () => {
+  function discoveryForm(overrides?: Record<string, string>) {
+    return form({
+      kind: "discovery",
+      name: "Hedgehog recommendations",
+      prompt: "",
+      status: "draft",
+      frequency: "manual",
+      discoverySource: "youtube",
+      discoveryQuery: "ハリネズミ 飼い方",
+      ...overrides,
+    });
+  }
+
+  it("creates the worker and its search in one transaction", async () => {
+    const result = await createRoutineAction(null, discoveryForm());
+
+    expect(result).toMatchObject({ status: "success" });
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.createRoutine).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "discovery" }),
+      "google-sub-1",
+      TX,
+    );
+    expect(mocks.saveDiscoverySource).toHaveBeenCalledWith(
+      "worker-1",
+      "google-sub-1",
+      { source: "youtube", query: "ハリネズミ 飼い方", maxResults: 5 },
+      TX,
+    );
+  });
+
+  /** Absent means the default; it is not a way to ask for something else. */
+  it("defaults how many to recommend when the form did not say", async () => {
+    await createRoutineAction(null, discoveryForm());
+
+    expect(mocks.saveDiscoverySource.mock.calls[0][2]).toMatchObject({
+      maxResults: 5,
+    });
+  });
+
+  it("keeps the number that was asked for", async () => {
+    await createRoutineAction(null, discoveryForm({ discoveryMaxResults: "3" }));
+
+    expect(mocks.saveDiscoverySource.mock.calls[0][2]).toMatchObject({
+      maxResults: 3,
+    });
+  });
+
+  /**
+   * **Refused before the transaction opens.** A worker that cannot be run is
+   * not a worker somebody meant to make, and what would fix it is not on this
+   * form.
+   */
+  it.each(["not-configured", "unknown-source"] as const)(
+    "creates neither row when the source is unavailable (%s)",
+    async (reason) => {
+      mocks.createDiscoveryProvider.mockReturnValue({
+        available: false,
+        reason,
+      });
+
+      const result = await createRoutineAction(null, discoveryForm());
+
+      expect(result).toMatchObject({ status: "error" });
+      expect(mocks.transaction).not.toHaveBeenCalled();
+      expect(mocks.createRoutine).not.toHaveBeenCalled();
+      expect(mocks.saveDiscoverySource).not.toHaveBeenCalled();
+    },
+  );
+
+  it("asks nobody to decide whether the source is reachable", async () => {
+    await createRoutineAction(null, discoveryForm());
+
+    expect(mocks.createDiscoveryProvider).toHaveBeenCalledWith("youtube");
+  });
+
+  it.each([
+    ["a source this version does not know", { discoverySource: "vimeo" }],
+    ["no source at all", { discoverySource: "" }],
+    ["no search", { discoveryQuery: "" }],
+    ["a search of spaces", { discoveryQuery: "   " }],
+    ["a search past the limit", { discoveryQuery: "x".repeat(301) }],
+    ["a count of zero", { discoveryMaxResults: "0" }],
+    ["a count past the ceiling", { discoveryMaxResults: "11" }],
+    ["a count that is not a number", { discoveryMaxResults: "many" }],
+  ])("refuses %s, and writes nothing", async (_label, overrides) => {
+    const result = await createRoutineAction(null, discoveryForm(overrides));
+
+    expect(result).toMatchObject({ status: "error" });
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.createRoutine).not.toHaveBeenCalled();
+  });
+
+  it("accepts a search exactly at the limit", async () => {
+    const result = await createRoutineAction(
+      null,
+      discoveryForm({ discoveryQuery: "x".repeat(300) }),
+    );
+
+    expect(result).toMatchObject({ status: "success" });
+  });
+
+  it.each(["1", "10"])("accepts a count of %s", async (count) => {
+    const result = await createRoutineAction(
+      null,
+      discoveryForm({ discoveryMaxResults: count }),
+    );
+
+    expect(result).toMatchObject({ status: "success" });
+  });
+
+  /**
+   * **A quota rejection leaves nothing behind**, including the half of the pair
+   * that would otherwise have been written: the transaction returns before
+   * either insert.
+   */
+  it("writes neither row when the account is at its worker limit", async () => {
+    mocks.countRoutines.mockResolvedValue(TOTAL_WORKER_LIMIT);
+
+    const result = await createRoutineAction(null, discoveryForm());
+
+    expect(result).toMatchObject({ status: "error" });
+    expect(mocks.createRoutine).not.toHaveBeenCalled();
+    expect(mocks.saveDiscoverySource).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **Half a worker is not a worker.** A search that could not be attached
+   * abandons the routine with it, which is what the transaction is for.
+   */
+  it("reports a failure when the search could not be attached", async () => {
+    mocks.saveDiscoverySource.mockResolvedValue(null);
+
+    const result = await createRoutineAction(null, discoveryForm());
+
+    expect(result).toMatchObject({ status: "error" });
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("reports a failure when the transaction itself could not commit", async () => {
+    mocks.transaction.mockRejectedValue(new Error("deadlock"));
+
+    const result = await createRoutineAction(null, discoveryForm());
+
+    expect(result).toMatchObject({ status: "error" });
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  /** The owner is the session's, exactly as it is for every other kind. */
+  it("takes the owner from the session rather than the form", async () => {
+    await createRoutineAction(
+      null,
+      discoveryForm({ userId: "somebody-else" }),
+    );
+
+    expect(mocks.createRoutine.mock.calls[0][1]).toBe("google-sub-1");
+    expect(mocks.saveDiscoverySource.mock.calls[0][1]).toBe("google-sub-1");
+  });
+
+  /** Nothing about hiring a worker spends a run allowance. */
+  it("spends no run allowance", async () => {
+    await createRoutineAction(null, discoveryForm());
+
+    expect(mocks.consumeAiDraftQuota).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What hiring the other two kinds still does.
+ *
+ * Discovery arriving must not have changed either of them, and the cheapest
+ * way to say so is to check that neither goes near the new collaborators.
+ */
+describe("createRoutineAction — the other kinds are unchanged", () => {
+  it.each(["prompt", "website"] as const)(
+    "hires a %s worker without asking about a discovery source",
+    async (kind) => {
+      const data =
+        kind === "website"
+          ? form({ kind, websiteUrl: "https://example.com/news" })
+          : form({ kind });
+
+      const result = await createRoutineAction(null, data);
+
+      expect(result).toMatchObject({ status: "success" });
+      expect(mocks.createDiscoveryProvider).not.toHaveBeenCalled();
+      expect(mocks.saveDiscoverySource).not.toHaveBeenCalled();
+    },
+  );
 });

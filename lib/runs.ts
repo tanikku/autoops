@@ -3,6 +3,12 @@ import "server-only";
 import { createAIProvider } from "@/lib/ai/factory";
 import { providerErrorKind } from "@/lib/ai/provider";
 import {
+  type DiscoveryExecution,
+  executeDiscovery,
+} from "@/lib/discovery/execute";
+import { recordSeenItems } from "@/lib/discovery/repository";
+import type { DiscoveryCandidate } from "@/lib/discovery/types";
+import {
   acquireExecutionLease,
   ExecutionSuppressedError,
   releaseExecutionLease,
@@ -652,12 +658,26 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
 
   let outcome: ExecutionOutcome;
   try {
-    // Both kinds share the lease, the run row, and the release below. What
+    // Every kind shares the lease, the run row, and the release below. What
     // differs is only what happens between them.
-    outcome =
-      routine.kind === "website"
-        ? await executeWebsite(routineId, routine.userId, routine.prompt)
-        : await executePrompt(routineId, routine.userId, routine.prompt);
+    //
+    // **A `switch` on the narrowed kind rather than a chain of ternaries**, so
+    // that a kind added to `routineKinds` without a branch here is a compile
+    // error rather than a worker that quietly runs as a prompt. That is not
+    // hypothetical: the failure mode of the previous shape was that a
+    // `discovery` worker would have reached `executePrompt` and sent its
+    // instruction to a model as if it were the whole of the run.
+    switch (routine.kind) {
+      case "website":
+        outcome = await executeWebsite(routineId, routine.userId, routine.prompt);
+        break;
+      case "discovery":
+        outcome = await executeDiscoveryRun(routineId, routine.userId);
+        break;
+      case "prompt":
+        outcome = await executePrompt(routineId, routine.userId, routine.prompt);
+        break;
+    }
   } finally {
     // Every path out of the execution above comes through here — the result,
     // the failure, and the writes that record either. **The release cannot
@@ -792,6 +812,113 @@ async function executePrompt(
     run: await recordSuccess(run.id, output),
     notification: "prompt-completed",
   };
+}
+
+/**
+ * A discovery worker's execution, once the right to run it is held.
+ *
+ * ```
+ * row → search, subtract, choose (no transaction) → write what it chose (one)
+ * ```
+ *
+ * **Thin on purpose.** What a discovery run consists of lives in
+ * `lib/discovery/execute.ts`; what is here is the part every kind shares — a
+ * row before anything starts, a transaction after everything has finished, and
+ * the decision about whether the owner hears about it.
+ *
+ * **The provider and the model are asked outside any transaction.** A search
+ * takes up to twenty seconds and a selection up to two minutes; a transaction
+ * held across either would hold one of ten connections for that long and put
+ * the network in the middle of two writes.
+ */
+async function executeDiscoveryRun(
+  routineId: string,
+  userId: string,
+): Promise<ExecutionOutcome> {
+  // A row first, for the same reason the other two kinds get one: an attempt
+  // that reached execution is an attempt, however it turns out.
+  const run = await prisma.runHistory.create({
+    data: { routineId, userId, status: "running" },
+  });
+
+  let execution: DiscoveryExecution;
+  try {
+    execution = await executeDiscovery(routineId, userId, { aiProvider: provider });
+  } catch (error) {
+    // Everything this module expects to go wrong comes back as a `failed`
+    // execution rather than a throw; reaching here means something unexpected
+    // did. The row still gets a fixed sentence — an unexpected error's message
+    // was not written for anybody.
+    console.error("[worker] discovery run failed unexpectedly", routineId, error);
+    return {
+      run: await recordFailure(run.id, "Execution failed."),
+      notification: "failed",
+    };
+  }
+
+  if (execution.status === "failed") {
+    return {
+      run: await recordFailure(run.id, execution.errorMessage),
+      notification: "failed",
+    };
+  }
+
+  const finished = await finalizeDiscoveryRun(
+    routineId,
+    run.id,
+    execution.selected,
+    execution.output,
+  );
+
+  return {
+    run: finished,
+    // **A run that chose nothing tells nobody.** It is a successful run with
+    // nothing to report, exactly as a website worker's unchanged page is, and
+    // an email about it would arrive on every cadence for as long as the search
+    // stayed quiet. A finalization that failed is a `failed` row and is told
+    // about like any other.
+    notification:
+      finished.status === "failed"
+        ? "failed"
+        : execution.selected.length > 0
+          ? "prompt-completed"
+          : null,
+  };
+}
+
+/**
+ * Writes down what the run chose and that it finished, together.
+ *
+ * **One transaction, two writes, no network.** A run recorded as completed
+ * whose choices were not written down would offer the same things again
+ * tomorrow and nothing on any screen would say why; choices written against a
+ * run that was never finished would exclude items on behalf of a run nobody can
+ * see. Both go in, or neither does.
+ *
+ * **The unique constraint on `(routineId, itemKey)` is the last defence and is
+ * allowed to absorb a conflict.** Two runs of the same worker can overlap — a
+ * lease that lapsed, a hand-started run beside a scheduled one — and both can
+ * choose the same thing. `recordSeenItems` passes `skipDuplicates`, so the
+ * second write records what it can and the run still finishes: a duplicate row
+ * is prevented without a duplicate *failure* being invented. **Nothing retries.**
+ */
+async function finalizeDiscoveryRun(
+  routineId: string,
+  runId: string,
+  selected: readonly DiscoveryCandidate[],
+  output: string,
+): Promise<RunHistory> {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      await recordSeenItems(routineId, selected, tx);
+
+      return recordSuccess(runId, output, tx);
+    });
+  } catch (error) {
+    console.error("[worker] discovery finalization did not commit", routineId, error);
+
+    return recordFailure(runId, "Execution failed.");
+  }
 }
 
 /**

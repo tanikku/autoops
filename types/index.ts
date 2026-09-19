@@ -13,13 +13,23 @@ export type ActionResult =
  *
  * `prompt` sends the prompt it holds to the model, which is every worker that
  * existed before watchers did. `website` reads a page first and only involves
- * the model when the page has changed.
+ * the model when the page has changed. `discovery` asks a source outside
+ * Koqentra what exists, sets aside everything it has already chosen, and
+ * involves the model only to pick a few out of what is left.
  *
  * **A closed set narrowed from a plain string column**, the same shape as
  * `status` and `frequency`, so adding a kind is a line here rather than a
  * migration.
+ *
+ * **Every value in this list has an execution branch behind it, and that is
+ * what the list promises.** `isRoutineKind` is what stands between a stored
+ * string and code that assumes it can be run, so a kind arrives here in the
+ * same change as the branch that runs it — never before. `discovery` waited
+ * one phase for exactly that reason: its provider, its selection and its
+ * history existed while this list still had two entries, and none of it was
+ * reachable until the branch did.
  */
-export const routineKinds = ["prompt", "website"] as const;
+export const routineKinds = ["prompt", "website", "discovery"] as const;
 
 export type RoutineKind = (typeof routineKinds)[number];
 

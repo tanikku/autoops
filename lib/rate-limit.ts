@@ -80,6 +80,40 @@ export const MANUAL_RUN_WINDOW_MS = 60 * 60 * 1000;
 export const MANUAL_RUN_SCOPE = "manual-run";
 
 /**
+ * How many discovery runs one account may start by hand inside a window.
+ *
+ * **A second allowance on top of the manual-run one, not instead of it.** A
+ * hand-started discovery run spends everything an ordinary manual run does and
+ * then two things more: a search against somebody else's API, whose quota is
+ * the operator's and is shared by every account on the platform, and a model
+ * call to choose from what came back. `MANUAL_RUN_LIMIT` bounds what an account
+ * asks of Koqentra; this bounds what an account can ask Koqentra to ask of
+ * somebody else.
+ *
+ * **Five, which is the same number `CREATOR_ANALYSIS_LIMIT` settled on and not
+ * derived from it.** The two happen to agree because the reasoning lands in the
+ * same place — enough to work through a morning, not enough for a loop nobody
+ * meant to start — and they are separate constants because one moving must not
+ * move the other.
+ *
+ * **Scheduled discovery runs are not counted**, exactly as scheduled runs are
+ * not counted against `MANUAL_RUN_LIMIT`: a tick is bounded by its own limits,
+ * and a schedule that depended on what somebody had been pressing would not be
+ * a schedule.
+ */
+export const DISCOVERY_RUN_LIMIT = 5;
+
+/**
+ * How long a discovery-run window lasts.
+ *
+ * An hour, like the other three, and deliberately its own constant.
+ */
+export const DISCOVERY_RUN_WINDOW_MS = 60 * 60 * 1000;
+
+/** Which allowance the hand-started-discovery rows belong to. */
+export const DISCOVERY_RUN_SCOPE = "discovery-run";
+
+/**
  * How many pieces one account may have judged inside a window.
  *
  * **The lowest of the three, because one of these costs the most.** A worker
@@ -295,6 +329,40 @@ export async function consumeManualRunQuota(
     MANUAL_RUN_SCOPE,
     MANUAL_RUN_LIMIT,
     MANUAL_RUN_WINDOW_MS,
+    now,
+  );
+}
+
+/**
+ * Spends one hand-started discovery run from this account's allowance.
+ *
+ * **Asked for in addition to `consumeManualRunQuota`, never instead of it.** A
+ * discovery run is a manual run, so it spends that allowance like any other;
+ * this one exists because it also spends a search against an API whose quota
+ * belongs to whoever operates the deployment.
+ *
+ * **Spent on the way in, and never given back** — the same contract the other
+ * three keep. A run refused by this allowance has already spent one of the
+ * account's manual runs, and nothing refunds it: what `MANUAL_RUN_LIMIT` bounds
+ * is the asking, and the account asked. Adding a refund here would be the first
+ * function in `lib/rate-limit.ts` that could give a count back, and the reason
+ * there is none applies unchanged.
+ *
+ * **Only the manual path calls this.** A scheduled discovery run consumes
+ * neither allowance.
+ *
+ * @returns `true` when the run may go ahead, `false` when the allowance is
+ *   spent. A database failure throws, because it is neither.
+ */
+export async function consumeDiscoveryRunQuota(
+  userId: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  return consumeFixedWindowQuota(
+    userId,
+    DISCOVERY_RUN_SCOPE,
+    DISCOVERY_RUN_LIMIT,
+    DISCOVERY_RUN_WINDOW_MS,
     now,
   );
 }

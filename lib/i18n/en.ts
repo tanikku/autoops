@@ -146,6 +146,19 @@ export const en = {
    */
   "worker.kind.prompt": "Prompt",
   "worker.kind.website": "Website",
+  /**
+   * What a discovery worker is called where a worker's kind is reported.
+   *
+   * **Named for what it produces rather than for how it works.** "Discovery" is
+   * what the code calls it because the domain is provider-neutral; what the
+   * owner gets is a short list of things somebody might want to watch, and
+   * "Recommendations" is the word for that in a row that answers "what is
+   * this".
+   *
+   * **There is no `discoveryOption` yet.** The hire form offers two kinds, and
+   * a third option is the phase that gives it a form — not this one.
+   */
+  "worker.kind.discovery": "Recommendations",
   "worker.kind.promptOption": "Run a prompt",
   "worker.kind.promptOptionDescription":
     "Sends your instructions to the AI on a schedule.",
@@ -185,6 +198,8 @@ export const en = {
   "worker.field.description": "Description",
   "worker.field.descriptionPlaceholder": "What does this worker do?",
   "worker.field.websiteUrl": "Website address",
+  /** Named in a length message, which is the only place it is read so far. */
+  "worker.field.discoveryQuery": "Search",
   "worker.field.promptPlaceholder":
     "Describe what you want this Worker to do.",
   /**
@@ -907,6 +922,30 @@ Notes for the report:
     "Prompt is required for scheduled active workers.",
   "worker.validation.tooLong": "{label} must be {limit} characters or fewer.",
   "worker.validation.websiteUrlRequired": "Website address is required.",
+  /**
+   * What a discovery worker is missing, said one field at a time.
+   *
+   * **"Unknown" rather than "invalid" for the source**, because a source this
+   * deployment does not have is not a mistake in what was typed — it names
+   * something real that Koqentra cannot ask yet, and the two deserve different
+   * words.
+   */
+  "worker.validation.discoverySourceRequired": "Choose where to search.",
+  "worker.validation.discoverySourceUnknown":
+    "Koqentra cannot search that source.",
+  "worker.validation.discoveryQueryRequired": "Enter what to search for.",
+  "worker.validation.discoveryMaxResultsRange":
+    "Choose how many to recommend, from 1 to {limit}.",
+  /**
+   * Said when a deployment has no key for the source that was chosen.
+   *
+   * **It says the search cannot be made, not that the account did something
+   * wrong.** Nothing about the submission is at fault, and nobody reading this
+   * can fix it by changing a field — so it is the form's own message rather
+   * than one attached to a control.
+   */
+  "worker.validation.discoveryUnavailable":
+    "Searching that source is not available on this deployment.",
   "worker.validation.changePromptRequired":
     "Tell the worker what to do when the page changes.",
   /**
@@ -947,6 +986,14 @@ Notes for the report:
   "worker.action.created": "Worker \"{name}\" created.",
   "worker.action.noWatchedPage":
     "This worker has no watched page, so it cannot be saved.",
+  /**
+   * The same answer for a discovery worker whose search is missing.
+   *
+   * **It does not offer to make one.** A search Koqentra invented would be a
+   * search nobody chose, running on a schedule somebody else set.
+   */
+  "worker.action.noSearchConfigured":
+    "This worker has no search configured, so it cannot be saved.",
   "worker.action.saveFailed": "Could not save the worker.",
   "worker.action.saved": "Worker \"{name}\" saved.",
   "worker.action.deleteFailed": "Could not delete the worker.",
@@ -988,6 +1035,17 @@ Notes for the report:
    */
   "run.system.websiteBaseline": "The website's initial state was recorded.",
   "run.system.websiteUnchanged": "Website content has not changed.",
+  /**
+   * What a discovery run that chose nothing says.
+   *
+   * **A statement about this search, not about the world.** A run that chose
+   * nothing cannot tell apart a source with nothing in it, a source whose every
+   * result had already been recommended, and a model that judged none of them
+   * worth it — so it says what it can stand behind: nothing was found for this
+   * search.
+   */
+  "run.system.discoveryNoSelection":
+    "No recommendations were found for this search.",
 
   /**
    * What an email about a finished run says, and the whole of what is
@@ -1042,6 +1100,16 @@ Notes for the report:
    */
   "run.action.rateLimited":
     "Manual run limit reached. Try again later.",
+  /**
+   * The second allowance, said as its own sentence.
+   *
+   * **Not the same message as the one above.** Somebody told they have reached
+   * the manual run limit and can still run other workers would reasonably
+   * think something is broken; what has actually happened is that searching
+   * costs more than running, and only searching is out.
+   */
+  "run.action.discoveryRateLimited":
+    "Search limit reached for now. Try again later.",
   "run.action.couldNotStart":
     "\"{name}\" could not be started. Try again in a moment.",
   "run.action.outcomeNotRecorded":

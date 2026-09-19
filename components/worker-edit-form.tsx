@@ -21,6 +21,7 @@ import type { RoutineKind } from "@/types";
 const kindLabels: Record<RoutineKind, TranslationKey> = {
   prompt: "worker.kind.prompt",
   website: "worker.kind.website",
+  discovery: "worker.kind.discovery",
 };
 
 /**

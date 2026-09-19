@@ -85,6 +85,7 @@ const frequencyKeys: Record<RoutineFrequency, TranslationKey> = {
 const kindKeys: Record<RoutineKind, TranslationKey> = {
   prompt: "worker.kind.prompt",
   website: "worker.kind.website",
+  discovery: "worker.kind.discovery",
 };
 
 

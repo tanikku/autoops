@@ -1,3 +1,8 @@
+import {
+  DISCOVERY_MAX_RESULTS_CEILING,
+  DISCOVERY_QUERY_MAX_CHARS,
+} from "@/lib/discovery/limits";
+import { isDiscoverySourceKind } from "@/lib/discovery/types";
 import { DEFAULT_LANGUAGE, t, type TranslationKey } from "@/lib/i18n";
 import {
   isRoutineFrequency,
@@ -45,8 +50,23 @@ export type WorkerFieldName = keyof typeof workerFieldLimits;
  * control it is about rather than in a toast on its own.
  */
 export type WorkerFieldErrors = Partial<
-  Record<WorkerFieldName | "status", string>
+  Record<WorkerFieldName | "status" | DiscoveryFieldName, string>
 >;
+
+/**
+ * The three fields a discovery worker has, named the way the form sends them.
+ *
+ * **Alongside `status` rather than inside `workerFieldLimits`.** That constant
+ * is the set of fields with a character counter beside them, read by
+ * `components/worker-fields.tsx`; these have no control yet, and putting them
+ * there would add a counter to a form that has nowhere to show one. What they
+ * do have is rules that can reject them, and a message belongs beside the field
+ * it is about whenever there is one to put it beside.
+ */
+export type DiscoveryFieldName =
+  | "discoverySource"
+  | "discoveryQuery"
+  | "discoveryMaxResults";
 
 /**
  * What each field is called inside a message about it.
@@ -73,6 +93,31 @@ export type WorkerFormInput = {
    * **Read through the kind rather than alongside it.** See `readWorkerForm`.
    */
   websiteUrl: string;
+  /**
+   * Where a discovery worker looks, what it looks for, and how many it keeps.
+   *
+   * **Read as submitted, like `websiteUrl`, and acted on only by whoever knows
+   * the kind.** The same reasoning applies for the same reason: editing takes
+   * the kind from the stored worker rather than from the submission, so a
+   * reader that dropped these on the strength of the submitted kind would be
+   * deciding from the field the boundary distrusts most.
+   *
+   * `discoveryMaxResults` is null when the field is absent or holds something
+   * that is not a whole number in range — the create action turns that into the
+   * default, and the validator turns an out-of-range number into a message.
+   */
+  discoverySource: string;
+  discoveryQuery: string;
+  discoveryMaxResults: number | null;
+  /**
+   * Whether the submission named the count at all.
+   *
+   * **"Did not say" and "said something wrong" are different answers**, and
+   * `discoveryMaxResults` collapses them both into null. A form that leaves the
+   * field out gets the default; one that asks for fifty is told the range. One
+   * boolean is what keeps the validator from having to guess which happened.
+   */
+  discoveryMaxResultsSubmitted: boolean;
   /**
    * What the worker should do, or null when the form did not say.
    *
@@ -215,6 +260,19 @@ export function readWorkerForm(formData: FormData): WorkerFormInput {
     // is given one, and each action gates its writes on the same one — so a
     // prompt worker still cannot acquire a page to watch.
     websiteUrl: text(formData, "websiteUrl"),
+    discoverySource: text(formData, "discoverySource"),
+    discoveryQuery: text(formData, "discoveryQuery"),
+    // **Out of range reads as null, not as the nearest allowed value.**
+    // Clamping would save a submission asking for fifty by giving it ten, which
+    // is answering a question nobody asked; the validator says what the range
+    // is instead.
+    discoveryMaxResults: wholeNumberInRange(
+      formData,
+      "discoveryMaxResults",
+      1,
+      DISCOVERY_MAX_RESULTS_CEILING,
+    ),
+    discoveryMaxResultsSubmitted: text(formData, "discoveryMaxResults") !== "",
     kind: isRoutineKind(kind) ? kind : null,
     status: isRoutineStatus(status) ? status : null,
     frequency: isRoutineFrequency(frequency) ? frequency : null,
@@ -380,6 +438,10 @@ export function validateWorkerFormForKind(
 ): WorkerFieldErrors {
   const errors = validateWorkerForm(input, context, language);
 
+  if (kind === "discovery") {
+    return validateDiscoveryFields(input, errors, language);
+  }
+
   if (kind !== "website") {
     return errors;
   }
@@ -392,6 +454,74 @@ export function validateWorkerFormForKind(
 
   if (input.prompt === "" && !errors.prompt) {
     errors.prompt = t(language, "worker.validation.changePromptRequired");
+  }
+
+  return errors;
+}
+
+/**
+ * What a discovery worker needs before it can be saved.
+ *
+ * **Three fields, each refused rather than defaulted.** A search nobody wrote
+ * is not a search, a source this version does not know is one nothing can ask,
+ * and a count outside the range is a number the form was supposed to stop. The
+ * one thing that does default is an absent count — see the create action — and
+ * that is the difference between "did not say" and "said something wrong".
+ *
+ * **The instruction is not required, unlike a website worker's.** A website
+ * worker's prompt is what the model is told to do with a change it found, so
+ * without one there is nothing to ask; a discovery worker's is optional colour
+ * on a judgement the selection step makes with or without it. The general rule
+ * from `validateWorkerForm` still applies — a scheduled active worker needs a
+ * prompt — and it is applied there rather than restated here.
+ *
+ * **The bounds come from `lib/discovery/limits.ts`.** They were decided in
+ * C2.19C and are referenced rather than repeated, so the form and the adapter
+ * cannot disagree about what a run is allowed to ask for.
+ */
+function validateDiscoveryFields(
+  input: WorkerFormInput,
+  errors: WorkerFieldErrors,
+  language: string,
+): WorkerFieldErrors {
+  if (input.discoverySource === "") {
+    errors.discoverySource = t(
+      language,
+      "worker.validation.discoverySourceRequired",
+    );
+  } else if (!isDiscoverySourceKind(input.discoverySource)) {
+    errors.discoverySource = t(
+      language,
+      "worker.validation.discoverySourceUnknown",
+    );
+  }
+
+  if (input.discoveryQuery === "") {
+    errors.discoveryQuery = t(
+      language,
+      "worker.validation.discoveryQueryRequired",
+    );
+  } else if (input.discoveryQuery.length > DISCOVERY_QUERY_MAX_CHARS) {
+    // The shared sentence, filled the way `applyLengthLimit` fills it — the
+    // field is not one of `workerFieldLimits`, but a reader being told a length
+    // should be told it in the same words wherever they are.
+    errors.discoveryQuery = t(language, "worker.validation.tooLong", {
+      label: t(language, "worker.field.discoveryQuery"),
+      limit: DISCOVERY_QUERY_MAX_CHARS.toLocaleString("en-US"),
+    });
+  }
+
+  // **Null is only wrong when the form said something.** An absent field is
+  // answered by the default; a value that could not be read as a whole number
+  // in range arrives here as null too, and only `discoveryMaxResultsSubmitted`
+  // tells the two apart. Refusing both would make the count mandatory; accepting
+  // both would silently turn "fifty" into five.
+  if (input.discoveryMaxResultsSubmitted && input.discoveryMaxResults === null) {
+    errors.discoveryMaxResults = t(
+      language,
+      "worker.validation.discoveryMaxResultsRange",
+      { limit: DISCOVERY_MAX_RESULTS_CEILING },
+    );
   }
 
   return errors;

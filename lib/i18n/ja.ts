@@ -99,6 +99,8 @@ export const ja: Record<TranslationKey, string> = {
 
   "worker.kind.prompt": "プロンプト",
   "worker.kind.website": "Web ページ監視",
+  /** 内部名は discovery。利用者が受け取るのは「おすすめ」なので、そう呼ぶ。 */
+  "worker.kind.discovery": "おすすめ探し",
   "worker.kind.promptOption": "AI に依頼する",
   "worker.kind.promptOptionDescription":
     "スケジュールに沿って、あなたの指示を AI に送ります。",
@@ -124,6 +126,7 @@ export const ja: Record<TranslationKey, string> = {
   "worker.field.description": "説明",
   "worker.field.descriptionPlaceholder": "この Worker の役割は?",
   "worker.field.websiteUrl": "Web ページのアドレス",
+  "worker.field.discoveryQuery": "検索キーワード",
   "worker.field.promptPlaceholder":
     "この Worker にしてほしいことを書いてください。",
   /**
@@ -578,6 +581,14 @@ export const ja: Record<TranslationKey, string> = {
   "worker.validation.tooLong": "{label}は{limit}文字以内で入力してください。",
   "worker.validation.websiteUrlRequired":
     "Web ページのアドレスは必須です。",
+  "worker.validation.discoverySourceRequired": "どこから探すかを選んでください。",
+  "worker.validation.discoverySourceUnknown":
+    "Koqentra はその提供元を検索できません。",
+  "worker.validation.discoveryQueryRequired": "何を探すかを入力してください。",
+  "worker.validation.discoveryMaxResultsRange":
+    "おすすめする件数を 1〜{limit} の範囲で選んでください。",
+  "worker.validation.discoveryUnavailable":
+    "この環境ではその提供元を検索できません。",
   "worker.validation.changePromptRequired":
     "ページが変わったときに何をするかを入力してください。",
   /** 例に出すアドレスは URL なので、日本語版でもそのまま。 */
@@ -597,6 +608,8 @@ export const ja: Record<TranslationKey, string> = {
   "worker.action.created": "Worker「{name}」を作成しました。",
   "worker.action.noWatchedPage":
     "この Worker には監視するページがないため、保存できません。",
+  "worker.action.noSearchConfigured":
+    "この Worker には検索条件がないため、保存できません。",
   "worker.action.saveFailed": "Worker を保存できませんでした。",
   "worker.action.saved": "Worker「{name}」を保存しました。",
   "worker.action.deleteFailed": "Worker を削除できませんでした。",
@@ -604,6 +617,8 @@ export const ja: Record<TranslationKey, string> = {
 
   "run.system.websiteBaseline": "サイトの初回状態を記録しました。",
   "run.system.websiteUnchanged": "サイトの内容に変更はありませんでした。",
+  "run.system.discoveryNoSelection":
+    "今回の条件では、おすすめは見つかりませんでした。",
 
   /**
    * 括弧は日本語の引用記号。`{name}` は利用者が入力した名前がそのまま入り、
@@ -626,6 +641,8 @@ export const ja: Record<TranslationKey, string> = {
     "別の実行がまだ進行中です。完了してからもう一度お試しください。",
   "run.action.rateLimited":
     "手動実行の利用上限に達しました。しばらくしてからもう一度お試しください。",
+  "run.action.discoveryRateLimited":
+    "おすすめ探しの利用上限に達しました。しばらくしてからもう一度お試しください。",
   "run.action.couldNotStart":
     "「{name}」を開始できませんでした。しばらくしてからもう一度お試しください。",
   "run.action.outcomeNotRecorded":

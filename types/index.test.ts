@@ -77,9 +77,21 @@ describe("what the Creator vocabulary deliberately does not touch", () => {
    * promise nothing keeps. Adding one is a compile-clean change that fails only
    * at run time, which is why it is fixed here.
    */
-  it("leaves RoutineKind at prompt and website", () => {
-    expect([...routineKinds]).toEqual(["prompt", "website"]);
+  it("keeps RoutineKind to the kinds execution has a branch for", () => {
+    expect([...routineKinds]).toEqual(["prompt", "website", "discovery"]);
     expect(isRoutineKind("creator")).toBe(false);
+  });
+
+  /**
+   * **`discovery` joined the list in the same change as the branch that runs
+   * it, and that ordering is the point.** Its provider, its selection and its
+   * history all existed a phase earlier while this list still had two entries —
+   * none of it reachable, because `isRoutineKind` had not yet promised anything
+   * about it. What this pins is the promise, not the feature: a value here is a
+   * value `runRoutine` can execute.
+   */
+  it("accepts discovery, which execution now runs", () => {
+    expect(isRoutineKind("discovery")).toBe(true);
   });
 
   /** The channels are their own vocabulary and must not leak into the other. */

@@ -1,9 +1,5 @@
 import { workerFieldLimits } from "@/lib/worker-input";
-import {
-  isRoutineFrequency,
-  type RoutineFrequency,
-  type RoutineKind,
-} from "@/types";
+import { isRoutineFrequency, type RoutineFrequency } from "@/types";
 
 /**
  * Turning a sentence into a worker somebody can look at before it exists.
@@ -168,7 +164,17 @@ export const workerDraftToolNames = {
 export type WorkerDraftToolName =
   (typeof workerDraftToolNames)[keyof typeof workerDraftToolNames];
 
-const toolKinds: Record<string, RoutineKind> = {
+/**
+ * Which kind each tool asks for.
+ *
+ * **The two kinds drafting offers, named as literals rather than as
+ * `RoutineKind`.** Drafting produces a `WorkerDraft`, and that union has
+ * exactly two members; typing this by the wider set would let a kind with no
+ * draft shape reach the return below, where it could only be cast away. A third
+ * kind becomes draftable by gaining a tool and a draft shape, not by appearing
+ * in `routineKinds`.
+ */
+const toolKinds: Record<string, "prompt" | "website"> = {
   [workerDraftToolNames.prompt]: "prompt",
   [workerDraftToolNames.website]: "website",
 };

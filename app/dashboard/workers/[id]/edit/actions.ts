@@ -2,6 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 import { notFound } from "next/navigation";
+import { createDiscoveryProvider } from "@/lib/discovery/factory";
+import {
+  getDiscoverySource,
+  saveDiscoverySource,
+} from "@/lib/discovery/repository";
 import { type DbClient, prisma } from "@/lib/prisma";
 import { getRoutineForEdit, updateRoutine } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
@@ -86,6 +91,23 @@ export async function updateRoutineAction(
     };
   }
 
+  // **The same shape, for the same reason.** A discovery worker whose search is
+  // missing cannot be saved as anything either: rendering it as a prompt worker
+  // would be the kind conversion this boundary refuses, performed by accident,
+  // and saving that form would make it permanent.
+  //
+  // **Nothing is recreated.** A search this action invented would be a search
+  // nobody chose, attached to a worker that then runs it on a schedule. The
+  // state should not exist; the answer to finding it is to change nothing.
+  const discovery = existing.kind === "discovery";
+  const discoverySource = discovery ? await getDiscoverySource(id, userId) : null;
+  if (discovery && !discoverySource) {
+    return {
+      status: "error",
+      message: t(language, "worker.action.noSearchConfigured"),
+    };
+  }
+
   const input = readWorkerForm(formData);
 
   // An existing worker falls back to what it already had: an unreadable value
@@ -138,6 +160,35 @@ export async function updateRoutineAction(
       };
     }
   }
+
+  // **Asked again on every save, because a key can go away.** A worker created
+  // when the source was reachable can be edited on a deployment where it is
+  // not, and saving it then would be saving a worker that cannot run. It asks
+  // nobody: `createDiscoveryProvider` reads a variable and constructs an object.
+  if (discovery && !createDiscoveryProvider(input.discoverySource).available) {
+    return {
+      status: "error",
+      message: t(language, "worker.validation.discoveryUnavailable"),
+      values: input,
+    };
+  }
+
+  // What the search becomes, or null when this worker has none to change.
+  //
+  // **Written on every save rather than only when it differs**, unlike the
+  // address above. A watched page's baseline is thrown away when the address
+  // moves, so that comparison decides whether something is destroyed; a search
+  // has nothing hanging off it — the history is keyed by the worker, not by the
+  // words — so rewriting the same three values costs one statement and nothing
+  // else.
+  const discoveryUpdate =
+    discovery && discoverySource !== null
+      ? {
+          source: input.discoverySource,
+          query: input.discoveryQuery,
+          maxResults: input.discoveryMaxResults ?? discoverySource.maxResults,
+        }
+      : null;
 
   // **Canonical against canonical, never the strings as typed.** What is stored
   // is what `parseWatchUrl` produced, so comparing raw input to it would call
@@ -237,6 +288,19 @@ export async function updateRoutineAction(
       await deleteWebsiteSnapshot(urlChange.sourceId, tx);
     }
 
+    if (discoveryUpdate !== null) {
+      // **In the same transaction as the worker.** A saved name with an unsaved
+      // search would be a worker describing itself as one thing and searching
+      // for another, and nothing on any screen would say which was current.
+      //
+      // **Nothing touches the history.** What this worker has already
+      // recommended belongs to the worker rather than to the words it was
+      // searching for, so changing the search does not offer everything again.
+      if ((await saveDiscoverySource(id, userId, discoveryUpdate, tx)) === null) {
+        throw new RoutineVanished();
+      }
+    }
+
     return routine;
   };
 
@@ -263,15 +327,16 @@ export async function updateRoutineAction(
 
         return applyUpdate(tx);
       });
-    } else if (urlChange === null) {
+    } else if (urlChange === null && discoveryUpdate === null) {
       // **Everything else is one write, including editing a website worker.**
       // A name, a cadence, or new instructions say nothing about the page being
       // watched, so nothing about the page is touched — which is what keeps a
       // worker's baseline from being spent on a typo in its description.
       saved = await updateRoutine(id, update, userId);
     } else {
-      // The address moved, so the worker and its baseline go together — see
-      // `applyUpdate` above for why that has to be one transaction.
+      // The address moved, or a search is being written, so the worker and what
+      // hangs off it go together — see `applyUpdate` above for why that has to
+      // be one transaction.
       saved = await prisma.$transaction(applyUpdate);
     }
   } catch (error) {
