@@ -998,6 +998,47 @@ The zone is read from the database on each request rather than carried in the
 session. A JWT is issued at sign-in and would keep serving the old value until
 the next one, so a changed setting would appear to do nothing.
 
+### Billing and entitlements
+
+**Nothing is enforced, and nothing is charged.** Koqentra holds a
+provider-neutral description of what a plan allows and what an account is
+entitled to, and no code that runs a worker reads any of it. What an account may
+do today is decided by exactly what decided it before: the worker limits in
+`lib/worker-quota.ts`, the hourly allowances in `lib/rate-limit.ts`, and the
+locks around execution.
+
+What exists:
+
+| Piece | Where | State |
+| --- | --- | --- |
+| Plan catalogue | `lib/plans.ts` | Five plans, with their allowances. No prices and no provider price ids |
+| Effective entitlement | `lib/entitlements/` | Works out what an account may do from a stored row and an instant. **Imported by nothing that runs** |
+| Trial arithmetic | `lib/entitlements/trial.ts` | How long a trial is, and who may start one. **Nothing starts one** |
+| Usage period and counters | `lib/usage/period.ts`, `lib/usage/consume.ts` | How an allowance is opened and spent. **Nothing opens or spends** |
+| Provider usage recording | `lib/usage/record.ts` | How a call to a model is written down. **No call site records one** |
+| Beta grant | `lib/billing/admin.ts` | Gives a carried-over account the beta allowance. No route, no action, no UI, and it has not been run |
+
+**A trial is provider-independent.** It starts, runs and ends on Koqentra's own
+clock, and no payment provider is involved in any of it. There is no Stripe
+dependency, no checkout, no portal and no webhook.
+
+**`Subscription.state` is Koqentra's own word.** A payment provider reports what
+it knows about a payment; what a deployment does about that is a decision the
+column holds. Three more states — no subscription at all, a trial that has run
+out, and a grant past its expiry — are **derived from the clock and never
+stored**, because a column holding one of them would go stale on its own.
+
+**`ProviderUsageEvent` exists and is empty.** The four Anthropic adapters still
+discard what they are told a call used, so nothing is recorded yet. When that
+changes, what is written is the token counts and nothing else — never a prompt,
+an answer, a watched address, a key, a header or a provider's raw response. Null
+in a token column means the usage was unknown; zero means the provider said
+zero, and the two are kept apart deliberately.
+
+**No cost is stored.** Prices change and cache pricing differs, so a stored
+estimate would be a number nobody could correct afterwards. Cost is derived from
+raw usage and a pricing table, later.
+
 ## Features
 
 ### Current
@@ -1116,6 +1157,10 @@ User ──┬── Routine ──── RunHistory
 | **Routine** | A worker | Four columns define the schedule; `nextRunAt` is what it resolves to |
 | **RunHistory** | One execution | `userId` denormalised from the routine |
 | **RateLimitBucket** | How much of a rate-limited action an account has used | One row per account and scope, rewritten in place — see [AI drafting is bounded](#ai-drafting-is-bounded) |
+| **Subscription** | What an account is entitled to, and where that came from | One row per account, and **its absence is an ordinary state**. Nothing reads it yet — see [Billing and entitlements](#billing-and-entitlements) |
+| **UsagePeriod** | One billing cycle's worth of allowance | `planAtStart` records what the period was opened under, which cannot be recovered afterwards. Nothing creates one yet |
+| **UsageCounter** | How much of one allowance a period has spent | `used` counts product units, not provider requests. Nothing spends yet |
+| **ProviderUsageEvent** | What one call to a model used | Raw token counts and nothing else. Null means unknown, zero means the provider said zero. **Nothing writes to it yet** |
 
 `Routine.emailNotificationsEnabled` is a `Boolean` defaulting to `false`, and it
 is the whole of what notifications added to the schema: **there is no delivery

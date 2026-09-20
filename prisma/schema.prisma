@@ -67,6 +67,16 @@ model User {
   /// to enforce.
   creatorMemories    CreatorMemory[]
   memoryEvidence     CreatorMemoryEvidence[]
+
+  /// **What the account is entitled to, and what it has spent.** None of these
+  /// is read by anything that runs a worker: the tables exist so the decisions
+  /// about billing have somewhere to land before anything acts on them.
+  ///
+  /// Listed here for the same reason as the Creator side above — deleting an
+  /// account takes them with it, and the cascade is declared on the far side.
+  subscription        Subscription?
+  usagePeriods        UsagePeriod[]
+  providerUsageEvents ProviderUsageEvent[]
 }
 
 model Routine {
@@ -710,4 +720,177 @@ model CreatorMemoryEvidence {
 
   @@index([userId])
   @@index([creatorMemoryId])
+}
+
+/// What an account is entitled to, and where that entitlement came from.
+///
+/// **One row per account, and its absence is an ordinary state.** An account
+/// that has never activated a worker has nothing here, and that is not a
+/// missing row — it is "no trial and no subscription yet". Creating a row to
+/// represent nothing would make provisioning a billing concern, and it is not
+/// one.
+///
+/// **`state` is Koqentra's own word, never a billing provider's.** A provider
+/// reports what it knows about a payment; what a deployment does about that is
+/// a decision this column holds. Copying a provider's vocabulary in here would
+/// mean every reader of this row learns that provider's taxonomy, and changing
+/// providers would mean rewriting rows rather than rewriting an adapter.
+///
+/// **Nothing reads this to decide whether a worker may run.** Not yet: see
+/// `lib/entitlements/`.
+model Subscription {
+  id                     String    @id @default(cuid())
+  /// The account. Unique because an account has one entitlement or none.
+  userId                 String    @unique
+  /// Which plan's allowances apply. Narrowed by `isPlan`, not by the database.
+  plan                   String
+  /// See `isSubscriptionState`. A string for the same reason `plan` is.
+  state                  String
+  /// When the trial began — the instant a worker of this account first became
+  /// active. Null on an account that never had one.
+  trialStartedAt         DateTime?
+  /// When the trial ends.
+  ///
+  /// **Written down rather than derived**, so that changing how long a trial
+  /// lasts cannot shorten or extend one already running.
+  trialEndsAt            DateTime?
+  /// When this account used its trial. **The whole of what makes a trial
+  /// once-only**: it stays set after the trial ends, and after a plan is
+  /// bought, because what was consumed was the offer rather than the time.
+  trialConsumedAt        DateTime?
+  currentPeriodStart     DateTime?
+  currentPeriodEnd       DateTime?
+  /// The one worker allowed to email its owner on a plan that allows one.
+  ///
+  /// **A choice, and a plain column rather than a relation.** Null means no
+  /// choice has been made, which is not the same as a worker that no longer
+  /// exists — and a relation would have to decide which of those a deleted
+  /// worker leaves behind.
+  notificationWorkerId   String?
+  /// How this entitlement was granted: "trial", "admin", or a provider's name.
+  source                 String
+  /// When a granted entitlement stops. Used by admin grants; null otherwise.
+  expiresAt              DateTime?
+  /// Provider identifiers. **Written and read only by a billing adapter**, and
+  /// never handed to code that asks what an account may do.
+  providerCustomerId     String?
+  providerSubscriptionId String?
+  /// The provider's own timestamp for the update these columns came from.
+  /// What makes an out-of-order webhook discardable rather than applied.
+  providerUpdatedAt      DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  user                   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Finding the entitlements whose period has run out, which is the one query
+  /// that does not start from an account.
+  @@index([state, currentPeriodEnd])
+}
+
+/// One period's worth of allowance for one account.
+///
+/// **A period is the subscription's own cycle, not a calendar month.** An
+/// account that starts paying on the 20th gets a whole allowance from the 20th;
+/// resetting on the 1st would hand it two.
+///
+/// **`planAtStart` is recorded because it cannot be recovered.** A plan changed
+/// mid-period leaves no trace of what the period was opened under, and that is
+/// exactly what a question about a charge needs to know.
+///
+/// Nothing creates one of these during ordinary use yet.
+model UsagePeriod {
+  id          String         @id @default(cuid())
+  userId      String
+  periodStart DateTime
+  periodEnd   DateTime
+  /// The plan in force when this period opened. See above.
+  planAtStart String
+  createdAt   DateTime       @default(now())
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  counters    UsageCounter[]
+
+  /// One period per account and start instant. What makes two simultaneous
+  /// first requests produce one period and one constraint failure, rather than
+  /// two periods that each carry a full allowance.
+  @@unique([userId, periodStart])
+  /// Finding the period an instant falls in, newest first.
+  @@index([userId, periodEnd])
+}
+
+/// How much of one allowance a period has spent.
+///
+/// **`used` counts product units, not provider requests.** What a request costs
+/// in units is decided where it is spent, so changing that later is a constant
+/// rather than a migration — and the raw provider numbers stay in
+/// `ProviderUsageEvent`, where changing the weighting cannot rewrite them.
+///
+/// **`limit` is a copy, on purpose.** The plan's number is in `lib/plans.ts`;
+/// this is what that number was when the period opened, so a plan changed
+/// mid-period cannot retroactively move a boundary somebody already ran into.
+model UsageCounter {
+  id       String      @id @default(cuid())
+  periodId String
+  /// Which allowance: see `isUsageKind`.
+  kind     String
+  used     Int
+  limit    Int
+  period   UsagePeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+
+  /// One counter per period and kind, and the key the conditional update
+  /// addresses the row by. See `lib/usage/consume.ts`.
+  @@unique([periodId, kind])
+}
+
+/// What one call to a model actually used.
+///
+/// **Raw, normalised, and not a cost.** Prices change, cache pricing differs,
+/// and a stored estimate would be a number nobody could correct afterwards. A
+/// cost is derived from these rows and a pricing table later; what is kept here
+/// is the only thing that cannot be recomputed.
+///
+/// **Separate from `RunHistory` because half of these have no run.** A draft is
+/// a form somebody is looking at, and a Creator analysis is not a worker at all;
+/// neither writes a run, and a column on `RunHistory` would have made those two
+/// unrecordable. It also leaves room for a run that calls a model more than
+/// once, which a column could not.
+///
+/// **Nothing writes to this table yet.**
+///
+/// **What is deliberately absent**: the prompt, the answer, the watched
+/// address, the key, any header, the provider's raw response, and any
+/// free-form provider error. Knowing what a call cost does not require keeping
+/// what it said.
+model ProviderUsageEvent {
+  id               String   @id @default(cuid())
+  userId           String
+  occurredAt       DateTime
+  /// Which part of Koqentra made the call. See `isUsageFeature`.
+  feature          String
+  /// Who was called. "anthropic" is the only one so far.
+  provider         String
+  /// The model as the provider names it.
+  model            String
+  /// **Null means unknown, zero means the provider said zero.** A failed call
+  /// often reports no usage at all, and writing that down as 0 would make a
+  /// call that cost something indistinguishable from one that cost nothing.
+  inputTokens      Int?
+  outputTokens     Int?
+  cacheReadTokens  Int?
+  cacheWriteTokens Int?
+  /// "ok" or "error". See `isUsageOutcome`.
+  outcome          String
+  /// The run this call belonged to, when it belonged to one.
+  ///
+  /// **A plain column rather than a relation.** Drafts and Creator analyses
+  /// have no run, so a relation would make the ordinary case the exception —
+  /// and a cascade would delete the record of what something cost along with
+  /// the record of what it did, which are two different things to keep.
+  runId            String?
+  createdAt        DateTime @default(now())
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// What one account spent, over a span.
+  @@index([userId, occurredAt])
+  /// What the deployment spent, over a span. The question a cost guard asks.
+  @@index([occurredAt])
 }
