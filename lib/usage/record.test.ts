@@ -7,10 +7,12 @@ import {
 /**
  * Writing down what one call to a model used.
  *
- * **Nothing calls this.** The four provider adapters still discard what they
- * are told about a call's cost, and wiring them up is the next phase. What is
- * fixed here is the write itself — the columns it fills, the ones it has no way
- * to fill, and that a failure to write goes no further than a log line.
+ * **Three of the six features call this now.** A prompt worker, a website
+ * worker that found a change, and a discovery worker that asked a model all
+ * record what their call used; drafting and the two Creator features still
+ * discard it, and wiring those up is a later phase. What is fixed here is the
+ * write itself — the columns it fills, the ones it has no way to fill, and that
+ * a failure to write goes no further than a log line.
  *
  * **Best-effort is a contract, not a shortcut.** If this threw, a run that
  * succeeded would be recorded as failed, a draft somebody was waiting for would
@@ -25,7 +27,10 @@ vi.mock("@/lib/prisma", () => ({
   prisma: { providerUsageEvent: { create } },
 }));
 
-const { recordProviderUsage } = await import("@/lib/usage/record");
+const { recordAIExecution, recordAIFailure, recordProviderUsage } = await import(
+  "@/lib/usage/record"
+);
+const { ProviderError } = await import("@/lib/ai/provider");
 
 const OCCURRED_AT = new Date("2026-09-20T12:00:00.000Z");
 const USER = "google-sub-1";
@@ -214,5 +219,250 @@ describe("when the row cannot be written", () => {
 
     expect(logged).not.toContain(USER);
     expect(logged).not.toContain("run-1");
+  });
+});
+
+/**
+ * Turning what a provider handed back into a row, or into nothing.
+ *
+ * **Most of what these fix is the nothing.** Six features will eventually call
+ * a model and every one of them can also fail before reaching one; a row for
+ * any of those would be an invented charge in the only table whose purpose is
+ * to say what things really cost. The decision lives here rather than at each
+ * call site, so there is one place to get it right instead of six chances to
+ * forget.
+ */
+describe("recording a call that succeeded", () => {
+  const anthropicResult = {
+    text: "an answer",
+    provider: "anthropic" as const,
+    model: "claude-opus-5",
+    usage: {
+      inputTokens: 1_200,
+      outputTokens: 340,
+      cacheReadTokens: 0,
+      cacheWriteTokens: null,
+    },
+  };
+
+  it("writes the call, with the context the provider never knew", async () => {
+    await recordAIExecution(
+      { userId: USER, feature: "prompt", runId: "run-1" },
+      anthropicResult,
+      OCCURRED_AT,
+    );
+
+    expect(written()).toEqual({
+      userId: USER,
+      occurredAt: OCCURRED_AT,
+      feature: "prompt",
+      provider: "anthropic",
+      model: "claude-opus-5",
+      inputTokens: 1_200,
+      outputTokens: 340,
+      cacheReadTokens: 0,
+      cacheWriteTokens: null,
+      outcome: "ok",
+      runId: "run-1",
+    });
+  });
+
+  it("takes the model from the provider rather than from the caller", async () => {
+    await recordAIExecution(
+      { userId: USER, feature: "website", runId: "run-2" },
+      { ...anthropicResult, model: "claude-something-else" },
+      OCCURRED_AT,
+    );
+
+    expect(written().model).toBe("claude-something-else");
+  });
+
+  it.each(["prompt", "website", "discovery"] as const)(
+    "records %o against the run it belonged to",
+    async (feature) => {
+      await recordAIExecution(
+        { userId: USER, feature, runId: "run-9" },
+        anthropicResult,
+        OCCURRED_AT,
+      );
+
+      expect(written().feature).toBe(feature);
+      expect(written().runId).toBe("run-9");
+    },
+  );
+
+  /**
+   * **The stand-in is refused here, once, for everybody.** Nothing was sent and
+   * nothing was charged; a row saying otherwise would be a fabricated answer
+   * recorded as a purchase.
+   */
+  it("writes nothing for the stand-in provider", async () => {
+    await recordAIExecution(
+      { userId: USER, feature: "prompt", runId: "run-1" },
+      {
+        text: "Execution completed successfully.",
+        provider: "dummy",
+        model: "stand-in",
+        usage: null,
+      },
+      OCCURRED_AT,
+    );
+
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  /** Either condition alone is enough, and this is the other one. */
+  it("writes nothing for a result that reports no usage", async () => {
+    await recordAIExecution(
+      { userId: USER, feature: "prompt", runId: "run-1" },
+      { ...anthropicResult, usage: null },
+      OCCURRED_AT,
+    );
+
+    expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe("recording a call that failed", () => {
+  /** A failure raised after the request left the machine. */
+  function attempted(usage: typeof UNKNOWN_PROVIDER_USAGE | null) {
+    return new ProviderError("timeout", "took too long", {
+      attempt: { provider: "anthropic", model: "claude-opus-5", usage },
+    });
+  }
+
+  it("writes the call, with nothing invented about what it used", async () => {
+    await recordAIFailure(
+      { userId: USER, feature: "discovery", runId: "run-3" },
+      attempted(UNKNOWN_PROVIDER_USAGE),
+      OCCURRED_AT,
+    );
+
+    expect(written()).toEqual({
+      userId: USER,
+      occurredAt: OCCURRED_AT,
+      feature: "discovery",
+      provider: "anthropic",
+      model: "claude-opus-5",
+      inputTokens: null,
+      outputTokens: null,
+      cacheReadTokens: null,
+      cacheWriteTokens: null,
+      outcome: "error",
+      runId: "run-3",
+    });
+  });
+
+  /**
+   * **A refusal reports its usage in full**, because the model was reached and
+   * answered. It is the one failure that is always paid for, and recording it
+   * as costing nothing would hide exactly that.
+   */
+  it("keeps the numbers when the failure knew them", async () => {
+    await recordAIFailure(
+      { userId: USER, feature: "prompt", runId: "run-4" },
+      new ProviderError("refused", "declined", {
+        attempt: {
+          provider: "anthropic",
+          model: "claude-opus-5",
+          usage: {
+            inputTokens: 900,
+            outputTokens: 12,
+            cacheReadTokens: null,
+            cacheWriteTokens: null,
+          },
+        },
+      }),
+      OCCURRED_AT,
+    );
+
+    expect(written().inputTokens).toBe(900);
+    expect(written().outcome).toBe("error");
+  });
+
+  it("writes nulls rather than zeroes when the attempt knew nothing", async () => {
+    await recordAIFailure(
+      { userId: USER, feature: "prompt", runId: "run-5" },
+      attempted(null),
+      OCCURRED_AT,
+    );
+
+    expect(written().inputTokens).toBeNull();
+    expect(written().outputTokens).toBeNull();
+  });
+
+  /**
+   * **Every one of these cost nothing.** A provider that was never reached, a
+   * refusal decided locally, a failure from somewhere else entirely — none of
+   * them is a call, and a row for any of them would be a charge nobody made.
+   */
+  it.each([
+    ["a failure with no attempt behind it", new ProviderError("unauthorized", "no key")],
+    ["an ordinary error", new Error("something else")],
+    ["a thrown string", "not an error at all"],
+    ["nothing", undefined],
+    ["null", null],
+  ])("writes nothing for %s", async (_label, error) => {
+    await recordAIFailure(
+      { userId: USER, feature: "prompt", runId: "run-1" },
+      error,
+      OCCURRED_AT,
+    );
+
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("writes nothing when the attempt was the stand-in", async () => {
+    await recordAIFailure(
+      { userId: USER, feature: "prompt", runId: "run-1" },
+      new ProviderError("unknown", "whatever", {
+        attempt: { provider: "dummy", model: "stand-in", usage: null },
+      }),
+      OCCURRED_AT,
+    );
+
+    expect(create).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * **Bookkeeping cannot fail an operation, and it cannot replace its error
+ * either.** Both directions matter: a run that worked stays worked, and a run
+ * that failed keeps failing for the reason it failed.
+ */
+describe("when the bridge cannot write", () => {
+  it("does not throw on a call that succeeded", async () => {
+    create.mockRejectedValue(new Error("connection lost"));
+
+    await expect(
+      recordAIExecution(
+        { userId: USER, feature: "prompt", runId: "run-1" },
+        {
+          text: "an answer",
+          provider: "anthropic",
+          model: "claude-opus-5",
+          usage: UNKNOWN_PROVIDER_USAGE,
+        },
+        OCCURRED_AT,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("does not throw on a call that failed", async () => {
+    create.mockRejectedValue(new Error("connection lost"));
+
+    await expect(
+      recordAIFailure(
+        { userId: USER, feature: "prompt", runId: "run-1" },
+        new ProviderError("timeout", "took too long", {
+          attempt: {
+            provider: "anthropic",
+            model: "claude-opus-5",
+            usage: null,
+          },
+        }),
+        OCCURRED_AT,
+      ),
+    ).resolves.toBeUndefined();
   });
 });

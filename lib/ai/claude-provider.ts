@@ -1,13 +1,23 @@
 import Anthropic from "@anthropic-ai/sdk";
 import {
   type AIExecutionRequest,
+  type AIExecutionResult,
   type AIProvider,
   type AIProviderMode,
   ProviderError,
   type ProviderErrorKind,
 } from "@/lib/ai/provider";
+import { normalizeAnthropicUsage, UNKNOWN_AI_USAGE } from "@/lib/ai/usage";
 
 const MODEL = "claude-opus-5";
+
+/**
+ * Who this adapter reaches.
+ *
+ * Named once rather than written at each call site, so a recorded call can
+ * never disagree with the client that made it.
+ */
+const PROVIDER = "anthropic" as const;
 const MAX_TOKENS = 16000;
 
 /**
@@ -107,7 +117,7 @@ export class ClaudeProvider implements AIProvider {
     });
   }
 
-  async execute(request: AIExecutionRequest): Promise<string> {
+  async execute(request: AIExecutionRequest): Promise<AIExecutionResult> {
     let message;
 
     try {
@@ -140,7 +150,16 @@ export class ClaudeProvider implements AIProvider {
       // does**: `message` is passed through unchanged, so the string a failed
       // run records is the one it would have recorded before. The classified
       // `kind` rides alongside it, and the original stays as `cause`.
-      throw new ProviderError(classify(error), error.message, { cause: error });
+      //
+      // **The attempt is attached because the request was sent.** Everything
+      // reaching this `catch` happened after `messages.create` was called, so
+      // a request left the machine and was billable — whatever it cost, which
+      // the SDK's error does not say. Unknown rather than zero: see
+      // `UNKNOWN_AI_USAGE`.
+      throw new ProviderError(classify(error), error.message, {
+        cause: error,
+        attempt: { provider: PROVIDER, model: MODEL, usage: UNKNOWN_AI_USAGE },
+      });
     }
 
     // A refusal arrives as a successful response, so it is a separate check
@@ -150,16 +169,34 @@ export class ClaudeProvider implements AIProvider {
     // The wording is the one this threw before it had a kind to carry, and it
     // is kept verbatim for the same reason as above.
     if (message.stop_reason === "refusal") {
+      // **A refusal is a completed request**, which is why it carries usage
+      // the transport failures above cannot: the model was reached, it
+      // answered, and the answer was a refusal. Recording it as costing
+      // nothing would hide the one failure that is always paid for in full.
       throw new ProviderError(
         "refused",
         "Claude declined to answer this prompt.",
+        {
+          attempt: {
+            provider: PROVIDER,
+            model: MODEL,
+            usage: normalizeAnthropicUsage(message.usage),
+          },
+        },
       );
     }
 
-    return message.content
-      .filter((block) => block.type === "text")
-      .map((block) => block.text)
-      .join("\n")
-      .trim();
+    return {
+      // Unchanged, character for character, from what this returned before
+      // the result had a shape around it. Every caller stores what it stored.
+      text: message.content
+        .filter((block) => block.type === "text")
+        .map((block) => block.text)
+        .join("\n")
+        .trim(),
+      provider: PROVIDER,
+      model: MODEL,
+      usage: normalizeAnthropicUsage(message.usage),
+    };
   }
 }

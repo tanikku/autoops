@@ -1,9 +1,13 @@
 import "server-only";
 
 import { createAIProvider } from "@/lib/ai/factory";
-import { providerErrorKind } from "@/lib/ai/provider";
+import {
+  type AIExecutionResult,
+  providerErrorKind,
+} from "@/lib/ai/provider";
 import {
   type DiscoveryExecution,
+  type DiscoveryProviderCall,
   executeDiscovery,
 } from "@/lib/discovery/execute";
 import { recordSeenItems } from "@/lib/discovery/repository";
@@ -33,6 +37,7 @@ import {
   MAX_WEBSITE_AI_REQUEST_CHARS,
   websiteRequestSize,
 } from "@/lib/watcher/website-request";
+import { recordAIExecution, recordAIFailure } from "@/lib/usage/record";
 import { workerFieldLimits } from "@/lib/worker-input";
 import {
   advanceWebsiteSnapshotIfCurrent,
@@ -745,6 +750,36 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
 export const PROMPT_AI_TIMEOUT_MS = 180_000;
 
 /**
+ * Writes down the one call a discovery run may make, whichever way it went.
+ *
+ * **Three outcomes, and the common one is silence.** A worker with no search, a
+ * search that found nothing, and a search whose every result had already been
+ * recommended all reach this with nothing: no model was asked, so there is
+ * nothing to record. Only a call that actually left the machine produces a row.
+ *
+ * Best-effort throughout — neither branch can throw, and neither changes what
+ * the run is about to be recorded as.
+ */
+async function recordDiscoveryCall(
+  userId: string,
+  runId: string,
+  call: DiscoveryProviderCall,
+): Promise<void> {
+  if (call === null) {
+    return;
+  }
+
+  const context = { userId, feature: "discovery", runId } as const;
+
+  if (call.kind === "result") {
+    await recordAIExecution(context, call.result);
+    return;
+  }
+
+  await recordAIFailure(context, call.error);
+}
+
+/**
  * A prompt worker's execution, once the right to run it is held.
  *
  * Split out so the lease has a single, obvious span: everything in here
@@ -771,7 +806,7 @@ async function executePrompt(
   // success used to be in here too, which meant a database that refused it
   // sent a working run down the failure path. What can fail here is the
   // prompt and the model, and both of those are results a run can have.
-  let output: string;
+  let result: AIExecutionResult;
   try {
     const prompt = renderPrompt(routinePrompt, promptVariables());
     // **No `system`.** A prompt worker's instruction and its material are the
@@ -782,11 +817,20 @@ async function executePrompt(
     // caller already names its own; this one was the last taking whatever the
     // provider happened to allow, which was longer than the tick it runs
     // inside. See `PROMPT_AI_TIMEOUT_MS`.
-    output = await provider.execute({
+    result = await provider.execute({
       user: prompt,
       timeoutMs: PROMPT_AI_TIMEOUT_MS,
     });
   } catch (error) {
+    // **Before the failure is recorded, and it cannot change it.** A call
+    // that was made was billable whether or not it answered, and
+    // `recordAIFailure` writes nothing for the failures that never reached a
+    // provider. Nothing here is awaited for its result: it cannot throw.
+    await recordAIFailure(
+      { userId, feature: "prompt", runId: run.id },
+      error,
+    );
+
     // **The kind is logged, not stored**, and it is logged only here — this is
     // the one place the failure is a provider's. Naming a column for it means
     // deciding what `failed` means, and that is not settled.
@@ -803,13 +847,19 @@ async function executePrompt(
     };
   }
 
+  // **Outside the transaction that records the run, and before it.** A row
+  // about what a call used is not part of what a run produced, and putting
+  // the two writes together would let a bookkeeping failure take a finished
+  // run down with it. Nothing is recorded for the stand-in.
+  await recordAIExecution({ userId, feature: "prompt", runId: run.id }, result);
+
   // **Every completed prompt run is worth telling somebody about, including
   // one that produced nothing.** A prompt worker exists to answer, so the
   // answer arriving is the event — there is no equivalent of a page that had
   // not moved, and judging an answer by its length would be AutoOps deciding
   // whether a model's reply was worth reading.
   return {
-    run: await recordSuccess(run.id, output),
+    run: await recordSuccess(run.id, result.text),
     notification: "prompt-completed",
   };
 }
@@ -855,6 +905,11 @@ async function executeDiscoveryRun(
       notification: "failed",
     };
   }
+
+  // **One place for both outcomes, because a discovery run makes at most one
+  // call.** Whether it succeeded, failed, or was never made at all is decided
+  // where the call happened; what is added here is whose run it was.
+  await recordDiscoveryCall(userId, run.id, execution.call);
 
   if (execution.status === "failed") {
     return {
@@ -1043,7 +1098,13 @@ async function executeWebsite(
 
   const finished =
     inspection.change.state === "changed"
-      ? await processWebsiteChange(routineId, run.id, routinePrompt, inspection)
+      ? await processWebsiteChange(
+          routineId,
+          userId,
+          run.id,
+          routinePrompt,
+          inspection,
+        )
       : await finalizeWebsiteRun(routineId, run.id, inspection);
 
   return {
@@ -1072,6 +1133,7 @@ async function executeWebsite(
  */
 async function processWebsiteChange(
   routineId: string,
+  userId: string,
   runId: string,
   routinePrompt: string,
   inspection: WebsiteInspection,
@@ -1132,10 +1194,18 @@ async function processWebsiteChange(
     return failWithoutAdvancing(REQUEST_TOO_LARGE);
   }
 
-  let output: string;
+  // **Every refusal above this line is free.** A stand-in provider, an
+  // unusable instruction and an oversized request all end the run before
+  // anything is sent, so none of them is recorded as a call — which is why
+  // the recording lives here rather than at the top of the function.
+  let result: AIExecutionResult;
   try {
-    output = await provider.execute(request);
+    result = await provider.execute(request);
   } catch (error) {
+    await recordAIFailure(
+      { userId, feature: "website", runId },
+      error,
+    );
     console.error(
       "[worker] website change processing failed —",
       providerErrorKind(error),
@@ -1144,6 +1214,13 @@ async function processWebsiteChange(
     );
     return failWithoutAdvancing(CHANGE_PROCESSING_FAILED);
   }
+
+  // **Recorded before the answer is judged.** A summary that comes back empty
+  // fails the run, but the call that produced it was made and paid for all
+  // the same.
+  await recordAIExecution({ userId, feature: "website", runId }, result);
+
+  const output = result.text;
 
   // **An answer of nothing is not an answer.** Storing it would leave a run
   // marked as dealt-with whose description is blank, and the baseline would

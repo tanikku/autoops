@@ -131,6 +131,16 @@ function response(
   return {
     content: [{ type: "text", text: "an answer" }],
     stop_reason: "end_turn",
+    // **Every response carries usage now**, because the SDK's does and this
+    // adapter is what stops that leaving `lib/ai/`. The numbers are
+    // arbitrary; what the tests fix is that they arrive unchanged, that a
+    // reported zero stays zero, and that an absent field stays null.
+    usage: {
+      input_tokens: 1_200,
+      output_tokens: 340,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: null,
+    },
     ...overrides,
   } as unknown as Parameters<typeof create.mockResolvedValue>[0];
 }
@@ -319,7 +329,7 @@ describe("a response that worked", () => {
   it("returns the text", async () => {
     create.mockResolvedValue(response());
 
-    expect(await provider.execute({ user: "prompt" })).toBe("an answer");
+    expect((await provider.execute({ user: "prompt" })).text).toBe("an answer");
   });
 
   it("joins several text blocks with newlines", async () => {
@@ -332,7 +342,7 @@ describe("a response that worked", () => {
       }),
     );
 
-    expect(await provider.execute({ user: "prompt" })).toBe("first\nsecond");
+    expect((await provider.execute({ user: "prompt" })).text).toBe("first\nsecond");
   });
 
   it("ignores blocks that are not text", async () => {
@@ -345,7 +355,7 @@ describe("a response that worked", () => {
       }),
     );
 
-    expect(await provider.execute({ user: "prompt" })).toBe("the answer");
+    expect((await provider.execute({ user: "prompt" })).text).toBe("the answer");
   });
 
   it("trims what it returns", async () => {
@@ -353,7 +363,7 @@ describe("a response that worked", () => {
       response({ content: [{ type: "text", text: "  padded  " }] }),
     );
 
-    expect(await provider.execute({ user: "prompt" })).toBe("padded");
+    expect((await provider.execute({ user: "prompt" })).text).toBe("padded");
   });
 });
 
@@ -406,5 +416,131 @@ describe("how long a request is allowed to take", () => {
     ]);
     expect(sentRequest()).not.toHaveProperty("timeout");
     expect(sentRequest()).not.toHaveProperty("timeoutMs");
+  });
+});
+
+/**
+ * What the adapter now says a call used, and what it refuses to say.
+ *
+ * **The SDK's `Usage` stops at this boundary.** What leaves is four numbers
+ * under Koqentra's own names; nothing downstream learns that a cache write is
+ * called `cache_creation_input_tokens` somewhere, and nothing has to learn it
+ * again the first time a second provider exists.
+ */
+describe("what a successful call reports", () => {
+  it("names the provider and the model it actually used", async () => {
+    create.mockResolvedValue(response());
+
+    const result = await provider.execute({ user: "prompt" });
+
+    expect(result.provider).toBe("anthropic");
+    expect(result.model).toBe("claude-opus-5");
+  });
+
+  it("carries the tokens across under Koqentra's names", async () => {
+    create.mockResolvedValue(response());
+
+    expect((await provider.execute({ user: "prompt" })).usage).toEqual({
+      inputTokens: 1_200,
+      outputTokens: 340,
+      cacheReadTokens: 0,
+      cacheWriteTokens: null,
+    });
+  });
+
+  /** A provider that said nothing about usage is reported as having said nothing. */
+  it("reports nulls when the response carried no usage", async () => {
+    create.mockResolvedValue(response({ usage: undefined }));
+
+    expect((await provider.execute({ user: "prompt" })).usage).toEqual({
+      inputTokens: null,
+      outputTokens: null,
+      cacheReadTokens: null,
+      cacheWriteTokens: null,
+    });
+  });
+});
+
+/**
+ * Which failures were paid for.
+ *
+ * **The attempt is the whole question.** A request that was sent cost whatever
+ * it cost even when it failed; a request that was never sent cost nothing, and a
+ * row for it would be an invented charge. The adapter is the only layer that
+ * knows which happened, so it is the only layer that can say.
+ */
+describe("what a failed call reports", () => {
+  it("says a request was made when one was", async () => {
+    create.mockRejectedValue(new Error("network went away"));
+
+    const thrown = (await provider
+      .execute({ user: "prompt" })
+      .catch((error: unknown) => error)) as ProviderError;
+
+    expect(thrown.attempt).toEqual({
+      provider: "anthropic",
+      model: "claude-opus-5",
+      usage: {
+        inputTokens: null,
+        outputTokens: null,
+        cacheReadTokens: null,
+        cacheWriteTokens: null,
+      },
+    });
+  });
+
+  /**
+   * **Nothing is estimated.** Not from `max_tokens`, not from the size of the
+   * request, not from what a similar call cost. A guess recorded as a
+   * measurement is worse than a gap.
+   */
+  it("invents no numbers for a call that reported none", async () => {
+    create.mockRejectedValue(new Error("network went away"));
+
+    const thrown = (await provider
+      .execute({ user: "prompt" })
+      .catch((error: unknown) => error)) as ProviderError;
+
+    expect(thrown.attempt?.usage?.outputTokens).not.toBe(0);
+    expect(thrown.attempt?.usage?.outputTokens).toBeNull();
+  });
+
+  /**
+   * **A refusal is the one failure that always cost the full amount.** The model
+   * was reached, it answered, and the answer was a refusal — so unlike every
+   * other failure here, the tokens are known exactly.
+   */
+  it("reports a refusal's real usage", async () => {
+    create.mockResolvedValue(response({ stop_reason: "refusal" }));
+
+    const thrown = (await provider
+      .execute({ user: "prompt" })
+      .catch((error: unknown) => error)) as ProviderError;
+
+    expect(thrown.kind).toBe("refused");
+    expect(thrown.attempt?.usage).toEqual({
+      inputTokens: 1_200,
+      outputTokens: 340,
+      cacheReadTokens: 0,
+      cacheWriteTokens: null,
+    });
+  });
+
+  /**
+   * **What is not carried matters as much.** A response body, a header or a
+   * stack would turn a cost record into somewhere material ends up.
+   */
+  it("carries nothing but the provider, the model and the tokens", async () => {
+    create.mockRejectedValue(new Error("network went away"));
+
+    const thrown = (await provider
+      .execute({ user: "prompt" })
+      .catch((error: unknown) => error)) as ProviderError;
+
+    expect(Object.keys(thrown.attempt ?? {})).toEqual([
+      "provider",
+      "model",
+      "usage",
+    ]);
   });
 });

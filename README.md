@@ -1015,7 +1015,7 @@ What exists:
 | Effective entitlement | `lib/entitlements/` | Works out what an account may do from a stored row and an instant. **Imported by nothing that runs** |
 | Trial arithmetic | `lib/entitlements/trial.ts` | How long a trial is, and who may start one. **Nothing starts one** |
 | Usage period and counters | `lib/usage/period.ts`, `lib/usage/consume.ts` | How an allowance is opened and spent. **Nothing opens or spends** |
-| Provider usage recording | `lib/usage/record.ts` | How a call to a model is written down. **No call site records one** |
+| Provider usage recording | `lib/usage/record.ts` | How a call to a model is written down. **Live for prompt, website and discovery; not for drafting or Creator** |
 | Beta grant | `lib/billing/admin.ts` | Gives a carried-over account the beta allowance. No route, no action, no UI, and it has not been run |
 
 **A trial is provider-independent.** It starts, runs and ends on Koqentra's own
@@ -1028,12 +1028,33 @@ column holds. Three more states — no subscription at all, a trial that has run
 out, and a grant past its expiry — are **derived from the clock and never
 stored**, because a column holding one of them would go stale on its own.
 
-**`ProviderUsageEvent` exists and is empty.** The four Anthropic adapters still
-discard what they are told a call used, so nothing is recorded yet. When that
-changes, what is written is the token counts and nothing else — never a prompt,
-an answer, a watched address, a key, a header or a provider's raw response. Null
-in a token column means the usage was unknown; zero means the provider said
-zero, and the two are kept apart deliberately.
+**`ProviderUsageEvent` records three of the six things that call a model.** A
+prompt worker, a website worker that found a change, and a discovery worker that
+asked a model each write one row per call. **Drafting and the two Creator
+features do not**: their adapters still discard what they are told, so a
+deployment's rows are not yet the whole of what it spends.
+
+| Feature | Recorded |
+| --- | --- |
+| `prompt` | yes |
+| `website` | yes — the changed path only, which is the only one that calls a model |
+| `discovery` | yes — only when a selection was actually asked for |
+| `draft` | not yet |
+| `creator-analysis` | not yet |
+| `creator-memory` | not yet |
+
+**A row means a request left the machine.** Every refusal in front of a provider
+— a missing key, an instruction that is unusable, a request too large, a page
+that had not moved, a search with nothing new in it — costs nothing and is
+recorded as nothing. The stand-in provider is never recorded at all: it reaches
+no model, so a row for it would be an invented charge.
+
+What is written is the token counts and nothing else — never a prompt, an
+answer, a watched address, a key, a header or a provider's raw response. Null in
+a token column means the usage was unknown; zero means the provider said zero,
+and the two are kept apart deliberately. **Recording is best-effort**: a row that
+cannot be written is logged and goes no further, so a run that worked stays
+worked and a run that failed keeps failing for the reason it failed.
 
 **No cost is stored.** Prices change and cache pricing differs, so a stored
 estimate would be a number nobody could correct afterwards. Cost is derived from
@@ -1160,7 +1181,7 @@ User ──┬── Routine ──── RunHistory
 | **Subscription** | What an account is entitled to, and where that came from | One row per account, and **its absence is an ordinary state**. Nothing reads it yet — see [Billing and entitlements](#billing-and-entitlements) |
 | **UsagePeriod** | One billing cycle's worth of allowance | `planAtStart` records what the period was opened under, which cannot be recovered afterwards. Nothing creates one yet |
 | **UsageCounter** | How much of one allowance a period has spent | `used` counts product units, not provider requests. Nothing spends yet |
-| **ProviderUsageEvent** | What one call to a model used | Raw token counts and nothing else. Null means unknown, zero means the provider said zero. **Nothing writes to it yet** |
+| **ProviderUsageEvent** | What one call to a model used | Raw token counts and nothing else. Null means unknown, zero means the provider said zero. Written by the three worker paths; **drafting and Creator are not recorded yet** |
 
 `Routine.emailNotificationsEnabled` is a `Boolean` defaulting to `false`, and it
 is the whole of what notifications added to the schema: **there is no delivery

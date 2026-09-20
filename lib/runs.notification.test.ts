@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   acquire: vi.fn(),
   release: vi.fn(),
   execute: vi.fn(),
+  usageCreate: vi.fn(),
   providerMode: vi.fn(),
   findUniqueOrThrow: vi.fn(),
   routineUpdate: vi.fn(),
@@ -69,6 +70,7 @@ vi.mock("@/lib/prisma", () => ({
       update: mocks.routineUpdate,
       updateMany: mocks.routineUpdateMany,
     },
+    providerUsageEvent: { create: mocks.usageCreate },
     runHistory: { create: mocks.create, update: mocks.update },
     $transaction: mocks.transaction,
   },
@@ -120,6 +122,31 @@ const { WatcherError } = await vi.importActual<
 const { normalizeWebsiteContent } = await vi.importActual<
   typeof import("@/lib/watcher/normalize")
 >("@/lib/watcher/normalize");
+
+/**
+ * What a real provider hands back.
+ *
+ * **The text is still the product**, and every assertion about a stored
+ * summary reads it; the rest is what the provider always knew and used to
+ * throw away before anything counted calls.
+ */
+function aiResult(
+  text = "a summary",
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    text,
+    provider: "anthropic" as const,
+    model: "claude-opus-5",
+    usage: {
+      inputTokens: 1_200,
+      outputTokens: 340,
+      cacheReadTokens: 0,
+      cacheWriteTokens: null,
+    },
+    ...overrides,
+  };
+}
 
 const LEASE = { token: "token-a", expiresAt: new Date("2026-08-31T01:00:00Z") };
 
@@ -213,7 +240,8 @@ const TX = { runHistory: { update: mocks.update } };
 beforeEach(() => {
   mocks.acquire.mockReset().mockResolvedValue(LEASE);
   mocks.release.mockReset().mockResolvedValue("released");
-  mocks.execute.mockReset().mockResolvedValue("Two roles were added.");
+  mocks.execute.mockReset().mockResolvedValue(aiResult("Two roles were added."));
+  mocks.usageCreate.mockReset().mockResolvedValue({});
   mocks.providerMode.mockReset().mockReturnValue("real");
   mocks.findUniqueOrThrow.mockReset().mockResolvedValue(worker());
   mocks.routineUpdate.mockReset();
@@ -349,7 +377,7 @@ describe("a prompt worker", () => {
 
   /** An answer of nothing is still an answer, and the run still completed. */
   it("emails a completed run that produced nothing", async () => {
-    mocks.execute.mockResolvedValue("");
+    mocks.execute.mockResolvedValue(aiResult(""));
 
     await runRoutine("worker-1");
 

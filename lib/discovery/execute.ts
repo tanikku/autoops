@@ -1,11 +1,13 @@
 import "server-only";
 
-import type { AIProvider } from "@/lib/ai/provider";
+import type { AIExecutionResult, AIProvider } from "@/lib/ai/provider";
 import { createDiscoveryProvider } from "@/lib/discovery/factory";
 import { DISCOVERY_MAX_CANDIDATES } from "@/lib/discovery/limits";
 import { isDiscoveryProviderError } from "@/lib/discovery/provider";
 import { findSeenKeys, getDiscoverySource } from "@/lib/discovery/repository";
 import {
+  type DiscoverySelectionResult,
+  InvalidDiscoverySelectionError,
   isInvalidDiscoverySelection,
   selectDiscoveryItems,
 } from "@/lib/discovery/select";
@@ -41,6 +43,15 @@ import { DISCOVERY_NO_SELECTION_OUTPUT } from "@/lib/run-display";
  * failure carries neither: its `errorMessage` is a fixed sentence, chosen from
  * the closed set below.
  */
+/**
+ * What one discovery run produced, and what asking cost.
+ *
+ * **`call` is on both halves, because both halves can follow a real call.**
+ * A run that chose nothing may have asked and been answered; a run that failed
+ * may have failed after the model replied. It is null for every outcome the
+ * model was never asked about — no source, no candidates, nothing new — and
+ * those are the outcomes that must never be recorded as costing anything.
+ */
 export type DiscoveryExecution =
   | {
       status: "completed";
@@ -49,8 +60,21 @@ export type DiscoveryExecution =
       /** The reasons, in the same order, for the run's own output. */
       selections: DiscoverySelection[];
       output: string;
+      /** The call that chose, or null when none was made. */
+      call: DiscoveryProviderCall;
     }
-  | { status: "failed"; errorMessage: string };
+  | { status: "failed"; errorMessage: string; call: DiscoveryProviderCall };
+
+/**
+ * What is known about the one model call a discovery run may make.
+ *
+ * Either the result of a call that returned, the failure of a call that was
+ * made, or nothing at all — and the third is the common case.
+ */
+export type DiscoveryProviderCall =
+  | { readonly kind: "result"; readonly result: AIExecutionResult }
+  | { readonly kind: "failure"; readonly error: unknown }
+  | null;
 
 /**
  * Why a discovery run failed, in words that are stored.
@@ -144,7 +168,7 @@ export async function executeDiscovery(
     // question nobody asked. Nothing is created and nothing is repaired: the
     // state should not exist, and the answer to finding it is to change nothing.
     console.error("[worker] discovery run has no source configured", routineId);
-    return { status: "failed", errorMessage: NO_SOURCE_CONFIGURED };
+    return { status: "failed", errorMessage: NO_SOURCE_CONFIGURED, call: null };
   }
 
   const availability = createDiscoveryProvider(source.source);
@@ -157,7 +181,7 @@ export async function executeDiscovery(
       `[worker] discovery run cannot reach its source — reason=${availability.reason}`,
       routineId,
     );
-    return { status: "failed", errorMessage: SOURCE_UNAVAILABLE };
+    return { status: "failed", errorMessage: SOURCE_UNAVAILABLE, call: null };
   }
 
   let candidates: DiscoveryCandidate[];
@@ -177,7 +201,7 @@ export async function executeDiscovery(
       "—",
       routineId,
     );
-    return { status: "failed", errorMessage: SEARCH_FAILED };
+    return { status: "failed", errorMessage: SEARCH_FAILED, call: null };
   }
 
   if (candidates.length === 0) {
@@ -197,7 +221,7 @@ export async function executeDiscovery(
     );
   } catch (error) {
     console.error("[worker] discovery history could not be read", routineId, error);
-    return { status: "failed", errorMessage: SEARCH_FAILED };
+    return { status: "failed", errorMessage: SEARCH_FAILED, call: null };
   }
 
   const fresh = candidates.filter((candidate) => !seen.has(candidate.itemKey));
@@ -208,9 +232,9 @@ export async function executeDiscovery(
     return completedWithNothing();
   }
 
-  let selections: DiscoverySelection[];
+  let selection: DiscoverySelectionResult;
   try {
-    selections = await selectDiscoveryItems(deps.aiProvider, {
+    selection = await selectDiscoveryItems(deps.aiProvider, {
       query: source.query,
       maxResults: source.maxResults,
       candidates: fresh,
@@ -226,33 +250,67 @@ export async function executeDiscovery(
       "—",
       routineId,
     );
-    return { status: "failed", errorMessage: SELECTION_FAILED };
+    // **The failure carries the call, when there was one.** An answer that
+    // arrived and could not be used was still paid for, and an unusable
+    // answer is the failure most worth being able to count.
+    return { status: "failed", errorMessage: SELECTION_FAILED, call: failedCall(error) };
   }
 
-  if (selections.length === 0) {
+  if (selection.selections.length === 0) {
     // A valid answer that chose nothing, or one whose every choice shared an
-    // author with an earlier one. Both are finished runs.
-    return completedWithNothing();
+    // author with an earlier one. Both are finished runs — and both followed
+    // a real call, which is why the call goes with them.
+    return completedWithNothing(madeCall(selection.call));
   }
 
   const byKey = new Map(fresh.map((candidate) => [candidate.itemKey, candidate]));
 
+  const chosen = selection.selections;
+
   return {
     status: "completed",
+    call: madeCall(selection.call),
     // **In the order the model ranked them**, which is the order the list is
     // read in and the order they are written down in.
-    selected: selections
-      .map((selection) => byKey.get(selection.itemKey))
+    selected: chosen
+      .map((choice) => byKey.get(choice.itemKey))
       .filter((candidate): candidate is DiscoveryCandidate => candidate !== undefined),
-    selections,
-    output: formatSelections(selections, byKey),
+    selections: chosen,
+    output: formatSelections(chosen, byKey),
   };
 }
 
+/** What a call that returned looks like to the caller. Null stays null. */
+function madeCall(result: AIExecutionResult | null): DiscoveryProviderCall {
+  return result === null ? null : { kind: "result", result };
+}
+
+/**
+ * What a failed selection says about the request behind it.
+ *
+ * **The judgement is left to the caller**, which is the only layer that can
+ * ask whether a provider was actually reached — this one would have to know
+ * about provider errors to decide, and it deliberately does not.
+ */
+function failedCall(error: unknown): DiscoveryProviderCall {
+  // **An unusable answer is a call that succeeded.** The model was reached, it
+  // replied, and the reply was billed; only the using of it failed. Reporting
+  // that as a failed call would put a wasted charge in the column meant for
+  // charges that never happened.
+  if (error instanceof InvalidDiscoverySelectionError && error.call !== null) {
+    return { kind: "result", result: error.call };
+  }
+
+  return { kind: "failure", error };
+}
+
 /** A finished run that chose nothing, which is an outcome rather than an absence. */
-function completedWithNothing(): DiscoveryExecution {
+function completedWithNothing(
+  call: DiscoveryProviderCall = null,
+): DiscoveryExecution {
   return {
     status: "completed",
+    call,
     selected: [],
     selections: [],
     // Stored in English and translated when shown, exactly as the two website

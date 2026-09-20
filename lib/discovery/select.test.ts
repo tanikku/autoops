@@ -5,6 +5,7 @@ import {
   buildDiscoverySelectionRequest,
   DISCOVERY_AI_TIMEOUT_MS,
   DISCOVERY_REASON_MAX_CHARS,
+  InvalidDiscoverySelectionError,
   isInvalidDiscoverySelection,
   readDiscoverySelections,
   selectDiscoveryItems,
@@ -52,7 +53,14 @@ function answer(selected: unknown) {
   return { selected };
 }
 
-/** A provider that answers with whatever text a test gives it. */
+/**
+ * A provider that answers with whatever text a test gives it.
+ *
+ * **The answer now arrives inside a result rather than as the result**, and the
+ * usage beside it is what makes a selection countable. The numbers below are
+ * arbitrary; what matters to these tests is that they survive the journey back
+ * to the caller unchanged.
+ */
 function stubProvider(text: string): AIProvider & { calls: AIExecutionRequest[] } {
   const calls: AIExecutionRequest[] = [];
 
@@ -61,7 +69,17 @@ function stubProvider(text: string): AIProvider & { calls: AIExecutionRequest[] 
     calls,
     execute: vi.fn(async (call: AIExecutionRequest) => {
       calls.push(call);
-      return text;
+      return {
+        text,
+        provider: "anthropic" as const,
+        model: "claude-opus-5",
+        usage: {
+          inputTokens: 900,
+          outputTokens: 120,
+          cacheReadTokens: 0,
+          cacheWriteTokens: null,
+        },
+      };
     }),
   };
 }
@@ -429,18 +447,41 @@ describe("asking a provider", () => {
       JSON.stringify(answer([{ itemKey: "youtube:a", reason: "relevant" }])),
     );
 
-    expect(await selectDiscoveryItems(provider, request())).toEqual([
+    expect((await selectDiscoveryItems(provider, request())).selections).toEqual([
       { itemKey: "youtube:a", reason: "relevant" },
     ]);
+  });
+
+  /**
+   * **The call comes back with the answer**, because only the caller knows whose
+   * run this was. A provider told the account id would be a provider that could
+   * write the row itself, and then every feature's bookkeeping would live inside
+   * the adapter.
+   */
+  it("hands back what the call used", async () => {
+    const provider = stubProvider(
+      JSON.stringify(answer([{ itemKey: "youtube:a", reason: "relevant" }])),
+    );
+
+    const { call } = await selectDiscoveryItems(provider, request());
+
+    expect(call?.provider).toBe("anthropic");
+    expect(call?.model).toBe("claude-opus-5");
+    expect(call?.usage).toEqual({
+      inputTokens: 900,
+      outputTokens: 120,
+      cacheReadTokens: 0,
+      cacheWriteTokens: null,
+    });
   });
 
   /** Nothing to choose from is not a question worth paying to ask. */
   it("asks nobody when there are no candidates", async () => {
     const provider = stubProvider("{}");
 
-    expect(await selectDiscoveryItems(provider, request({ candidates: [] }))).toEqual(
-      [],
-    );
+    expect(
+      await selectDiscoveryItems(provider, request({ candidates: [] })),
+    ).toEqual({ selections: [], call: null });
     expect(provider.execute).not.toHaveBeenCalled();
   });
 
@@ -452,6 +493,34 @@ describe("asking a provider", () => {
     );
 
     expect(isInvalidDiscoverySelection(thrown)).toBe(true);
+  });
+
+  /**
+   * **An unusable answer is still an answer that was paid for.** The model was
+   * reached and it replied; only the using of the reply failed. Losing the call
+   * here would make the one kind of wasted spend invisible.
+   */
+  it("keeps the call on an answer it could not use", async () => {
+    const provider = stubProvider("I picked the first one for you.");
+
+    const thrown = (await selectDiscoveryItems(provider, request()).catch(
+      (error: unknown) => error,
+    )) as InvalidDiscoverySelectionError;
+
+    expect(thrown.call?.provider).toBe("anthropic");
+    expect(thrown.call?.usage?.inputTokens).toBe(900);
+  });
+
+  /** The same holds when the shape parsed but said something unusable. */
+  it("keeps the call on an answer whose shape was refused", async () => {
+    const provider = stubProvider(JSON.stringify(answer("not a list")));
+
+    const thrown = (await selectDiscoveryItems(provider, request()).catch(
+      (error: unknown) => error,
+    )) as InvalidDiscoverySelectionError;
+
+    expect(isInvalidDiscoverySelection(thrown)).toBe(true);
+    expect(thrown.call?.usage?.outputTokens).toBe(120);
   });
 
   /**

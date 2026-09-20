@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   runUpdate: vi.fn(),
   transaction: vi.fn(),
   notify: vi.fn(),
+  usageCreate: vi.fn(),
 }));
 
 vi.mock("@/lib/discovery/repository", () => ({
@@ -80,6 +81,7 @@ vi.mock("@/lib/notify/run-notification", async () => {
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     routine: { findUniqueOrThrow: mocks.routineFind },
+    providerUsageEvent: { create: mocks.usageCreate },
     runHistory: { create: mocks.runCreate, update: mocks.runUpdate },
     $transaction: mocks.transaction,
   },
@@ -92,6 +94,7 @@ const { DiscoveryProviderError } = await import("@/lib/discovery/provider");
 const { InvalidDiscoverySelectionError } = await import(
   "@/lib/discovery/select"
 );
+const { ProviderError } = await import("@/lib/ai/provider");
 
 const ROUTINE_ID = "worker-1";
 const USER_ID = "user-1";
@@ -104,6 +107,31 @@ function candidate(n: string, author = `Channel ${n}`) {
     author,
     url: `https://www.youtube.com/watch?v=${n}`,
     publishedAt: new Date("2026-09-18T09:00:00.000Z"),
+  };
+}
+
+/**
+ * A selection, with the call that produced it.
+ *
+ * **Every fake below chooses through a real call**, because that is the only
+ * way a selection can be reached: the paths that choose nothing without asking
+ * return before this. Wrapping here rather than at each site keeps what was
+ * chosen the subject of the assertions.
+ */
+function chosenBy(selections: { itemKey: string; reason: string }[]) {
+  return {
+    selections,
+    call: {
+      text: "{}",
+      provider: "anthropic" as const,
+      model: "claude-opus-5",
+      usage: {
+        inputTokens: 1_200,
+        outputTokens: 340,
+        cacheReadTokens: 0,
+        cacheWriteTokens: null,
+      },
+    },
   };
 }
 
@@ -146,7 +174,7 @@ beforeEach(() => {
   });
   mocks.findSeenKeys.mockResolvedValue(new Set<string>());
   mocks.recordSeenItems.mockResolvedValue(0);
-  mocks.select.mockResolvedValue([]);
+  mocks.select.mockResolvedValue(chosenBy([]));
   available([]);
 
   mocks.acquire.mockResolvedValue({ token: "lease-1" });
@@ -181,6 +209,9 @@ describe("a run that finds nothing to recommend", () => {
       selected: [],
       selections: [],
       output: DISCOVERY_NO_SELECTION_OUTPUT,
+      // **No call, because none was made.** A run that asked nobody must not
+      // arrive at the caller looking like one that asked and got nothing.
+      call: null,
     });
     expect(mocks.select).not.toHaveBeenCalled();
   });
@@ -205,7 +236,7 @@ describe("a run that finds nothing to recommend", () => {
 
   it("completes when the model chose none of what was offered", async () => {
     available([candidate("a")]);
-    mocks.select.mockResolvedValue([]);
+    mocks.select.mockResolvedValue(chosenBy([]));
 
     const result = await executeDiscovery(ROUTINE_ID, USER_ID, { aiProvider });
 
@@ -224,7 +255,7 @@ describe("a run that finds nothing to recommend", () => {
    */
   it("completes when everything the model chose was filtered out", async () => {
     available([candidate("a", "One Channel"), candidate("b", "One Channel")]);
-    mocks.select.mockResolvedValue([]);
+    mocks.select.mockResolvedValue(chosenBy([]));
 
     expect(
       (await executeDiscovery(ROUTINE_ID, USER_ID, { aiProvider })).status,
@@ -234,7 +265,7 @@ describe("a run that finds nothing to recommend", () => {
   /** Zero is not padded out to the number the owner asked for. */
   it("keeps fewer than were asked for rather than filling the list", async () => {
     available([candidate("a"), candidate("b"), candidate("c")]);
-    mocks.select.mockResolvedValue([{ itemKey: "youtube:b", reason: "the one" }]);
+    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:b", reason: "the one" }]));
 
     const result = await executeDiscovery(ROUTINE_ID, USER_ID, { aiProvider });
 
@@ -246,10 +277,10 @@ describe("a run that finds nothing to recommend", () => {
 describe("a run that finds something", () => {
   it("keeps only what the model chose, in the order it chose", async () => {
     available([candidate("a"), candidate("b"), candidate("c")]);
-    mocks.select.mockResolvedValue([
+    mocks.select.mockResolvedValue(chosenBy([
       { itemKey: "youtube:c", reason: "closest" },
       { itemKey: "youtube:a", reason: "also good" },
-    ]);
+    ]));
 
     const result = await executeDiscovery(ROUTINE_ID, USER_ID, { aiProvider });
 
@@ -275,7 +306,7 @@ describe("a run that finds something", () => {
   it("does not offer the model anything it has already recommended", async () => {
     available([candidate("a"), candidate("b")]);
     mocks.findSeenKeys.mockResolvedValue(new Set(["youtube:a"]));
-    mocks.select.mockResolvedValue([{ itemKey: "youtube:b", reason: "new" }]);
+    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:b", reason: "new" }]));
 
     await executeDiscovery(ROUTINE_ID, USER_ID, { aiProvider });
 
@@ -429,9 +460,9 @@ describe("two accounts", () => {
 describe("what a finished run records", () => {
   it("writes the title, the author, the address and the reason", async () => {
     available([candidate("a"), candidate("b")]);
-    mocks.select.mockResolvedValue([
+    mocks.select.mockResolvedValue(chosenBy([
       { itemKey: "youtube:a", reason: "worth a look" },
-    ]);
+    ]));
 
     const result = await executeDiscovery(ROUTINE_ID, USER_ID, { aiProvider });
     const output = result.status === "completed" ? result.output : "";
@@ -455,9 +486,9 @@ describe("what a finished run records", () => {
   /** Nothing of the provider's own answer, and no markup of any kind. */
   it("writes no markup and nothing of the provider's answer", async () => {
     available([candidate("a")]);
-    mocks.select.mockResolvedValue([
+    mocks.select.mockResolvedValue(chosenBy([
       { itemKey: "youtube:a", reason: "plain" },
-    ]);
+    ]));
 
     const result = await executeDiscovery(ROUTINE_ID, USER_ID, { aiProvider });
     const output = result.status === "completed" ? result.output : "";
@@ -478,7 +509,7 @@ describe("what a finished run records", () => {
 describe("the runtime branch", () => {
   it("runs a discovery worker through the discovery pipeline", async () => {
     available([candidate("a")]);
-    mocks.select.mockResolvedValue([{ itemKey: "youtube:a", reason: "ok" }]);
+    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
 
     await runRoutine(ROUTINE_ID);
 
@@ -528,7 +559,7 @@ describe("the runtime branch", () => {
 describe("persistence", () => {
   it("writes the choices and the finished run in one transaction", async () => {
     available([candidate("a")]);
-    mocks.select.mockResolvedValue([{ itemKey: "youtube:a", reason: "ok" }]);
+    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
 
     await runRoutine(ROUTINE_ID);
 
@@ -547,7 +578,7 @@ describe("persistence", () => {
   /** **Only what was chosen.** A candidate that was merely looked at is not history. */
   it("writes down only what was chosen, never what was considered", async () => {
     available([candidate("a"), candidate("b"), candidate("c")]);
-    mocks.select.mockResolvedValue([{ itemKey: "youtube:b", reason: "ok" }]);
+    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:b", reason: "ok" }]));
 
     await runRoutine(ROUTINE_ID);
 
@@ -573,7 +604,7 @@ describe("persistence", () => {
    */
   it("does not retry when a write records fewer rows than it was given", async () => {
     available([candidate("a")]);
-    mocks.select.mockResolvedValue([{ itemKey: "youtube:a", reason: "ok" }]);
+    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
     mocks.recordSeenItems.mockResolvedValue(0);
 
     const finished = await runRoutine(ROUTINE_ID);
@@ -585,7 +616,7 @@ describe("persistence", () => {
 
   it("records a failed run when the finalization could not commit", async () => {
     available([candidate("a")]);
-    mocks.select.mockResolvedValue([{ itemKey: "youtube:a", reason: "ok" }]);
+    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
     mocks.transaction.mockRejectedValue(new Error("deadlock"));
 
     const finished = await runRoutine(ROUTINE_ID);
@@ -616,7 +647,7 @@ describe("notifications", () => {
   it("sends once when something was chosen", async () => {
     notifying();
     available([candidate("a")]);
-    mocks.select.mockResolvedValue([{ itemKey: "youtube:a", reason: "ok" }]);
+    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
 
     await runRoutine(ROUTINE_ID);
 
@@ -649,10 +680,169 @@ describe("notifications", () => {
 
   it("sends nothing when the worker has notifications off", async () => {
     available([candidate("a")]);
-    mocks.select.mockResolvedValue([{ itemKey: "youtube:a", reason: "ok" }]);
+    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
 
     await runRoutine(ROUTINE_ID);
 
     expect(mocks.notify).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What a discovery run says it cost.
+ *
+ * **A discovery run asks a model at most once, and usually not at all.** A
+ * worker with no search, a search that found nothing, and a search whose every
+ * result had already been recommended all finish without a question — so the
+ * common case is no row, and the tests below are mostly about that.
+ *
+ * **The account and the run are added where they are known.** The selection
+ * layer hands its call upward; only `runRoutine` knows whose run it was.
+ */
+describe("a discovery run — what it records about its call", () => {
+  /** The data of the only provider-usage `create`. */
+  function usageRow() {
+    return mocks.usageCreate.mock.calls[0][0].data;
+  }
+
+  it("records nothing when the source returned nothing", async () => {
+    available([]);
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(mocks.select).not.toHaveBeenCalled();
+    expect(mocks.usageCreate).not.toHaveBeenCalled();
+  });
+
+  it("records nothing when everything found had been recommended before", async () => {
+    available([candidate("a")]);
+    mocks.findSeenKeys.mockResolvedValue(new Set(["youtube:a"]));
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(mocks.select).not.toHaveBeenCalled();
+    expect(mocks.usageCreate).not.toHaveBeenCalled();
+  });
+
+  it("records one call when a model was asked", async () => {
+    available([candidate("a")]);
+    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(mocks.usageCreate).toHaveBeenCalledTimes(1);
+    expect(usageRow()).toMatchObject({
+      userId: USER_ID,
+      runId: RUN_ID,
+      feature: "discovery",
+      provider: "anthropic",
+      model: "claude-opus-5",
+      outcome: "ok",
+      inputTokens: 1_200,
+      outputTokens: 340,
+    });
+  });
+
+  /**
+   * **A model that chose nothing was still asked.** The run finishes with
+   * nothing to say, and the question was still paid for.
+   */
+  it("records the call when the model chose nothing", async () => {
+    available([candidate("a")]);
+    mocks.select.mockResolvedValue(chosenBy([]));
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(mocks.usageCreate).toHaveBeenCalledTimes(1);
+    expect(usageRow().outcome).toBe("ok");
+  });
+
+  it("records a call that was made and then failed", async () => {
+    available([candidate("a")]);
+    mocks.select.mockRejectedValue(
+      new ProviderError("timeout", "took too long", {
+        attempt: {
+          provider: "anthropic",
+          model: "claude-opus-5",
+          usage: {
+            inputTokens: null,
+            outputTokens: null,
+            cacheReadTokens: null,
+            cacheWriteTokens: null,
+          },
+        },
+      }),
+    );
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(mocks.usageCreate).toHaveBeenCalledTimes(1);
+    expect(usageRow()).toMatchObject({
+      feature: "discovery",
+      outcome: "error",
+      inputTokens: null,
+    });
+  });
+
+  /**
+   * **An unusable answer is a call that succeeded.** The model was reached and
+   * replied; only the using of the reply failed. It is the one kind of wasted
+   * spend that would otherwise be invisible.
+   */
+  it("records an unusable answer as a call that happened", async () => {
+    available([candidate("a")]);
+    mocks.select.mockRejectedValue(
+      new InvalidDiscoverySelectionError("the answer was not valid JSON", {
+        call: {
+          text: "not json",
+          provider: "anthropic",
+          model: "claude-opus-5",
+          usage: {
+            inputTokens: 900,
+            outputTokens: 12,
+            cacheReadTokens: null,
+            cacheWriteTokens: null,
+          },
+        },
+      }),
+    );
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(mocks.usageCreate).toHaveBeenCalledTimes(1);
+    expect(usageRow()).toMatchObject({
+      feature: "discovery",
+      outcome: "ok",
+      inputTokens: 900,
+      outputTokens: 12,
+    });
+  });
+
+  /** A refusal decided before anything was sent is free. */
+  it("records nothing when the selection failed without a call", async () => {
+    available([candidate("a")]);
+    mocks.select.mockRejectedValue(new Error("refused before sending"));
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(mocks.usageCreate).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **Observation must not change what it observes.** What was chosen is still
+   * chosen when the bookkeeping beside it could not be written.
+   */
+  it("still finishes the run when the usage row cannot be written", async () => {
+    available([candidate("a")]);
+    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
+    mocks.usageCreate.mockRejectedValue(new Error("connection lost"));
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(mocks.recordSeenItems).toHaveBeenCalledTimes(1);
+    const lastWrite = mocks.runUpdate.mock.calls[
+      mocks.runUpdate.mock.calls.length - 1
+    ][0].data;
+    expect(lastWrite).toMatchObject({ status: "completed" });
   });
 });

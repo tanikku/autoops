@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   acquire: vi.fn(),
   release: vi.fn(),
   execute: vi.fn(),
+  usageCreate: vi.fn(),
   findUniqueOrThrow: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
@@ -64,6 +65,7 @@ vi.mock("@/lib/ai/factory", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     routine: { findUniqueOrThrow: mocks.findUniqueOrThrow },
+    providerUsageEvent: { create: mocks.usageCreate },
     runHistory: { create: mocks.create, update: mocks.update },
     $transaction: mocks.transaction,
   },
@@ -165,6 +167,33 @@ const { normalizeWebsiteContent } = await vi.importActual<
   typeof import("@/lib/watcher/normalize")
 >("@/lib/watcher/normalize");
 
+/**
+ * What a real provider hands back.
+ *
+ * **The text is still the product**, and every assertion about a stored
+ * summary reads it; the rest is what the provider always knew and used to
+ * throw away before anything counted calls.
+ */
+function aiResult(
+  text = "a summary",
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    text,
+    provider: "anthropic" as const,
+    model: "claude-opus-5",
+    usage: {
+      inputTokens: 1_200,
+      outputTokens: 340,
+      cacheReadTokens: 0,
+      cacheWriteTokens: null,
+    },
+    ...overrides,
+  };
+}
+
+const { ProviderError } = await import("@/lib/ai/provider");
+
 const LEASE = { token: "token-a", expiresAt: new Date("2026-08-17T12:15:00Z") };
 
 const RUN_ROW = {
@@ -256,7 +285,8 @@ const TX = { runHistory: { update: mocks.update } };
 beforeEach(() => {
   mocks.acquire.mockReset().mockResolvedValue(LEASE);
   mocks.release.mockReset().mockResolvedValue("released");
-  mocks.execute.mockReset().mockResolvedValue("a summary");
+  mocks.execute.mockReset().mockResolvedValue(aiResult("a summary"));
+  mocks.usageCreate.mockReset().mockResolvedValue({});
   mocks.findUniqueOrThrow.mockReset().mockResolvedValue({
     userId: "user-1",
     // For a website worker the prompt is the instruction applied when the page
@@ -598,7 +628,7 @@ describe("a page that has changed, and was described", () => {
 
   beforeEach(() => {
     mocks.getWebsiteSnapshot.mockResolvedValue(STALE);
-    mocks.execute.mockResolvedValue("Three positions became five.");
+    mocks.execute.mockResolvedValue(aiResult("Three positions became five."));
   });
 
   it("asks a model exactly once", async () => {
@@ -698,7 +728,7 @@ describe("a change that could not be described", () => {
 
   beforeEach(() => {
     mocks.getWebsiteSnapshot.mockResolvedValue(STALE);
-    mocks.execute.mockResolvedValue("a summary");
+    mocks.execute.mockResolvedValue(aiResult("a summary"));
   });
 
   /**
@@ -758,8 +788,8 @@ describe("a change that could not be described", () => {
 
   it.each([
     ["the model failed", () => mocks.execute.mockRejectedValue(new Error("model down"))],
-    ["the model returned nothing", () => mocks.execute.mockResolvedValue("")],
-    ["the model returned only whitespace", () => mocks.execute.mockResolvedValue("  \n ")],
+    ["the model returned nothing", () => mocks.execute.mockResolvedValue(aiResult(""))],
+    ["the model returned only whitespace", () => mocks.execute.mockResolvedValue(aiResult("  \n "))],
   ])("records a failed run when %s", async (_name, arrange) => {
     arrange();
 
@@ -836,7 +866,7 @@ describe("a description that arrived too late", () => {
       normalizedContent: "Careers Not hiring",
       contentHash: "0".repeat(64),
     });
-    mocks.execute.mockResolvedValue("Three positions became five.");
+    mocks.execute.mockResolvedValue(aiResult("Three positions became five."));
   });
 
   it("discards the summary when the baseline moved during the call", async () => {
@@ -1126,7 +1156,7 @@ describe("what each outcome moves", () => {
       "changed, described",
       () => {
         changed();
-        mocks.execute.mockResolvedValue("a summary");
+        mocks.execute.mockResolvedValue(aiResult("a summary"));
       },
       "advance",
       1,
@@ -1211,7 +1241,7 @@ describe("how long a change may take to describe", () => {
       normalizedContent: "Careers Not hiring",
       contentHash: "0".repeat(64),
     });
-    mocks.execute.mockResolvedValue("a summary");
+    mocks.execute.mockResolvedValue(aiResult("a summary"));
   });
 
   it("asks for two minutes", async () => {
@@ -1241,5 +1271,143 @@ describe("how long a change may take to describe", () => {
     await runRoutine("worker-1");
 
     expect(mocks.execute.mock.calls[0][0].timeoutMs).toBe(scheduled);
+  });
+});
+
+/**
+ * What a website worker's run says it cost.
+ *
+ * **Most website runs cost nothing, and that is the point of these.** A first
+ * check has nothing to compare against and a page that has not moved has
+ * nothing to describe; neither asks a model, so neither may produce a row. Only
+ * the changed path reaches a provider, and even then three refusals sit in
+ * front of it.
+ */
+describe("a website run — what it records about its call", () => {
+  const STALE = {
+    ...matchingSnapshot(),
+    normalizedContent: "Careers Not hiring",
+    contentHash: "0".repeat(64),
+  };
+
+  /** The data of the only provider-usage `create`. */
+  function usageRow() {
+    return mocks.usageCreate.mock.calls[0][0].data;
+  }
+
+  /** A page that has moved since the baseline was taken. */
+  function changed() {
+    mocks.getWebsiteSnapshot.mockResolvedValue(STALE);
+  }
+
+  /** A page that reads exactly as the baseline does. */
+  function unchanged() {
+    mocks.getWebsiteSnapshot.mockResolvedValue(matchingSnapshot());
+  }
+
+  it("records nothing on a first check", async () => {
+    mocks.getWebsiteSnapshot.mockResolvedValue(null);
+
+    await runRoutine("worker-1");
+
+    expect(mocks.usageCreate).not.toHaveBeenCalled();
+  });
+
+  it("records nothing when the page had not moved", async () => {
+    unchanged();
+
+    await runRoutine("worker-1");
+
+    expect(mocks.usageCreate).not.toHaveBeenCalled();
+  });
+
+  it("records one call when the page changed", async () => {
+    changed();
+
+    await runRoutine("worker-1");
+
+    expect(mocks.usageCreate).toHaveBeenCalledTimes(1);
+    expect(usageRow()).toMatchObject({
+      userId: "user-1",
+      runId: "run-1",
+      feature: "website",
+      provider: "anthropic",
+      model: "claude-opus-5",
+      outcome: "ok",
+      inputTokens: 1_200,
+      outputTokens: 340,
+    });
+  });
+
+  /**
+   * **The call happened even though the run did not survive it.** An empty
+   * summary fails the run, and the model was still asked and still paid for.
+   */
+  it("records the call even when the answer was unusable", async () => {
+    changed();
+    mocks.execute.mockResolvedValue(aiResult(""));
+
+    await runRoutine("worker-1");
+
+    expect(mocks.usageCreate).toHaveBeenCalledTimes(1);
+    expect(usageRow().outcome).toBe("ok");
+  });
+
+  it("records a call that was made and then failed", async () => {
+    changed();
+    mocks.execute.mockRejectedValue(
+      new ProviderError("timeout", "took too long", {
+        attempt: {
+          provider: "anthropic",
+          model: "claude-opus-5",
+          usage: {
+            inputTokens: null,
+            outputTokens: null,
+            cacheReadTokens: null,
+            cacheWriteTokens: null,
+          },
+        },
+      }),
+    );
+
+    await runRoutine("worker-1");
+
+    expect(mocks.usageCreate).toHaveBeenCalledTimes(1);
+    expect(usageRow()).toMatchObject({
+      feature: "website",
+      outcome: "error",
+      inputTokens: null,
+    });
+  });
+
+  /**
+   * **The refusals in front of the provider are free.** A stand-in is turned
+   * away before anything is sent, so there is nothing to record — which is the
+   * same reason a website worker refuses it in the first place.
+   */
+  it("records nothing when the stand-in was refused", async () => {
+    changed();
+    mocks.providerMode.mockReturnValue("dummy");
+
+    await runRoutine("worker-1");
+
+    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(mocks.usageCreate).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **Observation must not change what it observes.** A summary that was written
+   * stays written when the bookkeeping beside it could not be.
+   */
+  it("still completes the run when the usage row cannot be written", async () => {
+    changed();
+    mocks.usageCreate.mockRejectedValue(new Error("connection lost"));
+
+    await runRoutine("worker-1");
+
+    expect(written()).toMatchObject({
+      status: "completed",
+      output: "a summary",
+    });
   });
 });

@@ -1,3 +1,5 @@
+import type { NormalizedAIUsage } from "@/lib/ai/usage";
+
 /**
  * Whether a provider actually calls a model.
  *
@@ -47,10 +49,41 @@ export type AIExecutionRequest = {
   timeoutMs?: number;
 };
 
+/**
+ * Who answered, named rather than inferred.
+ *
+ * **`dummy` is one of the values, and that is the point.** A caller that has to
+ * decide whether a call cost anything should be able to read the answer rather
+ * than work it out from a mode, a class name, or the shape of what came back.
+ */
+export type AIProviderName = "anthropic" | "dummy";
+
+/**
+ * What a provider hands back.
+ *
+ * **It used to be the text alone**, and the text is still the product — every
+ * caller reads `text` and stores exactly what it stored before. What is new is
+ * the rest: the provider told Koqentra what the call used and Koqentra threw it
+ * away, so nobody could say what a worker cost without reading an invoice.
+ *
+ * **`usage` is null when nothing was asked.** The stand-in reaches no model, so
+ * there is no usage to report — and null here is what stops a fabricated answer
+ * being written down as a call that happened.
+ */
+export type AIExecutionResult = {
+  /** Exactly what `execute` returned before this type existed. */
+  readonly text: string;
+  readonly provider: AIProviderName;
+  /** The model as the provider names it. */
+  readonly model: string;
+  /** What the call used, or null when no provider was reached. */
+  readonly usage: NormalizedAIUsage | null;
+};
+
 export interface AIProvider {
   /** Whether this reaches a model. See `AIProviderMode`. */
   readonly mode: AIProviderMode;
-  execute(request: AIExecutionRequest): Promise<string>;
+  execute(request: AIExecutionRequest): Promise<AIExecutionResult>;
 }
 
 /**
@@ -136,17 +169,60 @@ export class ProviderError extends Error {
   readonly kind: ProviderErrorKind;
   /** What this failure could be shown as. Derived from `kind`, never stored. */
   readonly safeMessage: string;
+  /**
+   * The request that was actually made, when one was.
+   *
+   * **Null means nothing left the machine**, and the distinction is the whole
+   * reason this field exists: a request that was refused before it was sent
+   * cost nothing, and recording it as a call would put an invented charge in
+   * the ledger. A request that was sent and then failed cost whatever it cost,
+   * which is usually unknown — hence a `usage` that is allowed to be null
+   * inside an attempt that definitely happened.
+   *
+   * **It carries no response and no wording.** Provider, model, and four
+   * numbers; the failure's own message is already on `message`, and the raw
+   * response, headers and stack stay inside the adapter.
+   */
+  readonly attempt: ProviderAttempt | null;
 
   constructor(
     kind: ProviderErrorKind,
     message: string,
-    options?: { cause?: unknown },
+    options?: { cause?: unknown; attempt?: ProviderAttempt | null },
   ) {
     super(message, options);
     this.name = "ProviderError";
     this.kind = kind;
     this.safeMessage = safeMessageFor(kind);
+    this.attempt = options?.attempt ?? null;
   }
+}
+
+/**
+ * A provider request that was genuinely made, and what is known about it.
+ *
+ * **`usage` may be null while the attempt is real.** A transport failure
+ * reports no tokens at all, and a call that reached a model and was refused
+ * reports all of them; both were sent, both were billable, and only one can say
+ * how much.
+ */
+export type ProviderAttempt = {
+  readonly provider: AIProviderName;
+  readonly model: string;
+  readonly usage: NormalizedAIUsage | null;
+};
+
+/**
+ * What a failure says about the request behind it.
+ *
+ * Null for anything that is not a `ProviderError`, and for a `ProviderError`
+ * raised before a request was sent. **Callers use this to decide whether there
+ * is a call to record at all**, rather than guessing from the kind — a
+ * `not-configured` refusal and a timeout are both failures, and only one of
+ * them cost money.
+ */
+export function providerAttemptOf(error: unknown): ProviderAttempt | null {
+  return error instanceof ProviderError ? error.attempt : null;
 }
 
 /** The kind of a failure, for anything that has to describe one. */

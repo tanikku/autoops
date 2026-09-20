@@ -1,4 +1,8 @@
-import type { AIExecutionRequest, AIProvider } from "@/lib/ai/provider";
+import type {
+  AIExecutionRequest,
+  AIExecutionResult,
+  AIProvider,
+} from "@/lib/ai/provider";
 import { DISCOVERY_MAX_RESULTS_CEILING } from "@/lib/discovery/limits";
 import type { DiscoveryCandidate, DiscoverySelection } from "@/lib/discovery/types";
 
@@ -51,9 +55,35 @@ export const DISCOVERY_AI_TIMEOUT_MS = 120_000;
  * error string that may end up in a log.
  */
 export class InvalidDiscoverySelectionError extends Error {
-  constructor(detail: string, options?: { cause?: unknown }) {
+  /**
+   * What was wrong, without the sentence around it.
+   *
+   * Kept so that this can be raised again with the call attached (below)
+   * and read identically: rebuilding it from `message` would prefix the
+   * sentence twice.
+   */
+  readonly detail: string;
+  /**
+   * The provider call that produced the unusable answer, when it is known.
+   *
+   * **An unusable answer is still an answer.** The model was reached, it
+   * replied, and the reply was billed; only the using of it failed. Losing
+   * this here would make the one kind of wasted call invisible — which is
+   * precisely the call somebody would want to count.
+   *
+   * Null when the shape was judged without a call in hand, which is how
+   * `readDiscoverySelections` is used on its own.
+   */
+  readonly call: AIExecutionResult | null;
+
+  constructor(
+    detail: string,
+    options?: { cause?: unknown; call?: AIExecutionResult | null },
+  ) {
     super(`The AI returned an unusable selection: ${detail}`, options);
     this.name = "InvalidDiscoverySelectionError";
+    this.detail = detail;
+    this.call = options?.call ?? null;
   }
 }
 
@@ -273,27 +303,56 @@ export function readDiscoverySelections(
  * so a misconfigured deployment produces a failed selection rather than a
  * fabricated one.
  */
+/**
+ * What a selection came back as, and what it cost to ask.
+ *
+ * **The call travels with the answer rather than being logged where it was
+ * made.** Only the caller knows whose run this was, and a provider that knew
+ * would be a provider that had been handed an account id — so the metadata
+ * goes up to the context instead of the context coming down to the provider.
+ */
+export type DiscoverySelectionResult = {
+  readonly selections: DiscoverySelection[];
+  /** The call that chose, or null when none was made. */
+  readonly call: AIExecutionResult | null;
+};
+
 export async function selectDiscoveryItems(
   provider: AIProvider,
   request: DiscoverySelectionRequest,
-): Promise<DiscoverySelection[]> {
+): Promise<DiscoverySelectionResult> {
   // Nothing to choose from is not a question worth paying to ask.
   if (request.candidates.length === 0) {
-    return [];
+    return { selections: [], call: null };
   }
 
   const answer = await provider.execute(buildDiscoverySelectionRequest(request));
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(answer);
+    parsed = JSON.parse(answer.text);
   } catch (error) {
     // The cause is attached rather than logged, and the message quotes none of
     // the answer — it may contain whatever a title told the model to write.
     throw new InvalidDiscoverySelectionError("the answer was not valid JSON", {
       cause: error,
+      call: answer,
     });
   }
 
-  return readDiscoverySelections(parsed, request);
+  try {
+    return { selections: readDiscoverySelections(parsed, request), call: answer };
+  } catch (error) {
+    // **Raised again rather than changed in place**, so the call can be
+    // attached to a refusal that was decided without one. The detail is the
+    // same detail, so the sentence a log records is the same sentence.
+    if (error instanceof InvalidDiscoverySelectionError) {
+      throw new InvalidDiscoverySelectionError(error.detail, {
+        cause: error.cause,
+        call: answer,
+      });
+    }
+
+    throw error;
+  }
 }

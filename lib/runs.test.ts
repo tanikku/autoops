@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   update: vi.fn(),
   findFirst: vi.fn(),
+  usageCreate: vi.fn(),
 }));
 
 vi.mock("@/lib/execution-lease", async () => {
@@ -34,7 +35,7 @@ vi.mock("@/lib/execution-lease", async () => {
 });
 
 vi.mock("@/lib/ai/factory", () => ({
-  createAIProvider: () => ({ execute: mocks.execute }),
+  createAIProvider: () => ({ mode: "real", execute: mocks.execute }),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -45,6 +46,9 @@ vi.mock("@/lib/prisma", () => ({
       update: mocks.update,
       findFirst: mocks.findFirst,
     },
+    // Reached through the real recording helper rather than a stub of it,
+    // so what these fix is the row a run actually writes.
+    providerUsageEvent: { create: mocks.usageCreate },
   },
 }));
 
@@ -56,11 +60,36 @@ const {
   RunPersistenceError,
 } = await import("@/lib/runs");
 const { ExecutionSuppressedError } = await import("@/lib/execution-lease");
+const { ProviderError } = await import("@/lib/ai/provider");
 // Imported for one comparison, and only here: the two constants belong to
 // different modules on purpose — the dispatcher must not know what a prompt
 // worker asks a model for, and execution must not import the dispatcher that
 // calls it. A test is the one place both can be read at once.
 const { MAX_TICK_EXECUTION_MS } = await import("@/lib/dispatcher");
+
+/**
+ * What a real provider hands back.
+ *
+ * **The text is still the product**, and every assertion about stored output
+ * reads it; the rest is what the provider always knew and used to discard.
+ */
+function aiResult(
+  text = "done",
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    text,
+    provider: "anthropic" as const,
+    model: "claude-opus-5",
+    usage: {
+      inputTokens: 1_200,
+      outputTokens: 340,
+      cacheReadTokens: 0,
+      cacheWriteTokens: null,
+    },
+    ...overrides,
+  };
+}
 
 const LEASE = { token: "token-a", expiresAt: new Date("2026-08-10T12:15:00Z") };
 
@@ -83,7 +112,8 @@ function written() {
 beforeEach(() => {
   mocks.acquire.mockReset().mockResolvedValue(LEASE);
   mocks.release.mockReset().mockResolvedValue("released");
-  mocks.execute.mockReset().mockResolvedValue("done");
+  mocks.execute.mockReset().mockResolvedValue(aiResult());
+  mocks.usageCreate.mockReset().mockResolvedValue({});
   mocks.findUniqueOrThrow
     .mockReset()
     .mockResolvedValue({ userId: "user-1", prompt: "hello", kind: "prompt" });
@@ -264,7 +294,7 @@ describe("runRoutine — lease acquired", () => {
  */
 describe("runRoutine — what a run records", () => {
   it("stores the model's answer and no error when it worked", async () => {
-    mocks.execute.mockResolvedValue("the answer");
+    mocks.execute.mockResolvedValue(aiResult("the answer"));
 
     await runRoutine("worker-1");
 
@@ -378,7 +408,7 @@ describe("runRoutine — lease contended", () => {
  */
 describe("runRoutine — recording the outcome fails", () => {
   it("does not write a failed run when the success could not be written", async () => {
-    mocks.execute.mockResolvedValue("the answer");
+    mocks.execute.mockResolvedValue(aiResult("the answer"));
     mocks.update.mockRejectedValueOnce(new Error("db down"));
 
     await expect(runRoutine("worker-1")).rejects.toBeInstanceOf(
@@ -391,7 +421,7 @@ describe("runRoutine — recording the outcome fails", () => {
   });
 
   it("says which write it was", async () => {
-    mocks.execute.mockResolvedValue("the answer");
+    mocks.execute.mockResolvedValue(aiResult("the answer"));
     mocks.update.mockRejectedValueOnce(new Error("db down"));
 
     await expect(runRoutine("worker-1")).rejects.toMatchObject({
@@ -402,14 +432,14 @@ describe("runRoutine — recording the outcome fails", () => {
 
   it("keeps the original database failure as the cause", async () => {
     const cause = new Error("db down");
-    mocks.execute.mockResolvedValue("the answer");
+    mocks.execute.mockResolvedValue(aiResult("the answer"));
     mocks.update.mockRejectedValueOnce(cause);
 
     await expect(runRoutine("worker-1")).rejects.toMatchObject({ cause });
   });
 
   it("gives the lease back when the success could not be written", async () => {
-    mocks.execute.mockResolvedValue("the answer");
+    mocks.execute.mockResolvedValue(aiResult("the answer"));
     mocks.update.mockRejectedValueOnce(new Error("db down"));
 
     await expect(runRoutine("worker-1")).rejects.toThrow();
@@ -433,7 +463,7 @@ describe("runRoutine — recording the outcome fails", () => {
   });
 
   it("still reports the persistence failure when the release also failed", async () => {
-    mocks.execute.mockResolvedValue("the answer");
+    mocks.execute.mockResolvedValue(aiResult("the answer"));
     mocks.update.mockRejectedValueOnce(new Error("db down"));
     mocks.release.mockResolvedValue("failed");
 
@@ -589,5 +619,160 @@ describe("how long a prompt worker waits for a model", () => {
     // `system`, and giving it a deadline does not give it one.
     expect(request).not.toHaveProperty("system");
     expect(Object.keys(request).sort()).toEqual(["timeoutMs", "user"]);
+  });
+});
+
+/**
+ * What a prompt worker's run says it cost.
+ *
+ * **One row per call, and no row when there was no call.** A prompt worker asks
+ * a model exactly once, so the arithmetic is simple enough to state plainly:
+ * every run that reached the provider writes one usage row, and every run that
+ * did not writes none.
+ *
+ * **The account and the run come from here, never from the provider.** A
+ * provider handed an account id could write the row itself, and then every
+ * feature's bookkeeping would live inside an adapter that has no business
+ * knowing whose work it is doing.
+ */
+describe("runRoutine — what a prompt run records about its call", () => {
+  /** The data of the only provider-usage `create`. */
+  function usageRow() {
+    return mocks.usageCreate.mock.calls[0][0].data;
+  }
+
+  it("writes exactly one row for one call", async () => {
+    await runRoutine("worker-1");
+
+    expect(mocks.usageCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("records the call against the owner and the run", async () => {
+    await runRoutine("worker-1");
+
+    expect(usageRow()).toMatchObject({
+      userId: "user-1",
+      runId: "run-1",
+      feature: "prompt",
+      outcome: "ok",
+    });
+  });
+
+  it("records what the provider said the call used", async () => {
+    await runRoutine("worker-1");
+
+    expect(usageRow()).toMatchObject({
+      provider: "anthropic",
+      model: "claude-opus-5",
+      inputTokens: 1_200,
+      outputTokens: 340,
+      cacheReadTokens: 0,
+      cacheWriteTokens: null,
+    });
+  });
+
+  /**
+   * **A call that failed after being sent still cost something**, and how much
+   * is usually unknown — which is written down as unknown rather than as zero.
+   */
+  it("records a call that was made and then failed", async () => {
+    mocks.execute.mockRejectedValue(
+      new ProviderError("timeout", "took too long", {
+        attempt: {
+          provider: "anthropic",
+          model: "claude-opus-5",
+          usage: {
+            inputTokens: null,
+            outputTokens: null,
+            cacheReadTokens: null,
+            cacheWriteTokens: null,
+          },
+        },
+      }),
+    );
+
+    await runRoutine("worker-1");
+
+    expect(mocks.usageCreate).toHaveBeenCalledTimes(1);
+    expect(usageRow()).toMatchObject({
+      feature: "prompt",
+      outcome: "error",
+      inputTokens: null,
+      outputTokens: null,
+    });
+  });
+
+  /** The run is still failed, and still for the provider's own reason. */
+  it("leaves a failed run failed", async () => {
+    mocks.execute.mockRejectedValue(
+      new ProviderError("timeout", "took too long", {
+        attempt: { provider: "anthropic", model: "claude-opus-5", usage: null },
+      }),
+    );
+
+    await runRoutine("worker-1");
+
+    expect(written()).toMatchObject({ status: "failed" });
+  });
+
+  /**
+   * **A failure that never reached a provider is free**, and free things are not
+   * recorded. This is the ordinary shape of every pre-provider refusal.
+   */
+  it("writes nothing when the provider was never reached", async () => {
+    mocks.execute.mockRejectedValue(new Error("refused before sending"));
+
+    await runRoutine("worker-1");
+
+    expect(mocks.usageCreate).not.toHaveBeenCalled();
+    expect(written()).toMatchObject({ status: "failed" });
+  });
+
+  /** Nothing was sent and nothing was charged. */
+  it("writes nothing for the stand-in provider", async () => {
+    mocks.execute.mockResolvedValue({
+      text: "Execution completed successfully.",
+      provider: "dummy",
+      model: "stand-in",
+      usage: null,
+    });
+
+    await runRoutine("worker-1");
+
+    expect(mocks.usageCreate).not.toHaveBeenCalled();
+    expect(written()).toMatchObject({ status: "completed" });
+  });
+});
+
+/**
+ * **Observation must not change what it observes.** A bookkeeping row that
+ * cannot be written is a gap in a ledger; a run that disappears because of one
+ * is a product failure. These fix which of the two happens.
+ */
+describe("runRoutine — when the usage row cannot be written", () => {
+  it("still completes a run that worked", async () => {
+    mocks.usageCreate.mockRejectedValue(new Error("connection lost"));
+
+    await runRoutine("worker-1");
+
+    expect(written()).toMatchObject({ status: "completed", output: "done" });
+  });
+
+  /**
+   * And it must not replace the real error either: a run that failed keeps
+   * failing for the reason it failed.
+   */
+  it("still fails a run that failed, for the original reason", async () => {
+    mocks.usageCreate.mockRejectedValue(new Error("connection lost"));
+    mocks.execute.mockRejectedValue(
+      new ProviderError("timeout", "the model took too long", {
+        attempt: { provider: "anthropic", model: "claude-opus-5", usage: null },
+      }),
+    );
+
+    await runRoutine("worker-1");
+
+    expect(written()).toMatchObject({ status: "failed" });
+    expect(written().errorMessage).toContain("the model took too long");
   });
 });

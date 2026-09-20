@@ -1,7 +1,12 @@
 import "server-only";
 
+import { type AIExecutionResult, providerAttemptOf } from "@/lib/ai/provider";
 import { prisma } from "@/lib/prisma";
-import type { ProviderUsageEventInput } from "@/lib/usage/types";
+import {
+  type ProviderUsageEventInput,
+  UNKNOWN_PROVIDER_USAGE,
+  type UsageFeature,
+} from "@/lib/usage/types";
 
 /**
  * Writing down what one call to a model used.
@@ -58,4 +63,84 @@ export async function recordProviderUsage(
       error,
     );
   }
+}
+
+/** Who a call belonged to, which the provider never knows. */
+export type AICallContext = {
+  /** The owner, from the session or from the routine. Never from a form. */
+  readonly userId: string;
+  readonly feature: UsageFeature;
+  /** The run this call belonged to, or null for the paths that have none. */
+  readonly runId: string | null;
+};
+
+/**
+ * Records a call that succeeded, if there was a call.
+ *
+ * **The stand-in writes nothing, and that refusal lives here rather than at
+ * each call site.** Three features call a model today and three more will;
+ * asking every one of them to remember that a fabricated answer is not a
+ * purchase would eventually be six chances to forget. A result with no usage
+ * came from nothing that could be billed, and this is where that is decided.
+ *
+ * Best-effort, like everything else in this file: see `recordProviderUsage`.
+ */
+export async function recordAIExecution(
+  context: AICallContext,
+  result: AIExecutionResult,
+  occurredAt: Date = new Date(),
+): Promise<void> {
+  // Two conditions rather than one, and either alone is enough: a provider that
+  // reached nothing, or a result that reports nothing. Neither is a cost.
+  if (result.provider === "dummy" || result.usage === null) {
+    return;
+  }
+
+  await recordProviderUsage({
+    userId: context.userId,
+    occurredAt,
+    feature: context.feature,
+    provider: result.provider,
+    model: result.model,
+    usage: result.usage,
+    outcome: "ok",
+    runId: context.runId,
+  });
+}
+
+/**
+ * Records a call that failed, if a call was actually made.
+ *
+ * **Most failures are not calls.** A missing key, an instruction too long, a
+ * page that could not be fetched, an account out of allowance — every one of
+ * them is a failed run that cost nothing, and a row for it would be an invented
+ * charge. `providerAttemptOf` returns null for all of them, and this writes
+ * nothing.
+ *
+ * **What is written when there was a call is deliberately thin**: the tokens if
+ * the failure reported any, and nulls if it did not. Nothing is estimated from
+ * `max_tokens`, from the size of the request, or from what a similar call cost
+ * — a guess recorded as a measurement is worse than a gap.
+ */
+export async function recordAIFailure(
+  context: AICallContext,
+  error: unknown,
+  occurredAt: Date = new Date(),
+): Promise<void> {
+  const attempt = providerAttemptOf(error);
+
+  if (attempt === null || attempt.provider === "dummy") {
+    return;
+  }
+
+  await recordProviderUsage({
+    userId: context.userId,
+    occurredAt,
+    feature: context.feature,
+    provider: attempt.provider,
+    model: attempt.model,
+    usage: attempt.usage ?? UNKNOWN_PROVIDER_USAGE,
+    outcome: "error",
+    runId: context.runId,
+  });
 }
