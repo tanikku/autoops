@@ -2,9 +2,11 @@ import "server-only";
 
 import {
   assertCreatorAnalysisRequestWithinLimits,
+  type CreatorAnalysis,
   type CreatorAnalysisRequest,
   type CreatorAnalysisResult,
   type CreatorAnalyzer,
+  InvalidCreatorAnalysisResponseError,
   creatorAnalysisLimits,
 } from "@/lib/creator/analyzer";
 import {
@@ -25,12 +27,18 @@ import {
 import {
   assertUsableStoredMemory,
   type CreatorAnalysisMemory,
+  type CreatorMemorySynthesis,
   type CreatorMemorySynthesizer,
   creatorMemoryLimits,
+  InvalidCreatorMemoryError,
   isInvalidCreatorMemory,
   selectMemorySynthesisBatch,
 } from "@/lib/creator/memory";
-import { providerErrorKind } from "@/lib/ai/provider";
+import {
+  type ProviderCallMetadata,
+  providerErrorKind,
+} from "@/lib/ai/provider";
+import { recordAIExecution, recordAIFailure } from "@/lib/usage/record";
 import type { CreatorFeedbackAction } from "@/types";
 
 /**
@@ -185,7 +193,34 @@ async function analyzeCreatorContent(
   // `lib/creator/analyzer.ts`; nothing here restates a number it owns.
   assertCreatorAnalysisRequestWithinLimits(request);
 
-  const result = await analyzer.analyze(request);
+  let analysis: CreatorAnalysis;
+  try {
+    analysis = await analyzer.analyze(request);
+  } catch (error) {
+    // **An unusable answer is a call that succeeded.** The model was reached
+    // and it replied; only the using of the reply failed, and the reply was
+    // billed. Everything refused before a request was sent — a body that is
+    // empty, one too large — never reaches here.
+    await recordProviderOutcome(
+      { userId, feature: "creator-analysis", runId: null },
+      error instanceof InvalidCreatorAnalysisResponseError ? error.call : null,
+      error,
+    );
+
+    throw error;
+  }
+
+  // **After the call, outside every transaction, and it cannot change what
+  // follows.** An analysis writes nothing of its own until `saveCreatorAnalysis`
+  // below, and a bookkeeping row must not become the first thing that can fail
+  // an analysis somebody paid for. There is no run to point at — a Creator
+  // analysis is not a worker — so `runId` is null.
+  await recordAIExecution(
+    { userId, feature: "creator-analysis", runId: null },
+    analysis.call,
+  );
+
+  const result = analysis.result;
 
   const { contentItemId } = await saveCreatorAnalysis(
     source.sourceKind === "url"
@@ -497,15 +532,40 @@ async function refreshCreatorMemory({
     return null;
   }
 
-  let summary: string;
+  let synthesis: CreatorMemorySynthesis;
   try {
-    summary = await synthesizer.synthesize({ previousSummary, feedback: batch });
+    synthesis = await synthesizer.synthesize({ previousSummary, feedback: batch });
   } catch (error) {
+    // **Recorded before the failure is absorbed, and only when a request was
+    // made.** Several of the refusals here are decided before anything is sent
+    // — a synthesis with no evidence — and those carry no call and write
+    // nothing. An unusable summary is the other way round: the model was
+    // reached and replied, so it is recorded as the call it was.
+    await recordProviderOutcome(
+      { userId, feature: "creator-memory", runId: null },
+      error instanceof InvalidCreatorMemoryError ? error.call : null,
+      error,
+    );
+
     // Provider failure, refusal, or an answer that could not be used. The
     // summary stays where it was and the analysis carries on.
     logMemoryAnomaly("synthesis-failed", error);
     return null;
   }
+
+  // **Before the write, and outside it.** The transaction below is deliberately
+  // short — a compare-and-set over a count and its evidence — and adding a
+  // bookkeeping insert to it would hold it open for a second write that has
+  // nothing to do with what it protects. Recording here also settles what
+  // happens when the compare-and-set loses: the call was made and paid for, so
+  // the row stays exactly as it is. Nothing is refunded and nothing is asked
+  // again.
+  await recordAIExecution(
+    { userId, feature: "creator-memory", runId: null },
+    synthesis.call,
+  );
+
+  const summary = synthesis.summary;
 
   const feedbackIds = candidates
     .slice(0, batch.length)
@@ -541,6 +601,30 @@ async function refreshCreatorMemory({
   logMemoryAnomaly(`cas-lost expected=${alreadySummarized}`);
 
   return null;
+}
+
+/**
+ * Writes down one call, whichever way it went.
+ *
+ * **Two outcomes and one silence.** A completed request is recorded as the call
+ * it was, even when what came back could not be used; a request that failed
+ * after being sent is recorded as a failure; and a refusal decided before
+ * anything was sent writes nothing at all, because it cost nothing.
+ *
+ * Best-effort throughout: neither branch can throw, and neither changes what
+ * the caller is about to do.
+ */
+async function recordProviderOutcome(
+  context: Parameters<typeof recordAIFailure>[0],
+  answered: ProviderCallMetadata | null,
+  error: unknown,
+): Promise<void> {
+  if (answered === null) {
+    await recordAIFailure(context, error);
+    return;
+  }
+
+  await recordAIExecution(context, answered);
 }
 
 /**

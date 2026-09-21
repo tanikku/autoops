@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   createWorkerDraftGenerator: vi.fn(),
   generate: vi.fn(),
+  usageCreate: vi.fn(),
   ensureUser: vi.fn(),
   consumeAiDraftQuota: vi.fn(),
   getUserTimezone: vi.fn(),
@@ -65,7 +66,12 @@ vi.mock("@/lib/ai/worker-draft-factory", () => ({
 // callback and hands it a marker: what the assertions want to see is that both
 // writes were given the *same* client, and that it was not the module's.
 vi.mock("@/lib/prisma", () => ({
-  prisma: { $transaction: mocks.transaction },
+  prisma: {
+    $transaction: mocks.transaction,
+    // Reached through the real recording helper rather than a stub of it, so
+    // what the tests below fix is the row a draft actually writes.
+    providerUsageEvent: { create: mocks.usageCreate },
+  },
 }));
 
 /**
@@ -112,6 +118,28 @@ function form(overrides?: Record<string, string>) {
   return data;
 }
 
+/**
+ * A draft, and the call that produced it.
+ *
+ * **The draft is unchanged**; what is new beside it is what the model used,
+ * which is the whole of what this phase added to the boundary.
+ */
+function draftGeneration(result: unknown) {
+  return {
+    result,
+    call: {
+      provider: "anthropic" as const,
+      model: "claude-opus-5",
+      usage: {
+        inputTokens: 1_200,
+        outputTokens: 340,
+        cacheReadTokens: 0,
+        cacheWriteTokens: null,
+      },
+    },
+  };
+}
+
 beforeEach(() => {
   mocks.auth.mockReset().mockResolvedValue({
     user: {
@@ -122,6 +150,7 @@ beforeEach(() => {
     },
   });
   mocks.ensureUser.mockReset().mockResolvedValue(undefined);
+  mocks.usageCreate.mockReset().mockResolvedValue({});
   mocks.consumeAiDraftQuota.mockReset().mockResolvedValue(true);
   mocks.getUserTimezone.mockReset().mockResolvedValue("Asia/Tokyo");
   mocks.getUserLanguage.mockReset().mockResolvedValue("en");
@@ -806,10 +835,10 @@ describe("generateWorkerDraftAction", () => {
    * it.
    */
   it("provisions the account row for a request that will reach a model", async () => {
-    mocks.generate.mockResolvedValue({
+    mocks.generate.mockResolvedValue(draftGeneration({
       status: "supported",
       draft: PROMPT_DRAFT,
-    });
+    }));
 
     await ask("three ideas each morning");
 
@@ -837,10 +866,10 @@ describe("generateWorkerDraftAction", () => {
   });
 
   it("provisions the row before anything is counted against it", async () => {
-    mocks.generate.mockResolvedValue({
+    mocks.generate.mockResolvedValue(draftGeneration({
       status: "supported",
       draft: PROMPT_DRAFT,
-    });
+    }));
 
     await ask("three ideas each morning");
 
@@ -861,10 +890,10 @@ describe("generateWorkerDraftAction", () => {
   });
 
   it("counts the request against the account that asked", async () => {
-    mocks.generate.mockResolvedValue({
+    mocks.generate.mockResolvedValue(draftGeneration({
       status: "supported",
       draft: PROMPT_DRAFT,
-    });
+    }));
 
     await ask("three ideas each morning");
 
@@ -873,10 +902,10 @@ describe("generateWorkerDraftAction", () => {
   });
 
   it("counts the request before the model is asked", async () => {
-    mocks.generate.mockResolvedValue({
+    mocks.generate.mockResolvedValue(draftGeneration({
       status: "supported",
       draft: PROMPT_DRAFT,
-    });
+    }));
 
     await ask("three ideas each morning");
 
@@ -923,10 +952,10 @@ describe("generateWorkerDraftAction", () => {
   });
 
   it("accepts a request exactly at the limit", async () => {
-    mocks.generate.mockResolvedValue({
+    mocks.generate.mockResolvedValue(draftGeneration({
       status: "supported",
       draft: PROMPT_DRAFT,
-    });
+    }));
 
     const result = await ask("a".repeat(MAX_WORKER_DRAFT_REQUEST_CHARS));
 
@@ -934,10 +963,10 @@ describe("generateWorkerDraftAction", () => {
   });
 
   it("carries a prompt draft back", async () => {
-    mocks.generate.mockResolvedValue({
+    mocks.generate.mockResolvedValue(draftGeneration({
       status: "supported",
       draft: PROMPT_DRAFT,
-    });
+    }));
 
     await expect(ask("three ideas each morning")).resolves.toEqual({
       status: "supported",
@@ -946,10 +975,10 @@ describe("generateWorkerDraftAction", () => {
   });
 
   it("carries a website draft back", async () => {
-    mocks.generate.mockResolvedValue({
+    mocks.generate.mockResolvedValue(draftGeneration({
       status: "supported",
       draft: WEBSITE_DRAFT,
-    });
+    }));
 
     await expect(
       ask("watch https://example.com/news daily"),
@@ -961,10 +990,10 @@ describe("generateWorkerDraftAction", () => {
 
   /** The addresses come from the request, and the model only points at them. */
   it("finds the addresses itself and hands them over", async () => {
-    mocks.generate.mockResolvedValue({
+    mocks.generate.mockResolvedValue(draftGeneration({
       status: "supported",
       draft: WEBSITE_DRAFT,
-    });
+    }));
 
     await ask("watch https://example.com/news and https://example.com/x daily");
 
@@ -975,10 +1004,10 @@ describe("generateWorkerDraftAction", () => {
   });
 
   it("carries an unsupported answer back as it is", async () => {
-    mocks.generate.mockResolvedValue({
+    mocks.generate.mockResolvedValue(draftGeneration({
       status: "unsupported",
       reason: "Koqentra cannot read email.",
-    });
+    }));
 
     await expect(ask("read my email")).resolves.toEqual({
       status: "unsupported",
@@ -987,11 +1016,11 @@ describe("generateWorkerDraftAction", () => {
   });
 
   it("carries a question about the address back as it is", async () => {
-    mocks.generate.mockResolvedValue({
+    mocks.generate.mockResolvedValue(draftGeneration({
       status: "needs_input",
       field: "websiteUrl",
       message: "Add the address of the page you want Koqentra to watch.",
-    });
+    }));
 
     await expect(ask("watch that page daily")).resolves.toMatchObject({
       status: "needs_input",
@@ -1071,7 +1100,7 @@ describe("generateWorkerDraftAction", () => {
       { status: "needs_input", field: "websiteUrl", message: "which page?" },
     ],
   ])("writes nothing when it answers with %s", async (_label, answer) => {
-    mocks.generate.mockResolvedValue(answer);
+    mocks.generate.mockResolvedValue(draftGeneration(answer));
 
     await ask("watch https://example.com/news daily");
 
@@ -1287,11 +1316,11 @@ describe("generateWorkerDraftAction — the words a failure comes back in", () =
    */
   it("passes a generator's own answer through untouched", async () => {
     mocks.getUserLanguage.mockResolvedValue("ja");
-    mocks.generate.mockResolvedValue({
+    mocks.generate.mockResolvedValue(draftGeneration({
       status: "needs_input",
       field: "websiteUrl",
       message: "Which page should this worker watch?",
-    });
+    }));
 
     const result = await ask("watch a page for me");
 
@@ -1304,10 +1333,10 @@ describe("generateWorkerDraftAction — the words a failure comes back in", () =
 
   it("tells the generator nothing about the language", async () => {
     mocks.getUserLanguage.mockResolvedValue("ja");
-    mocks.generate.mockResolvedValue({
+    mocks.generate.mockResolvedValue(draftGeneration({
       status: "unsupported",
       reason: "Koqentra cannot send email yet.",
-    });
+    }));
 
     await ask("email my team every morning");
 
@@ -1593,4 +1622,177 @@ describe("createRoutineAction — the other kinds are unchanged", () => {
       expect(mocks.saveDiscoverySource).not.toHaveBeenCalled();
     },
   );
+});
+
+/**
+ * What a draft says it cost.
+ *
+ * **Drafting writes no run**, so there is nothing for a usage row to point at
+ * and `runId` is null on every one of these. What it can say is who answered,
+ * which model, and what the call used — and, more often, that no call was made
+ * at all: every refusal in front of the provider is free.
+ */
+describe("generateWorkerDraftAction — what it records about its call", () => {
+  /** One draft request, as the form sends it. */
+  function ask(request: string) {
+    const data = new FormData();
+    data.set("request", request);
+    return generateWorkerDraftAction(null, data);
+  }
+
+  /** The data of the only provider-usage `create`. */
+  function usageRow() {
+    return mocks.usageCreate.mock.calls[0][0].data;
+  }
+
+  it("records one call when a draft came back", async () => {
+    mocks.generate.mockResolvedValue(
+      draftGeneration({ status: "unsupported", reason: "no" }),
+    );
+
+    await ask("watch a page");
+
+    expect(mocks.usageCreate).toHaveBeenCalledTimes(1);
+    expect(usageRow()).toMatchObject({
+      userId: "google-sub-1",
+      feature: "draft",
+      provider: "anthropic",
+      model: "claude-opus-5",
+      outcome: "ok",
+      inputTokens: 1_200,
+      outputTokens: 340,
+      cacheReadTokens: 0,
+      cacheWriteTokens: null,
+    });
+  });
+
+  /** A draft is not a run, so there is no history row to point at. */
+  it("points at no run", async () => {
+    mocks.generate.mockResolvedValue(
+      draftGeneration({ status: "unsupported", reason: "no" }),
+    );
+
+    await ask("watch a page");
+
+    expect(usageRow().runId).toBeNull();
+  });
+
+  it("records a call that was made and then failed", async () => {
+    mocks.generate.mockRejectedValue(
+      new ProviderError("timeout", "took too long", {
+        attempt: {
+          provider: "anthropic",
+          model: "claude-opus-5",
+          usage: {
+            inputTokens: null,
+            outputTokens: null,
+            cacheReadTokens: null,
+            cacheWriteTokens: null,
+          },
+        },
+      }),
+    );
+
+    await ask("watch a page");
+
+    expect(mocks.usageCreate).toHaveBeenCalledTimes(1);
+    expect(usageRow()).toMatchObject({
+      feature: "draft",
+      outcome: "error",
+      inputTokens: null,
+      runId: null,
+    });
+  });
+
+  /**
+   * **An unusable answer is a call that succeeded.** The model was reached and
+   * replied; only the using of the reply failed, and it was billed either way.
+   */
+  it("records an unusable answer as a call that happened", async () => {
+    mocks.generate.mockRejectedValue(
+      new InvalidWorkerDraftResponseError("the model proposed nothing", {
+        call: {
+          provider: "anthropic",
+          model: "claude-opus-5",
+          usage: {
+            inputTokens: 900,
+            outputTokens: 12,
+            cacheReadTokens: null,
+            cacheWriteTokens: null,
+          },
+        },
+      }),
+    );
+
+    await ask("watch a page");
+
+    expect(mocks.usageCreate).toHaveBeenCalledTimes(1);
+    expect(usageRow()).toMatchObject({
+      feature: "draft",
+      outcome: "ok",
+      inputTokens: 900,
+      outputTokens: 12,
+    });
+  });
+
+  /**
+   * **Every refusal in front of the provider is free.** None of these sends
+   * anything, so none of them may be recorded as a cost.
+   */
+  it("records nothing for an empty request", async () => {
+    await ask("");
+
+    expect(mocks.generate).not.toHaveBeenCalled();
+    expect(mocks.usageCreate).not.toHaveBeenCalled();
+  });
+
+  it("records nothing for a request past the limit", async () => {
+    await ask("x".repeat(MAX_WORKER_DRAFT_REQUEST_CHARS + 1));
+
+    expect(mocks.generate).not.toHaveBeenCalled();
+    expect(mocks.usageCreate).not.toHaveBeenCalled();
+  });
+
+  it("records nothing when no generator is configured", async () => {
+    mocks.createWorkerDraftGenerator.mockReturnValue(null);
+
+    await ask("watch a page");
+
+    expect(mocks.usageCreate).not.toHaveBeenCalled();
+  });
+
+  it("records nothing when the allowance is spent", async () => {
+    mocks.consumeAiDraftQuota.mockResolvedValue(false);
+
+    await ask("watch a page");
+
+    expect(mocks.generate).not.toHaveBeenCalled();
+    expect(mocks.usageCreate).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **Observation must not change what it observes.** A draft that came back
+   * still reaches the form when the bookkeeping beside it could not be written.
+   */
+  it("still returns the draft when the usage row cannot be written", async () => {
+    mocks.usageCreate.mockRejectedValue(new Error("connection lost"));
+    mocks.generate.mockResolvedValue(
+      draftGeneration({ status: "unsupported", reason: "Koqentra cannot." }),
+    );
+
+    const state = await ask("watch a page");
+
+    expect(state).toMatchObject({ status: "unsupported" });
+  });
+
+  /** The existing hourly allowance is untouched: still one per request. */
+  it("spends the draft allowance exactly as it did before", async () => {
+    mocks.generate.mockResolvedValue(
+      draftGeneration({ status: "unsupported", reason: "no" }),
+    );
+
+    await ask("watch a page");
+
+    expect(mocks.consumeAiDraftQuota).toHaveBeenCalledTimes(1);
+  });
 });

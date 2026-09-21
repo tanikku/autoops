@@ -534,7 +534,7 @@ describe("an answer that can be acted on", () => {
   it("accepts three recommendations", async () => {
     replyWithDecisions(allThree);
 
-    const result = await analyzer.analyze(aRequest());
+    const result = (await analyzer.analyze(aRequest())).result;
 
     expect(result.x.verdict).toBe("recommend");
     expect(result.reddit.verdict).toBe("recommend");
@@ -553,7 +553,7 @@ describe("an answer that can be acted on", () => {
       longform: skip(),
     });
 
-    const result = await analyzer.analyze(aRequest());
+    const result = (await analyzer.analyze(aRequest())).result;
 
     expect(result.x.draftBody).toBe("A short post.");
     expect(result.reddit.verdict).toBe("skip");
@@ -568,7 +568,7 @@ describe("an answer that can be acted on", () => {
       longform: skip(),
     });
 
-    const result = await analyzer.analyze(aRequest());
+    const result = (await analyzer.analyze(aRequest())).result;
 
     expect(result.x.verdict).toBe("recommend");
     expect(result.reddit.verdict).toBe("skip");
@@ -637,7 +637,7 @@ describe("an answer that cannot", () => {
         [channel]: recommend("d".repeat(creatorDraftLimits[channel])),
       });
 
-      const result = await analyzer.analyze(aRequest());
+      const result = (await analyzer.analyze(aRequest())).result;
 
       expect(result[channel].draftBody).toHaveLength(creatorDraftLimits[channel]);
     },
@@ -677,7 +677,7 @@ describe("an answer that cannot", () => {
       longform: recommend("l".repeat(creatorDraftLimits.x + 1)),
     });
 
-    const result = await analyzer.analyze(aRequest());
+    const result = (await analyzer.analyze(aRequest())).result;
 
     expect(result.longform.draftBody).toHaveLength(creatorDraftLimits.x + 1);
   });
@@ -761,7 +761,7 @@ describe("how the turn ended", () => {
   it("accepts a completed turn", async () => {
     replyWith(wellFormed, "end_turn");
 
-    const result = await analyzer.analyze(aRequest());
+    const result = (await analyzer.analyze(aRequest())).result;
 
     expect(result.x.verdict).toBe("recommend");
   });

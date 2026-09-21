@@ -1,3 +1,4 @@
+import type { ProviderCallMetadata } from "@/lib/ai/provider";
 import { workerFieldLimits } from "@/lib/worker-input";
 import { isRoutineFrequency, type RoutineFrequency } from "@/types";
 
@@ -123,8 +124,26 @@ export type WorkerDraftRequest = {
  * generator that fabricates worker settings. See `createWorkerDraftGenerator`.
  */
 export interface WorkerDraftGenerator {
-  generate(request: WorkerDraftRequest): Promise<WorkerDraftResult>;
+  generate(request: WorkerDraftRequest): Promise<WorkerDraftGeneration>;
 }
+
+/**
+ * What a generator hands back: the draft, and what asking for it cost.
+ *
+ * **A wrapper rather than three more fields.** `WorkerDraftResult` is a
+ * union of three answers and is also what `readWorkerDraftToolResult`
+ * produces from a tool call with no provider in sight; widening it would put
+ * a model's billing on a value that is sometimes built without one.
+ *
+ * **`WorkerDraftGenerator` still does not implement `AIProvider`.** The two
+ * interfaces stayed apart for reasons that have nothing to do with cost, and
+ * sharing a metadata type is not the same as sharing an abstraction.
+ */
+export type WorkerDraftGeneration = {
+  readonly result: WorkerDraftResult;
+  /** The call that produced it. Always present: there is no stand-in. */
+  readonly call: ProviderCallMetadata;
+};
 
 /**
  * The model answered, and the answer was not usable.
@@ -138,9 +157,23 @@ export interface WorkerDraftGenerator {
  * Distinct from `ProviderError`, which means the provider never answered.
  */
 export class InvalidWorkerDraftResponseError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
+  /**
+   * The call that produced the unusable answer, when it is known.
+   *
+   * **An unusable answer is still an answer that was paid for.** The model
+   * was reached and it replied; only the using of the reply failed. Losing
+   * this would make the one kind of wasted spend invisible — which is
+   * exactly the spend somebody would want to count.
+   */
+  readonly call: ProviderCallMetadata | null;
+
+  constructor(
+    message: string,
+    options?: { cause?: unknown; call?: ProviderCallMetadata | null },
+  ) {
     super(message, options);
     this.name = "InvalidWorkerDraftResponseError";
+    this.call = options?.call ?? null;
   }
 }
 

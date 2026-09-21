@@ -1,6 +1,9 @@
 import "server-only";
 
-import { type AIExecutionResult, providerAttemptOf } from "@/lib/ai/provider";
+import {
+  type ProviderCallMetadata,
+  providerAttemptOf,
+} from "@/lib/ai/provider";
 import { prisma } from "@/lib/prisma";
 import {
   type ProviderUsageEventInput,
@@ -87,7 +90,7 @@ export type AICallContext = {
  */
 export async function recordAIExecution(
   context: AICallContext,
-  result: AIExecutionResult,
+  result: ProviderCallMetadata,
   occurredAt: Date = new Date(),
 ): Promise<void> {
   // Two conditions rather than one, and either alone is enough: a provider that

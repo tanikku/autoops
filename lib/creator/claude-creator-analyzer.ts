@@ -1,11 +1,16 @@
 import "server-only";
 
 import Anthropic from "@anthropic-ai/sdk";
-import { ProviderError, type ProviderErrorKind } from "@/lib/ai/provider";
+import {
+  type ProviderCallMetadata,
+  ProviderError,
+  type ProviderErrorKind,
+} from "@/lib/ai/provider";
+import { normalizeAnthropicUsage, UNKNOWN_AI_USAGE } from "@/lib/ai/usage";
 import {
   assertCreatorAnalysisRequestWithinLimits,
   type CreatorAnalysisRequest,
-  type CreatorAnalysisResult,
+  type CreatorAnalysis,
   type CreatorAnalyzer,
   creatorAnalysisSchema,
   InvalidCreatorAnalysisResponseError,
@@ -51,6 +56,14 @@ const MAX_TOKENS = 12_000;
  * worth retrying is not settled here either.
  */
 const MAX_RETRIES = 0;
+
+/**
+ * Who this adapter reaches.
+ *
+ * Named once rather than written at each site, so a recorded call can never
+ * disagree with the client that made it.
+ */
+const PROVIDER = "anthropic" as const;
 
 /**
  * How hard to think about it.
@@ -212,7 +225,7 @@ export class ClaudeCreatorAnalyzer implements CreatorAnalyzer {
     });
   }
 
-  async analyze(request: CreatorAnalysisRequest): Promise<CreatorAnalysisResult> {
+  async analyze(request: CreatorAnalysisRequest): Promise<CreatorAnalysis> {
     // **Before anything leaves the process.** A request too large to send is
     // not a failed call; it is a call that must not be made, and finding that
     // out from a 413 would mean paying for the round trip to learn it.
@@ -238,7 +251,13 @@ export class ClaudeCreatorAnalyzer implements CreatorAnalyzer {
       // **The SDK's own types stop here.** Everything past this boundary sees
       // `ProviderError` and its closed set of kinds, so no caller has to know
       // which client library is underneath.
-      throw new ProviderError(classify(error), error.message, { cause: error });
+      // **The attempt is attached because the request was sent.** Reaching
+      // this `catch` means a request left the machine and was billable —
+      // whatever it cost, which the SDK's error does not say.
+      throw new ProviderError(classify(error), error.message, {
+        cause: error,
+        attempt: { provider: PROVIDER, model: MODEL, usage: UNKNOWN_AI_USAGE },
+      });
     }
 
     // **How the answer ended decides whether there is an answer at all, and it
@@ -246,16 +265,28 @@ export class ClaudeCreatorAnalyzer implements CreatorAnalyzer {
     // which is a provider outcome; running out of room leaves a truncated
     // document that would otherwise surface as a confusing syntax error several
     // frames from its cause.
+    // Everything from here follows a completed request, so each refusal below
+    // carries what that request used.
+    const call: ProviderCallMetadata = {
+      provider: PROVIDER,
+      model: MODEL,
+      usage: normalizeAnthropicUsage(message.usage),
+    };
+
     if (message.stop_reason === "refusal") {
+      // **A refusal is always paid for in full.** The model was reached and
+      // it answered; the answer was a refusal.
       throw new ProviderError(
         "refused",
         "Claude declined to analyse this content.",
+        { attempt: call },
       );
     }
 
     if (message.stop_reason === "max_tokens") {
       throw new InvalidCreatorAnalysisResponseError(
         "the model ran out of room before finishing its answer",
+        { call },
       );
     }
 
@@ -269,13 +300,17 @@ export class ClaudeCreatorAnalyzer implements CreatorAnalyzer {
     if (message.stop_reason !== "end_turn") {
       throw new InvalidCreatorAnalysisResponseError(
         `the model stopped for an unexpected reason (${message.stop_reason ?? "none given"})`,
+        { call },
       );
     }
 
     const text = readText(message);
 
     if (text === "") {
-      throw new InvalidCreatorAnalysisResponseError("the model answered with nothing");
+      throw new InvalidCreatorAnalysisResponseError(
+        "the model answered with nothing",
+        { call },
+      );
     }
 
     let parsed: unknown;
@@ -287,10 +322,24 @@ export class ClaudeCreatorAnalyzer implements CreatorAnalyzer {
       // belong in an error string that may end up anywhere.
       throw new InvalidCreatorAnalysisResponseError(
         "the answer was not valid JSON",
-        { cause: error },
+        { cause: error, call },
       );
     }
 
-    return readCreatorAnalysis(parsed);
+    // **Raised again rather than changed in place**, so a refusal decided by
+    // the shared validator carries the call as well. The detail is the same
+    // detail, so the sentence anything logs is the same sentence.
+    try {
+      return { result: readCreatorAnalysis(parsed), call };
+    } catch (error) {
+      if (error instanceof InvalidCreatorAnalysisResponseError) {
+        throw new InvalidCreatorAnalysisResponseError(error.detail, {
+          cause: error.cause,
+          call,
+        });
+      }
+
+      throw error;
+    }
   }
 }

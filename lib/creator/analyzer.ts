@@ -1,3 +1,4 @@
+import type { ProviderCallMetadata } from "@/lib/ai/provider";
 import {
   assertUsableMemory,
   type CreatorAnalysisMemory,
@@ -223,8 +224,26 @@ export type CreatorAnalysisResult = {
 };
 
 export interface CreatorAnalyzer {
-  analyze(request: CreatorAnalysisRequest): Promise<CreatorAnalysisResult>;
+  analyze(request: CreatorAnalysisRequest): Promise<CreatorAnalysis>;
 }
+
+/**
+ * What an analysis came back as, and what asking cost.
+ *
+ * **A wrapper rather than three more properties.** `CreatorAnalysisResult`
+ * is a mapped type over the channels — one decision per channel and nothing
+ * else — and that shape is the validation. Adding a model's billing to it
+ * would make `readCreatorAnalysis` produce something that is no longer only
+ * decisions.
+ *
+ * **`CreatorAnalyzer` still does not implement `AIProvider`.** Sharing a
+ * metadata type is not sharing an abstraction.
+ */
+export type CreatorAnalysis = {
+  readonly result: CreatorAnalysisResult;
+  /** The call that produced it. Always present: there is no stand-in. */
+  readonly call: ProviderCallMetadata;
+};
 
 /**
  * The model answered, but not with something that can be acted on.
@@ -238,9 +257,33 @@ export interface CreatorAnalyzer {
  * **The message says what was wrong with the shape, never what was in it.**
  */
 export class InvalidCreatorAnalysisResponseError extends Error {
-  constructor(detail: string, options?: { cause?: unknown }) {
+  /**
+   * The call that produced the unusable answer, when it is known.
+   *
+   * **The model was reached and it replied.** Only the using of the reply
+   * failed, and the reply was billed either way — so this is the one kind
+   * of wasted spend that would otherwise leave no trace at all.
+   *
+   * Null when the shape was judged without a call in hand, which is how
+   * `readCreatorAnalysis` is used on its own.
+   */
+  readonly call: ProviderCallMetadata | null;
+  /**
+   * What was wrong, without the sentence around it.
+   *
+   * Kept so this can be raised again with the call attached and read
+   * identically; rebuilding it from `message` would prefix the sentence twice.
+   */
+  readonly detail: string;
+
+  constructor(
+    detail: string,
+    options?: { cause?: unknown; call?: ProviderCallMetadata | null },
+  ) {
     super(`The AI returned an unusable analysis: ${detail}`, options);
     this.name = "InvalidCreatorAnalysisResponseError";
+    this.detail = detail;
+    this.call = options?.call ?? null;
   }
 }
 

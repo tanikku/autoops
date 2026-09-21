@@ -1,9 +1,15 @@
 import "server-only";
 
 import Anthropic from "@anthropic-ai/sdk";
-import { ProviderError, type ProviderErrorKind } from "@/lib/ai/provider";
+import {
+  type ProviderCallMetadata,
+  ProviderError,
+  type ProviderErrorKind,
+} from "@/lib/ai/provider";
+import { normalizeAnthropicUsage, UNKNOWN_AI_USAGE } from "@/lib/ai/usage";
 import {
   assertUsableMemorySummary,
+  type CreatorMemorySynthesis,
   type CreatorMemorySynthesisRequest,
   type CreatorMemorySynthesizer,
   creatorMemoryLimits,
@@ -43,6 +49,14 @@ const MAX_TOKENS = 4_000;
 
 /** No retry. See the note above the class. */
 const MAX_RETRIES = 0;
+
+/**
+ * Who this adapter reaches.
+ *
+ * Named once rather than written at each site, so a recorded call can never
+ * disagree with the client that made it.
+ */
+const PROVIDER = "anthropic" as const;
 
 const EFFORT = "medium" as const;
 
@@ -167,7 +181,9 @@ export class ClaudeCreatorMemorySynthesizer implements CreatorMemorySynthesizer 
     });
   }
 
-  async synthesize(request: CreatorMemorySynthesisRequest): Promise<string> {
+  async synthesize(
+    request: CreatorMemorySynthesisRequest,
+  ): Promise<CreatorMemorySynthesis> {
     // **Nothing to summarise is a caller mistake, not a request to send.** A
     // synthesis over no evidence would either invent something or return the
     // previous summary unchanged, and both would advance a watermark past
@@ -196,13 +212,30 @@ export class ClaudeCreatorMemorySynthesizer implements CreatorMemorySynthesizer 
         throw error;
       }
 
-      throw new ProviderError(classify(error), error.message, { cause: error });
+      // **The attempt is attached because the request was sent.** Reaching
+      // this `catch` means a request left the machine and was billable —
+      // whatever it cost, which the SDK's error does not say.
+      throw new ProviderError(classify(error), error.message, {
+        cause: error,
+        attempt: { provider: PROVIDER, model: MODEL, usage: UNKNOWN_AI_USAGE },
+      });
     }
 
+    // Everything from here follows a completed request, so each refusal below
+    // carries what that request used.
+    const call: ProviderCallMetadata = {
+      provider: PROVIDER,
+      model: MODEL,
+      usage: normalizeAnthropicUsage(message.usage),
+    };
+
     if (message.stop_reason === "refusal") {
+      // **A refusal is always paid for in full.** The model was reached and
+      // it answered; the answer was a refusal.
       throw new ProviderError(
         "refused",
         "Claude declined to summarise these answers.",
+        { attempt: call },
       );
     }
 
@@ -214,13 +247,14 @@ export class ClaudeCreatorMemorySynthesizer implements CreatorMemorySynthesizer 
     if (message.stop_reason !== "end_turn") {
       throw new InvalidCreatorMemoryError(
         `stopped-unexpectedly-${message.stop_reason ?? "none"}`,
+        { call },
       );
     }
 
     const text = readText(message);
 
     if (text === "") {
-      throw new InvalidCreatorMemoryError("empty-response");
+      throw new InvalidCreatorMemoryError("empty-response", { call });
     }
 
     let parsed: unknown;
@@ -230,17 +264,31 @@ export class ClaudeCreatorMemorySynthesizer implements CreatorMemorySynthesizer 
       // **The cause is dropped rather than attached.** It would carry the
       // model's own words about somebody's unpublished writing, and this error
       // travels further than the value it describes.
-      throw new InvalidCreatorMemoryError("response-not-json");
+      throw new InvalidCreatorMemoryError("response-not-json", { call });
     }
 
     if (typeof parsed !== "object" || parsed === null) {
-      throw new InvalidCreatorMemoryError("response-not-an-object");
+      throw new InvalidCreatorMemoryError("response-not-an-object", { call });
     }
 
     // **Checked here as well as by the schema.** A schema says what should come
     // back; this says what did.
-    return assertUsableMemorySummary(
-      (parsed as { summary?: unknown }).summary,
-    );
+    // **Raised again rather than changed in place**, so a refusal decided by
+    // the shared validator carries the call as well. The reason is the same
+    // reason, so the category anything logs is the same category.
+    try {
+      return {
+        summary: assertUsableMemorySummary(
+          (parsed as { summary?: unknown }).summary,
+        ),
+        call,
+      };
+    } catch (error) {
+      if (error instanceof InvalidCreatorMemoryError) {
+        throw new InvalidCreatorMemoryError(error.reason, { call });
+      }
+
+      throw error;
+    }
   }
 }

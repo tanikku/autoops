@@ -1,3 +1,20 @@
+/**
+ * What a real provider call reports alongside an answer.
+ *
+ * **Arbitrary numbers, on purpose.** What these tests fix is that the answer
+ * and the summary are unchanged by the metadata travelling beside them.
+ */
+const PROVIDER_CALL = {
+  provider: "anthropic" as const,
+  model: "claude-opus-5",
+  usage: {
+    inputTokens: 1_200,
+    outputTokens: 340,
+    cacheReadTokens: 0,
+    cacheWriteTokens: null,
+  },
+};
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type CreatorAnalysisRequest,
@@ -8,6 +25,7 @@ import {
   InvalidCreatorAnalysisResponseError,
 } from "@/lib/creator/analyzer";
 import { ProviderError } from "@/lib/ai/provider";
+import { InvalidCreatorMemoryError } from "@/lib/creator/memory";
 
 /**
  * The loop, end to end, with a fake model and a replaced database.
@@ -33,6 +51,7 @@ const {
   decisionFindFirst,
   decisionCreate,
   contentItemCreate,
+  usageCreate,
   draftCreate,
   transaction,
 } = vi.hoisted(() => ({
@@ -46,6 +65,7 @@ const {
   decisionFindFirst: vi.fn(),
   decisionCreate: vi.fn(),
   contentItemCreate: vi.fn(),
+  usageCreate: vi.fn(),
   draftCreate: vi.fn(),
   transaction: vi.fn(),
 }));
@@ -73,6 +93,9 @@ vi.mock("@/lib/prisma", () => ({
     creatorMemoryEvidence: { createMany: evidenceCreateMany },
     editorialDecision: { findFirst: decisionFindFirst, create: decisionCreate },
     contentItem: { create: contentItemCreate },
+    // Reached through the real recording helper rather than a stub of it,
+    // so what the tests below fix is the row an analysis actually writes.
+    providerUsageEvent: { create: usageCreate },
     contentDraft: { create: draftCreate },
     $transaction: transaction,
   },
@@ -127,7 +150,10 @@ function fakeAnalyzer(...answers: CreatorAnalysisResult[]) {
   const analyzer: CreatorAnalyzer = {
     analyze: async (request) => {
       requests.push(structuredClone(request));
-      return answers[Math.min(call++, answers.length - 1)];
+      return {
+        result: answers[Math.min(call++, answers.length - 1)],
+        call: PROVIDER_CALL,
+      };
     },
   };
 
@@ -159,10 +185,12 @@ beforeEach(() => {
     decisionCreate,
     contentItemCreate,
     draftCreate,
+    usageCreate,
   ]) {
     mock.mockReset();
   }
 
+  usageCreate.mockResolvedValue({});
   transaction.mockReset().mockImplementation((run: (client: unknown) => unknown) => run(tx));
   profileFindUnique.mockResolvedValue(null);
   feedbackFindMany.mockResolvedValue([]);
@@ -356,7 +384,7 @@ describe("what a successful analysis leaves behind", () => {
     const analyzer: CreatorAnalyzer = {
       analyze: async () => {
         order.push("analyze");
-        return threeRecommendations;
+        return { result: threeRecommendations, call: PROVIDER_CALL };
       },
     };
 
@@ -908,7 +936,7 @@ describe("the summary of older answers", () => {
       synthesizer: {
         synthesize: async (request: unknown) => {
           requests.push(structuredClone(request));
-          return summary;
+          return { summary, call: PROVIDER_CALL };
         },
       },
     };
@@ -1106,6 +1134,189 @@ describe("the summary of older answers", () => {
 
     expect(synthesised).toHaveLength(1);
   });
+
+  /**
+   * What a memory synthesis says it cost.
+   *
+   * **The compare-and-set is the case worth stating twice.** A synthesis whose
+   * write loses to a concurrent one still made the call and was still billed, so
+   * the row stays exactly as it is: nothing is refunded, nothing is asked again,
+   * and the loser records the same single event the winner does.
+   *
+   * **Nothing here widens the memory transaction.** The call happens before it
+   * and the row is written before it, so the compare-and-set stays the short thing
+   * it was built to be.
+   */
+  describe("what a memory synthesis records about its call", () => {
+    /**
+     * The one shape a synthesis is eligible in: thirteen answers, so exactly
+     * one has left the recent window and is worth summarising.
+     */
+    function agedOutFeedback() {
+      feedbackFindMany
+        .mockReset()
+        .mockResolvedValueOnce(historyOf(13))
+        .mockResolvedValueOnce([storedRow(0)]);
+      profileFindUnique.mockResolvedValue(PROFILE_ROW);
+    }
+
+    /** The data of the usage `create` that belongs to the synthesis. */
+    function memoryRow() {
+      const call = usageCreate.mock.calls.find(
+        (entry: { data: { feature: string } }[]) =>
+          entry[0].data.feature === "creator-memory",
+      );
+
+      return call === undefined ? null : call[0].data;
+    }
+
+    /** How many rows this analysis wrote for the memory call. */
+    function memoryRows() {
+      return usageCreate.mock.calls.filter(
+        (entry: { data: { feature: string } }[]) =>
+          entry[0].data.feature === "creator-memory",
+      ).length;
+    }
+
+    it("records one call when a summary came back", async () => {
+      agedOutFeedback();
+      const { analyzer } = fakeAnalyzer(threeRecommendations);
+      const { synthesizer } = fakeSynthesizer();
+
+      await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
+
+      expect(memoryRows()).toBe(1);
+      expect(memoryRow()).toMatchObject({
+        userId: USER,
+        feature: "creator-memory",
+        provider: "anthropic",
+        model: "claude-opus-5",
+        outcome: "ok",
+        runId: null,
+        inputTokens: 1_200,
+        outputTokens: 340,
+      });
+    });
+
+    /**
+     * **The call was made and paid for, whoever won the race.** Losing the
+     * compare-and-set is a fact about persistence, not about what was spent.
+     */
+    it("records the same one call when the compare-and-set loses", async () => {
+      agedOutFeedback();
+      memoryUpdateMany.mockResolvedValue({ count: 0 });
+      const { analyzer } = fakeAnalyzer(threeRecommendations);
+      const { synthesizer, requests } = fakeSynthesizer();
+
+      await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
+
+      expect(memoryRows()).toBe(1);
+      expect(memoryRow()).toMatchObject({ outcome: "ok" });
+      // No second attempt: the loser keeps what it read and asks nobody again.
+      expect(requests).toHaveLength(1);
+    });
+
+    it("records nothing when no synthesis was eligible", async () => {
+      const { analyzer } = fakeAnalyzer(threeRecommendations);
+      const { synthesizer, requests } = fakeSynthesizer();
+
+      await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
+
+      expect(requests).toHaveLength(0);
+      expect(memoryRows()).toBe(0);
+    });
+
+    it("records a call that was made and then failed", async () => {
+      agedOutFeedback();
+      const { analyzer } = fakeAnalyzer(threeRecommendations);
+      const synthesizer = {
+        synthesize: async () => {
+          throw new ProviderError("timeout", "took too long", {
+            attempt: {
+              provider: "anthropic",
+              model: "claude-opus-5",
+              usage: {
+                inputTokens: null,
+                outputTokens: null,
+                cacheReadTokens: null,
+                cacheWriteTokens: null,
+              },
+            },
+          });
+        },
+      };
+
+      await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
+
+      expect(memoryRows()).toBe(1);
+      expect(memoryRow()).toMatchObject({
+        outcome: "error",
+        inputTokens: null,
+        runId: null,
+      });
+      // Fail-soft as before: the analysis itself still completed.
+      expect(contentItemCreate).toHaveBeenCalled();
+    });
+
+    /** An unusable summary is a call that succeeded: reached, answered, billed. */
+    it("records an unusable summary as a call that happened", async () => {
+      agedOutFeedback();
+      const { analyzer } = fakeAnalyzer(threeRecommendations);
+      const synthesizer = {
+        synthesize: async () => {
+          throw new InvalidCreatorMemoryError("empty-response", {
+            call: {
+              provider: "anthropic",
+              model: "claude-opus-5",
+              usage: {
+                inputTokens: 900,
+                outputTokens: 12,
+                cacheReadTokens: null,
+                cacheWriteTokens: null,
+              },
+            },
+          });
+        },
+      };
+
+      await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
+
+      expect(memoryRows()).toBe(1);
+      expect(memoryRow()).toMatchObject({ outcome: "ok", inputTokens: 900 });
+    });
+
+    /** A refusal decided before anything was sent is free. */
+    it("records nothing when the synthesis failed without a call", async () => {
+      agedOutFeedback();
+      const { analyzer } = fakeAnalyzer(threeRecommendations);
+      const synthesizer = {
+        synthesize: async () => {
+          throw new InvalidCreatorMemoryError("synthesis-without-evidence");
+        },
+      };
+
+      await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
+
+      expect(memoryRows()).toBe(0);
+    });
+
+    /**
+     * **Observation must not change what it observes.** The memory is still
+     * written when the bookkeeping beside it could not be.
+     */
+    it("still writes the memory when the usage row cannot be written", async () => {
+      agedOutFeedback();
+      usageCreate.mockRejectedValue(new Error("connection lost"));
+      const { analyzer } = fakeAnalyzer(threeRecommendations);
+      const { synthesizer } = fakeSynthesizer();
+
+      await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
+
+      expect(memoryCreate).toHaveBeenCalled();
+      expect(contentItemCreate).toHaveBeenCalled();
+    });
+  });
+
 });
 
 /**
@@ -1220,7 +1431,7 @@ describe("when the summary cannot be brought up to date", () => {
     const counting = {
       synthesize: async () => {
         calls += 1;
-        return "A conclusion.";
+        return { summary: "A conclusion.", call: PROVIDER_CALL };
       },
     };
 
@@ -1252,7 +1463,7 @@ describe("when the summary cannot be brought up to date", () => {
       USER,
       { title: null, body: "b" },
       analyzer,
-      { synthesize: async () => { calls += 1; return "x"; } },
+      { synthesize: async () => { calls += 1; return { summary: "x", call: PROVIDER_CALL }; } },
     );
 
     expect(requests[0].memory).toBeNull();
@@ -1322,7 +1533,7 @@ describe("when the summary cannot be brought up to date", () => {
       USER,
       { title: null, body: "b" },
       analyzer,
-      { synthesize: async () => "A conclusion." },
+      { synthesize: async () => ({ summary: "A conclusion.", call: PROVIDER_CALL }) },
     );
 
     expect(contentItemCreate).toHaveBeenCalled();
@@ -1342,5 +1553,128 @@ describe("when the summary cannot be brought up to date", () => {
 
     expect(logged).toContain("[creator] memory");
     expect(logged).not.toContain("SECRET-STORED-SUMMARY");
+  });
+});
+
+/**
+ * What the two Creator calls say they cost.
+ *
+ * **Neither writes a run**, so `runId` is null on every row here — a Creator
+ * analysis is not a worker, and neither is a memory synthesis. That absence is
+ * the reason these two were invisible until now: there was no run history to
+ * read a cost out of.
+ *
+ * **The compare-and-set is the interesting case.** A synthesis whose write
+ * loses to a concurrent one still made the call and was still billed, so the
+ * row stays exactly as it is. Nothing is refunded and nothing is asked again.
+ */
+describe("what a Creator analysis records about its call", () => {
+  /** The data of the nth provider-usage `create`, counting from one. */
+  function usageRow(n = 1) {
+    return usageCreate.mock.calls[n - 1][0].data;
+  }
+
+  it("records one call for one analysis", async () => {
+    const { analyzer } = fakeAnalyzer(threeRecommendations);
+
+    await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer);
+
+    expect(usageCreate).toHaveBeenCalledTimes(1);
+    expect(usageRow()).toMatchObject({
+      userId: USER,
+      feature: "creator-analysis",
+      provider: "anthropic",
+      model: "claude-opus-5",
+      outcome: "ok",
+      runId: null,
+      inputTokens: 1_200,
+      outputTokens: 340,
+    });
+  });
+
+  it("records a call that was made and then failed", async () => {
+    const analyzer: CreatorAnalyzer = {
+      analyze: async () => {
+        throw new ProviderError("timeout", "took too long", {
+          attempt: {
+            provider: "anthropic",
+            model: "claude-opus-5",
+            usage: {
+              inputTokens: null,
+              outputTokens: null,
+              cacheReadTokens: null,
+              cacheWriteTokens: null,
+            },
+          },
+        });
+      },
+    };
+
+    await expect(
+      analyzeCreatorText(USER, { title: null, body: "b" }, analyzer),
+    ).rejects.toBeInstanceOf(ProviderError);
+
+    expect(usageCreate).toHaveBeenCalledTimes(1);
+    expect(usageRow()).toMatchObject({
+      feature: "creator-analysis",
+      outcome: "error",
+      inputTokens: null,
+      runId: null,
+    });
+  });
+
+  /** An unusable answer is a call that succeeded: it was reached, and billed. */
+  it("records an unusable answer as a call that happened", async () => {
+    const analyzer: CreatorAnalyzer = {
+      analyze: async () => {
+        throw new InvalidCreatorAnalysisResponseError("the answer was empty", {
+          call: {
+            provider: "anthropic",
+            model: "claude-opus-5",
+            usage: {
+              inputTokens: 900,
+              outputTokens: 12,
+              cacheReadTokens: null,
+              cacheWriteTokens: null,
+            },
+          },
+        });
+      },
+    };
+
+    await expect(
+      analyzeCreatorText(USER, { title: null, body: "b" }, analyzer),
+    ).rejects.toBeInstanceOf(InvalidCreatorAnalysisResponseError);
+
+    expect(usageCreate).toHaveBeenCalledTimes(1);
+    expect(usageRow()).toMatchObject({
+      feature: "creator-analysis",
+      outcome: "ok",
+      inputTokens: 900,
+    });
+  });
+
+  /** A body that was refused before anything was sent cost nothing. */
+  it("records nothing when the content never reached a provider", async () => {
+    const { analyzer } = fakeAnalyzer(threeRecommendations);
+
+    await expect(
+      analyzeCreatorText(USER, { title: null, body: "   " }, analyzer),
+    ).rejects.toSatisfy(isEmptyCreatorContent);
+
+    expect(usageCreate).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **Observation must not change what it observes.** An analysis that worked
+   * still works when the bookkeeping beside it could not be written.
+   */
+  it("still completes the analysis when the usage row cannot be written", async () => {
+    usageCreate.mockRejectedValue(new Error("connection lost"));
+    const { analyzer } = fakeAnalyzer(threeRecommendations);
+
+    await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer);
+
+    expect(contentItemCreate).toHaveBeenCalled();
   });
 });

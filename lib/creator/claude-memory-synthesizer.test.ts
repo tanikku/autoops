@@ -90,9 +90,9 @@ describe("what it sends", () => {
   it("summarises one answer", async () => {
     replyWithSummary("Has published short posts as proposed.");
 
-    await expect(synthesizer.synthesize(request())).resolves.toBe(
-      "Has published short posts as proposed.",
-    );
+    await expect(synthesizer.synthesize(request())).resolves.toMatchObject({
+      summary: "Has published short posts as proposed.",
+    });
   });
 
   it("carries the whole batch, in the order it was given", async () => {
@@ -336,7 +336,9 @@ describe("what it refuses to accept back", () => {
     const summary = "x".repeat(creatorMemoryLimits.summary);
     replyWithSummary(summary);
 
-    await expect(synthesizer.synthesize(request())).resolves.toBe(summary);
+    await expect(synthesizer.synthesize(request())).resolves.toMatchObject({
+      summary,
+    });
   });
 
   it.each([

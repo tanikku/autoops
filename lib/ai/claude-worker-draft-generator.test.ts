@@ -3,6 +3,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClaudeWorkerDraftGenerator } from "@/lib/ai/claude-worker-draft-generator";
 import { ProviderError } from "@/lib/ai/provider";
 import {
+  InvalidWorkerDraftResponseError,
   isInvalidWorkerDraftResponse,
   workerDraftToolNames,
 } from "@/lib/ai/worker-draft";
@@ -73,7 +74,15 @@ function reply(content: unknown[], stopReason = "tool_use") {
     content,
     stop_reason: stopReason,
     stop_sequence: null,
-    usage: {},
+    // **Present on every reply now**, because the SDK's is and this adapter
+    // is what stops that shape leaving `lib/ai/`. Arbitrary numbers; a null
+    // cache field is included so it can be shown to stay null.
+    usage: {
+      input_tokens: 1_200,
+      output_tokens: 340,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: null,
+    },
   } as unknown as Anthropic.Messages.Message;
 }
 
@@ -176,8 +185,7 @@ describe("an answer it can use", () => {
     );
 
     await expect(generator.generate(request())).resolves.toMatchObject({
-      status: "supported",
-      draft: { kind: "prompt", name: "Council notices" },
+      result: { status: "supported", draft: { kind: "prompt", name: "Council notices" } },
     });
   });
 
@@ -192,8 +200,10 @@ describe("an answer it can use", () => {
     );
 
     await expect(generator.generate(request())).resolves.toMatchObject({
-      status: "supported",
-      draft: { kind: "website", websiteUrl: "https://example.com/news" },
+      result: {
+        status: "supported",
+        draft: { kind: "website", websiteUrl: "https://example.com/news" },
+      },
     });
   });
 
@@ -208,9 +218,8 @@ describe("an answer it can use", () => {
 
     await expect(
       generator.generate({ request: "read my email", urlCandidates: [] }),
-    ).resolves.toEqual({
-      status: "unsupported",
-      reason: "Koqentra cannot read email.",
+    ).resolves.toMatchObject({
+      result: { status: "unsupported", reason: "Koqentra cannot read email." },
     });
   });
 
@@ -221,7 +230,9 @@ describe("an answer it can use", () => {
 
     await expect(
       generator.generate({ request: "watch that page", urlCandidates: [] }),
-    ).resolves.toMatchObject({ status: "needs_input", field: "websiteUrl" });
+    ).resolves.toMatchObject({
+      result: { status: "needs_input", field: "websiteUrl" },
+    });
   });
 
   /** A tool call alongside commentary is still one answer. */
@@ -234,8 +245,82 @@ describe("an answer it can use", () => {
     );
 
     await expect(generator.generate(request())).resolves.toMatchObject({
-      status: "supported",
+      result: { status: "supported" },
     });
+  });
+});
+
+/**
+ * What a draft call reports about itself.
+ *
+ * **Drafting writes no run**, so there is nothing for a usage row to point at;
+ * what it can say is who answered, which model, and what it used. The three
+ * refusals below all follow a completed request, which is why each carries a
+ * call rather than nothing.
+ */
+describe("what a draft call reports", () => {
+  it("names the provider, the model and what the call used", async () => {
+    create.mockResolvedValue(
+      reply([toolUse(workerDraftToolNames.prompt, draftInput)]),
+    );
+
+    const { call } = await generator.generate(request());
+
+    expect(call.provider).toBe("anthropic");
+    expect(call.model).toBe("claude-opus-5");
+    expect(call.usage).toEqual({
+      inputTokens: 1_200,
+      outputTokens: 340,
+      cacheReadTokens: 0,
+      cacheWriteTokens: null,
+    });
+  });
+
+  it("says a request was made when the provider failed after sending", async () => {
+    create.mockRejectedValue(new Error("network went away"));
+
+    const thrown = (await generator
+      .generate(request())
+      .catch((error: unknown) => error)) as ProviderError;
+
+    expect(thrown.attempt).toEqual({
+      provider: "anthropic",
+      model: "claude-opus-5",
+      usage: {
+        inputTokens: null,
+        outputTokens: null,
+        cacheReadTokens: null,
+        cacheWriteTokens: null,
+      },
+    });
+  });
+
+  /**
+   * **An unusable answer is a call that succeeded.** The model was reached and
+   * it replied; only the using of the reply failed, and the reply was billed.
+   */
+  it.each([
+    ["it ran out of room", () => create.mockResolvedValue(reply([], "max_tokens"))],
+    ["it proposed nothing", () => create.mockResolvedValue(reply([text("no")]))],
+    [
+      "it proposed two workers",
+      () =>
+        create.mockResolvedValue(
+          reply([
+            toolUse(workerDraftToolNames.prompt, draftInput),
+            toolUse(workerDraftToolNames.prompt, draftInput),
+          ]),
+        ),
+    ],
+  ])("keeps the call when %s", async (_label, arrange) => {
+    arrange();
+
+    const thrown = (await generator
+      .generate(request())
+      .catch((error: unknown) => error)) as InvalidWorkerDraftResponseError;
+
+    expect(thrown.call?.provider).toBe("anthropic");
+    expect(thrown.call?.usage?.inputTokens).toBe(1_200);
   });
 });
 

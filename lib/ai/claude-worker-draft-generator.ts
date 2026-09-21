@@ -1,12 +1,17 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { ProviderError, type ProviderErrorKind } from "@/lib/ai/provider";
+import {
+  type ProviderCallMetadata,
+  ProviderError,
+  type ProviderErrorKind,
+} from "@/lib/ai/provider";
+import { normalizeAnthropicUsage, UNKNOWN_AI_USAGE } from "@/lib/ai/usage";
 import {
   InvalidWorkerDraftResponseError,
   readWorkerDraftToolResult,
   workerDraftToolNames,
+  type WorkerDraftGeneration,
   type WorkerDraftGenerator,
   type WorkerDraftRequest,
-  type WorkerDraftResult,
 } from "@/lib/ai/worker-draft";
 import { workerFieldLimits } from "@/lib/worker-input";
 import { routineFrequencies } from "@/types";
@@ -45,6 +50,14 @@ const MAX_TOKENS = 2_000;
 
 /** No retries, for the reason the execution provider gives: nobody chose three. */
 const MAX_RETRIES = 0;
+
+/**
+ * Who this adapter reaches.
+ *
+ * Named once rather than written at each site, so a recorded call can never
+ * disagree with the client that made it.
+ */
+const PROVIDER = "anthropic" as const;
 
 /**
  * What the model is allowed to decide, and what it must not.
@@ -208,7 +221,9 @@ export class ClaudeWorkerDraftGenerator implements WorkerDraftGenerator {
     });
   }
 
-  async generate(request: WorkerDraftRequest): Promise<WorkerDraftResult> {
+  async generate(
+    request: WorkerDraftRequest,
+  ): Promise<WorkerDraftGeneration> {
     let message: Anthropic.Messages.Message;
 
     try {
@@ -229,15 +244,27 @@ export class ClaudeWorkerDraftGenerator implements WorkerDraftGenerator {
         throw error;
       }
 
-      throw new ProviderError(classify(error), error.message, { cause: error });
+      // **The attempt is attached because the request was sent.** Reaching
+      // this `catch` means `messages.create` was called, so a request left
+      // the machine and was billable — whatever it cost, which the SDK's
+      // error does not say.
+      throw new ProviderError(classify(error), error.message, {
+        cause: error,
+        attempt: { provider: PROVIDER, model: MODEL, usage: UNKNOWN_AI_USAGE },
+      });
     }
 
     // **A truncated answer is not a short one.** Stopping at the token limit
     // leaves a tool input cut off mid-value, and a partial draft is exactly the
     // kind of plausible wrong answer this whole boundary exists to refuse.
+    // Every refusal below follows a completed request, so each one carries
+    // what that request used. See `InvalidWorkerDraftResponseError.call`.
+    const call = madeCall(message);
+
     if (message.stop_reason === "max_tokens") {
       throw new InvalidWorkerDraftResponseError(
         "the model ran out of room before finishing its answer",
+        { call },
       );
     }
 
@@ -246,6 +273,7 @@ export class ClaudeWorkerDraftGenerator implements WorkerDraftGenerator {
     if (toolUses.length === 0) {
       throw new InvalidWorkerDraftResponseError(
         "the model answered without proposing a worker",
+        { call },
       );
     }
 
@@ -255,15 +283,28 @@ export class ClaudeWorkerDraftGenerator implements WorkerDraftGenerator {
     if (toolUses.length > 1) {
       throw new InvalidWorkerDraftResponseError(
         "the model proposed more than one worker at once",
+        { call },
       );
     }
 
-    return readWorkerDraftToolResult(
-      toolUses[0].name,
-      toolUses[0].input,
-      request.urlCandidates,
-    );
+    return {
+      result: readWorkerDraftToolResult(
+        toolUses[0].name,
+        toolUses[0].input,
+        request.urlCandidates,
+      ),
+      call,
+    };
   }
+}
+
+/** What one completed request used, in Koqentra's own words. */
+function madeCall(message: Anthropic.Messages.Message): ProviderCallMetadata {
+  return {
+    provider: PROVIDER,
+    model: MODEL,
+    usage: normalizeAnthropicUsage(message.usage),
+  };
 }
 
 /**

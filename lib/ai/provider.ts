@@ -206,7 +206,23 @@ export class ProviderError extends Error {
  * reports all of them; both were sent, both were billable, and only one can say
  * how much.
  */
-export type ProviderAttempt = {
+export type ProviderAttempt = ProviderCallMetadata;
+
+/**
+ * What is known about one real call to a provider: who, which model, and what
+ * it used.
+ *
+ * **The one shape every feature's bookkeeping is built from.** Six things call
+ * a model and only three of them go through `AIProvider` — drafting and the two
+ * Creator features have their own interfaces, for reasons that have nothing to
+ * do with cost. Sharing this much and no more lets all six be recorded the same
+ * way without any of them being folded into the others.
+ *
+ * **It is metadata, not a result.** There is no answer here, no draft, no
+ * analysis and no summary; what a call produced belongs to the interface that
+ * asked for it.
+ */
+export type ProviderCallMetadata = {
   readonly provider: AIProviderName;
   readonly model: string;
   readonly usage: NormalizedAIUsage | null;

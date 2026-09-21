@@ -234,7 +234,6 @@ describe("when the row cannot be written", () => {
  */
 describe("recording a call that succeeded", () => {
   const anthropicResult = {
-    text: "an answer",
     provider: "anthropic" as const,
     model: "claude-opus-5",
     usage: {
@@ -300,7 +299,6 @@ describe("recording a call that succeeded", () => {
     await recordAIExecution(
       { userId: USER, feature: "prompt", runId: "run-1" },
       {
-        text: "Execution completed successfully.",
         provider: "dummy",
         model: "stand-in",
         usage: null,
@@ -438,8 +436,7 @@ describe("when the bridge cannot write", () => {
       recordAIExecution(
         { userId: USER, feature: "prompt", runId: "run-1" },
         {
-          text: "an answer",
-          provider: "anthropic",
+                provider: "anthropic",
           model: "claude-opus-5",
           usage: UNKNOWN_PROVIDER_USAGE,
         },

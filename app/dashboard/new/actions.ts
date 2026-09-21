@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { providerErrorKind } from "@/lib/ai/provider";
 import {
   extractUrlCandidates,
+  InvalidWorkerDraftResponseError,
   isInvalidWorkerDraftResponse,
   MAX_WORKER_DRAFT_REQUEST_CHARS,
   type WorkerDraft,
@@ -24,6 +25,7 @@ import {
   type WorkerQuotaRejection,
 } from "@/lib/worker-quota";
 import { requireProvisionedUserId, requireUserId } from "@/lib/session";
+import { recordAIExecution, recordAIFailure } from "@/lib/usage/record";
 import { getUserLanguage, getUserTimezone } from "@/lib/users";
 import { isWatcherError } from "@/lib/watcher/errors";
 import { parseWatchUrl } from "@/lib/watcher/url";
@@ -513,15 +515,48 @@ export async function generateWorkerDraftAction(
   }
 
   try {
-    const result = await generator.generate({
+    const generation = await generator.generate({
       request,
       urlCandidates: extractUrlCandidates(request),
     });
+
+    // **After the call, before the answer is used, and it cannot change it.**
+    // A draft is not a run, so there is no history row to point at — see
+    // `runId: null`. Nothing here is inside a transaction: drafting writes
+    // nothing of its own, and a bookkeeping row must not become the first
+    // thing that can fail a form somebody is waiting at.
+    await recordAIExecution(
+      { userId: provisionedUserId, feature: "draft", runId: null },
+      generation.call,
+    );
+
+    const result = generation.result;
 
     return result.status === "supported"
       ? { status: "supported", draft: result.draft }
       : result;
   } catch (error) {
+    // **Recorded before the failure is answered, and only when a request was
+    // made.** Every refusal in front of the provider — an empty request, one
+    // too long, no key, the allowance spent — never reaches here at all.
+    //
+    // **An unusable answer is a call that succeeded.** The model was reached
+    // and it replied; only the using of the reply failed, and the reply was
+    // billed. So it is recorded as the call it was rather than as a failure.
+    const context = {
+      userId: provisionedUserId,
+      feature: "draft",
+      runId: null,
+    } as const;
+    const answered =
+      error instanceof InvalidWorkerDraftResponseError ? error.call : null;
+
+    if (answered === null) {
+      await recordAIFailure(context, error);
+    } else {
+      await recordAIExecution(context, answered);
+    }
+
     // An answer that arrived and could not be used, rather than one that never
     // arrived. Nothing is retried: the person is standing at the form and can
     // ask again in the words that suit them.

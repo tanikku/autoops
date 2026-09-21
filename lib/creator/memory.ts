@@ -1,3 +1,4 @@
+import type { ProviderCallMetadata } from "@/lib/ai/provider";
 import type { CreatorFeedbackContext } from "@/lib/creator/analyzer";
 
 /**
@@ -89,7 +90,22 @@ export type CreatorMemorySynthesisRequest = {
  * of the first one's rules.
  */
 export type CreatorMemorySynthesizer = {
-  synthesize(request: CreatorMemorySynthesisRequest): Promise<string>;
+  synthesize(
+    request: CreatorMemorySynthesisRequest,
+  ): Promise<CreatorMemorySynthesis>;
+};
+
+/**
+ * A summary, and what asking for it cost.
+ *
+ * **A wrapper rather than a second return value.** The summary is prose and
+ * stays prose; what a call used is not part of what it said, and a caller that
+ * only wants the writing reads `summary` exactly as it read the string before.
+ */
+export type CreatorMemorySynthesis = {
+  readonly summary: string;
+  /** The call that produced it. Always present: there is no stand-in. */
+  readonly call: ProviderCallMetadata;
 };
 
 /**
@@ -103,11 +119,21 @@ export type CreatorMemorySynthesizer = {
 export class InvalidCreatorMemoryError extends Error {
   /** A rule name. Never any of the text. */
   readonly reason: string;
+  /**
+   * The call that produced the unusable summary, when there was one.
+   *
+   * **Null is the common case here, unlike the other two boundaries.** Several
+   * of these are raised before anything is sent — a synthesis with no evidence,
+   * a stored memory that no longer reads as one — and those cost nothing. Only
+   * the ones raised after a completed request carry a call.
+   */
+  readonly call: ProviderCallMetadata | null;
 
-  constructor(reason: string) {
+  constructor(reason: string, options?: { call?: ProviderCallMetadata | null }) {
     super(`The derived memory cannot be used (${reason})`);
     this.name = "InvalidCreatorMemoryError";
     this.reason = reason;
+    this.call = options?.call ?? null;
   }
 }
 
