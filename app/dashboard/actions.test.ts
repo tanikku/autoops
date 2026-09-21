@@ -1227,3 +1227,61 @@ describe("runRoutineAction — counting the run against the month", () => {
     expect(state?.status).toBe("success");
   });
 });
+
+/**
+ * A hand-started discovery run, and the three units it may spend.
+ *
+ * **Three counters, one action, and none of it is double counting.** The
+ * account asked for an operation (`manualRun`), that operation was a discovery
+ * run (`discovery`), and the run asked a model (`aiProcessing`). A plan sells
+ * those separately, so they are counted separately.
+ *
+ * **They are counted in different places, deliberately.** This action knows
+ * only that a manual execution was accepted; whether a discovery run ever
+ * became established, and whether a model was reached, are decided further
+ * down — see `lib/discovery/execute.test.ts`.
+ */
+describe("runRoutineAction — a hand-started discovery run", () => {
+  beforeEach(() => {
+    mocks.getRoutine.mockResolvedValue({
+      id: "worker-1",
+      name: "Recommendations",
+      kind: "discovery",
+    });
+  });
+
+  it("counts the hand-started run here, and nothing else", async () => {
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.recordUsageObservation.mock.calls).toHaveLength(1);
+    expect(mocks.recordUsageObservation.mock.calls[0].slice(0, 2)).toEqual([
+      "user-1",
+      "manualRun",
+    ]);
+  });
+
+  /**
+   * **The discovery unit is not this action's to spend.** A worker whose search
+   * was never configured never becomes a discovery run at all, and this layer
+   * cannot know that.
+   */
+  it("does not count a discovery run from here", async () => {
+    await runRoutineAction(null, form("worker-1"));
+
+    const kinds = mocks.recordUsageObservation.mock.calls.map(
+      (call: unknown[]) => String(call[1]),
+    );
+
+    expect(kinds).not.toContain("discovery");
+    expect(kinds).not.toContain("aiProcessing");
+  });
+
+  it("counts nothing at all when the run was never accepted", async () => {
+    mocks.consumeDiscoveryRunQuota.mockResolvedValue(false);
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
+    expect(mocks.enqueueRoutine).not.toHaveBeenCalled();
+  });
+});

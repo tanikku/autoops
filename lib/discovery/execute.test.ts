@@ -968,3 +968,139 @@ describe("a discovery run — counting it against the month", () => {
     expect(lastWrite).toMatchObject({ status: "completed" });
   });
 });
+
+/**
+ * Where a discovery run starts costing something.
+ *
+ * **A run row is not the boundary.** The caller writes one before any of this,
+ * because an attempt that reached execution is an attempt — but a worker whose
+ * search was never configured, and one whose source this deployment cannot
+ * reach, both failed before any discovery work began. Nothing was asked of
+ * anybody, so nothing was used.
+ *
+ * **Everything after the source is established counts, however it ends.** A
+ * search that found nothing, one whose every result had been recommended
+ * before, a provider that failed, and a model that chose none of what was left
+ * are all outcomes of a discovery run rather than reasons one never started.
+ */
+describe("when a discovery run starts consuming", () => {
+  /** Every kind observed during this run, in order. */
+  function observed() {
+    return mocks.recordUsageObservation.mock.calls.map((call: unknown[]) =>
+      String(call[1]),
+    );
+  }
+
+  /**
+   * **Nothing began.** The state should not exist, and the answer to finding
+   * it is to change nothing — including the account's month.
+   */
+  it("counts nothing when the worker has no search configured", async () => {
+    mocks.getSource.mockResolvedValue(null);
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(observed()).toEqual([]);
+    expect(mocks.search).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The other precondition on the source: a deployment that cannot reach it has
+   * asked nobody anything.
+   */
+  it.each(["not-configured", "unknown-source"])(
+    "counts nothing when the source is unusable (%s)",
+    async (reason) => {
+      mocks.createProvider.mockReturnValue({ available: false, reason });
+
+      await runRoutine(ROUTINE_ID);
+
+      expect(observed()).toEqual([]);
+      expect(mocks.search).not.toHaveBeenCalled();
+    },
+  );
+
+  /**
+   * **Counted before the search, not after it.** A search that fails is still a
+   * discovery run that happened, and the count has to already have moved for
+   * that to be true.
+   */
+  it("counts the run when the search itself failed", async () => {
+    mocks.createProvider.mockReturnValue({
+      available: true,
+      provider: { source: "youtube", search: mocks.search },
+    });
+    mocks.search.mockRejectedValue(new Error("the source would not answer"));
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(observed()).toEqual(["discovery"]);
+  });
+
+  it("counts the run when the source returned nothing", async () => {
+    available([]);
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(observed()).toEqual(["discovery"]);
+  });
+
+  it("counts the run when everything found had been recommended before", async () => {
+    available([candidate("a")]);
+    mocks.findSeenKeys.mockResolvedValue(new Set(["youtube:a"]));
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(observed()).toEqual(["discovery"]);
+  });
+
+  /** Two units for one run: the run happened, and a model was asked. */
+  it("counts the run and the call when a model was asked", async () => {
+    available([candidate("a")]);
+    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(observed()).toEqual(["discovery", "aiProcessing"]);
+  });
+
+  /** The run is counted once, before a search that may run long. */
+  it("counts the run before the search is made", async () => {
+    available([candidate("a")]);
+    mocks.select.mockResolvedValue(chosenBy([]));
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(
+      mocks.recordUsageObservation.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.search.mock.invocationCallOrder[0]);
+  });
+
+  it("counts each unit exactly once", async () => {
+    available([candidate("a")]);
+    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(observed().filter((kind) => kind === "discovery")).toHaveLength(1);
+    expect(observed().filter((kind) => kind === "aiProcessing")).toHaveLength(1);
+  });
+
+  /** Observation must not change what it observes. */
+  it("still finishes the run when the month cannot be counted", async () => {
+    available([candidate("a")]);
+    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
+    mocks.recordUsageObservation.mockResolvedValue({
+      recorded: false,
+      reason: "unavailable",
+    });
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(mocks.recordSeenItems).toHaveBeenCalledTimes(1);
+    const lastWrite = mocks.runUpdate.mock.calls[
+      mocks.runUpdate.mock.calls.length - 1
+    ][0].data;
+    expect(lastWrite).toMatchObject({ status: "completed" });
+  });
+});

@@ -1022,7 +1022,9 @@ What exists:
 **Usage is counted, and counting stops nothing.** Three product counters move
 as accounts work: `aiProcessing` on every real call to a model, `manualRun` on
 every hand-started run that was accepted, and `discovery` on every discovery run
-that happened. A counter may pass its limit and nothing changes — no run stops,
+that became established — which is once its source has been resolved and can be
+reached, not when its run row was written. A worker with no search configured
+has begun nothing and spends nothing. A counter may pass its limit and nothing changes — no run stops,
 no draft fails, no analysis is refused. The limit on the row is what a plan
 *would* allow, kept as a comparison rather than a rule.
 

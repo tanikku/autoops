@@ -13,6 +13,7 @@ import {
 } from "@/lib/discovery/select";
 import type { DiscoveryCandidate, DiscoverySelection } from "@/lib/discovery/types";
 import { DISCOVERY_NO_SELECTION_OUTPUT } from "@/lib/run-display";
+import { recordUsageObservation } from "@/lib/usage/observe";
 
 /**
  * What a discovery worker does between taking the lease and recording what
@@ -183,6 +184,27 @@ export async function executeDiscovery(
     );
     return { status: "failed", errorMessage: SOURCE_UNAVAILABLE, call: null };
   }
+
+  // **The point a discovery run becomes one.** A worker with no search
+  // configured and one whose source this deployment cannot reach have both
+  // failed before any discovery work began: the state should not exist, and
+  // nothing was asked of anybody. From here on the run is established, and
+  // every way it can end is an outcome of a discovery run rather than a reason
+  // it never started — a search that found nothing, one whose every result had
+  // been recommended before, a provider that failed, and a model that chose
+  // none of what was left all cost the same operation.
+  //
+  // **Before the search rather than after it**, because a search that fails is
+  // still a discovery run that happened; and **well before the selection**,
+  // because most discovery runs never ask a model at all. The AI call is a
+  // separate product unit, counted separately, and a run may spend both.
+  //
+  // **The run row is not the boundary.** It is written by the caller before
+  // any of this, which is a persistence detail rather than a statement about
+  // what the account used.
+  //
+  // Observation only: it cannot refuse and it cannot throw.
+  await recordUsageObservation(userId, "discovery");
 
   let candidates: DiscoveryCandidate[];
   try {
