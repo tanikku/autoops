@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   release: vi.fn(),
   execute: vi.fn(),
   usageCreate: vi.fn(),
+  recordUsageObservation: vi.fn(),
   findUniqueOrThrow: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
@@ -60,6 +61,10 @@ vi.mock("@/lib/ai/factory", () => ({
     },
     execute: mocks.execute,
   }),
+}));
+
+vi.mock("@/lib/usage/observe", () => ({
+  recordUsageObservation: mocks.recordUsageObservation,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -287,6 +292,7 @@ beforeEach(() => {
   mocks.release.mockReset().mockResolvedValue("released");
   mocks.execute.mockReset().mockResolvedValue(aiResult("a summary"));
   mocks.usageCreate.mockReset().mockResolvedValue({});
+  mocks.recordUsageObservation.mockReset().mockResolvedValue({ recorded: true });
   mocks.findUniqueOrThrow.mockReset().mockResolvedValue({
     userId: "user-1",
     // For a website worker the prompt is the instruction applied when the page
@@ -1402,6 +1408,115 @@ describe("a website run — what it records about its call", () => {
   it("still completes the run when the usage row cannot be written", async () => {
     changed();
     mocks.usageCreate.mockRejectedValue(new Error("connection lost"));
+
+    await runRoutine("worker-1");
+
+    expect(written()).toMatchObject({
+      status: "completed",
+      output: "a summary",
+    });
+  });
+});
+
+/**
+ * Counting a website worker's call against the account's month.
+ *
+ * **The path where a run and a call come apart.** Most website runs never ask a
+ * model: a first check has nothing to compare against and a page that has not
+ * moved has nothing to describe. Counting the run rather than the call would
+ * make a month of quiet pages look like a month of model use.
+ */
+describe("a website run — counting it against the month", () => {
+  const STALE = {
+    ...matchingSnapshot(),
+    normalizedContent: "Careers Not hiring",
+    contentHash: "0".repeat(64),
+  };
+
+  /** Every kind observed during this run. */
+  function observed() {
+    return mocks.recordUsageObservation.mock.calls.map((call: unknown[]) =>
+      String(call[1]),
+    );
+  }
+
+  function changed() {
+    mocks.getWebsiteSnapshot.mockResolvedValue(STALE);
+  }
+
+  it("counts nothing on a first check", async () => {
+    mocks.getWebsiteSnapshot.mockResolvedValue(null);
+
+    await runRoutine("worker-1");
+
+    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
+  });
+
+  it("counts nothing when the page had not moved", async () => {
+    mocks.getWebsiteSnapshot.mockResolvedValue(matchingSnapshot());
+
+    await runRoutine("worker-1");
+
+    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
+  });
+
+  it("counts one unit when the page changed and a model answered", async () => {
+    changed();
+
+    await runRoutine("worker-1");
+
+    expect(observed()).toEqual(["aiProcessing"]);
+    expect(mocks.recordUsageObservation.mock.calls[0][0]).toBe("user-1");
+  });
+
+  /** The call happened even though the run did not survive it. */
+  it("counts the call when the answer was unusable", async () => {
+    changed();
+    mocks.execute.mockResolvedValue(aiResult(""));
+
+    await runRoutine("worker-1");
+
+    expect(observed()).toEqual(["aiProcessing"]);
+  });
+
+  it("counts a call that was made and then failed", async () => {
+    changed();
+    mocks.execute.mockRejectedValue(
+      new ProviderError("timeout", "took too long", {
+        attempt: { provider: "anthropic", model: "claude-opus-5", usage: null },
+      }),
+    );
+
+    await runRoutine("worker-1");
+
+    expect(observed()).toEqual(["aiProcessing"]);
+  });
+
+  /** The stand-in is turned away before anything is sent. */
+  it("counts nothing when the stand-in was refused", async () => {
+    changed();
+    mocks.providerMode.mockReturnValue("dummy");
+
+    await runRoutine("worker-1");
+
+    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
+  });
+
+  it("counts exactly once per call", async () => {
+    changed();
+
+    await runRoutine("worker-1");
+
+    expect(mocks.recordUsageObservation).toHaveBeenCalledTimes(1);
+  });
+
+  /** Observation must not change what it observes. */
+  it("still completes the run when the month cannot be counted", async () => {
+    changed();
+    mocks.recordUsageObservation.mockResolvedValue({
+      recorded: false,
+      reason: "unavailable",
+    });
 
     await runRoutine("worker-1");
 

@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   createWorkerDraftGenerator: vi.fn(),
   generate: vi.fn(),
   usageCreate: vi.fn(),
+  recordUsageObservation: vi.fn(),
   ensureUser: vi.fn(),
   consumeAiDraftQuota: vi.fn(),
   getUserTimezone: vi.fn(),
@@ -65,6 +66,10 @@ vi.mock("@/lib/ai/worker-draft-factory", () => ({
 // The transaction itself is the boundary under test, so the fake runs the
 // callback and hands it a marker: what the assertions want to see is that both
 // writes were given the *same* client, and that it was not the module's.
+vi.mock("@/lib/usage/observe", () => ({
+  recordUsageObservation: mocks.recordUsageObservation,
+}));
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: mocks.transaction,
@@ -151,6 +156,7 @@ beforeEach(() => {
   });
   mocks.ensureUser.mockReset().mockResolvedValue(undefined);
   mocks.usageCreate.mockReset().mockResolvedValue({});
+  mocks.recordUsageObservation.mockReset().mockResolvedValue({ recorded: true });
   mocks.consumeAiDraftQuota.mockReset().mockResolvedValue(true);
   mocks.getUserTimezone.mockReset().mockResolvedValue("Asia/Tokyo");
   mocks.getUserLanguage.mockReset().mockResolvedValue("en");
@@ -1794,5 +1800,91 @@ describe("generateWorkerDraftAction — what it records about its call", () => {
     await ask("watch a page");
 
     expect(mocks.consumeAiDraftQuota).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Counting a draft against the account's month.
+ *
+ * **Drafting is AI processing with no run behind it**, which is why it had no
+ * cost anybody could see until now. What is fixed here is that the same unit a
+ * worker spends is spent by a form — and that every refusal in front of the
+ * provider still costs nothing.
+ */
+describe("generateWorkerDraftAction — counting the call against the month", () => {
+  function ask(request: string) {
+    const data = new FormData();
+    data.set("request", request);
+    return generateWorkerDraftAction(null, data);
+  }
+
+  /** Every kind observed during this request. */
+  function observed() {
+    return mocks.recordUsageObservation.mock.calls.map((call: unknown[]) =>
+      String(call[1]),
+    );
+  }
+
+  it("counts one unit of AI processing for a real call", async () => {
+    mocks.generate.mockResolvedValue(
+      draftGeneration({ status: "unsupported", reason: "no" }),
+    );
+
+    await ask("watch a page");
+
+    expect(observed()).toEqual(["aiProcessing"]);
+    expect(mocks.recordUsageObservation.mock.calls[0][0]).toBe("google-sub-1");
+  });
+
+  it("counts a call that was made and then failed", async () => {
+    mocks.generate.mockRejectedValue(
+      new ProviderError("timeout", "took too long", {
+        attempt: { provider: "anthropic", model: "claude-opus-5", usage: null },
+      }),
+    );
+
+    await ask("watch a page");
+
+    expect(observed()).toEqual(["aiProcessing"]);
+  });
+
+  it.each([
+    ["an empty request", ""],
+    ["a request past the limit", "x".repeat(MAX_WORKER_DRAFT_REQUEST_CHARS + 1)],
+  ])("counts nothing for %s", async (_label, request) => {
+    await ask(request);
+
+    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
+  });
+
+  it("counts nothing when the allowance is spent", async () => {
+    mocks.consumeAiDraftQuota.mockResolvedValue(false);
+
+    await ask("watch a page");
+
+    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
+  });
+
+  it("counts exactly once per call", async () => {
+    mocks.generate.mockResolvedValue(
+      draftGeneration({ status: "unsupported", reason: "no" }),
+    );
+
+    await ask("watch a page");
+
+    expect(mocks.recordUsageObservation).toHaveBeenCalledTimes(1);
+  });
+
+  /** Observation must not change what it observes. */
+  it("still returns the draft when the month cannot be counted", async () => {
+    mocks.recordUsageObservation.mockResolvedValue({
+      recorded: false,
+      reason: "unavailable",
+    });
+    mocks.generate.mockResolvedValue(
+      draftGeneration({ status: "unsupported", reason: "Koqentra cannot." }),
+    );
+
+    expect(await ask("watch a page")).toMatchObject({ status: "unsupported" });
   });
 });

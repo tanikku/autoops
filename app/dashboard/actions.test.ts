@@ -27,10 +27,14 @@ const mocks = vi.hoisted(() => ({
   consumeDiscoveryRunQuota: vi.fn(),
   claimRoutineSlot: vi.fn(),
   revalidatePath: vi.fn(),
+  recordUsageObservation: vi.fn(),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("@/lib/session", () => ({ requireUserId: mocks.requireUserId }));
+vi.mock("@/lib/usage/observe", () => ({
+  recordUsageObservation: mocks.recordUsageObservation,
+}));
 // **Mocked rather than left real.** These messages are read from the account
 // row now, and a unit test that reached for one would be asking a database
 // that CI does not have.
@@ -105,6 +109,7 @@ beforeEach(() => {
   mocks.consumeDiscoveryRunQuota.mockReset().mockResolvedValue(true);
   mocks.claimRoutineSlot.mockReset();
   mocks.revalidatePath.mockReset();
+  mocks.recordUsageObservation.mockReset().mockResolvedValue({ recorded: true });
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
@@ -1099,5 +1104,126 @@ describe("a scheduled discovery run", () => {
 
     expect(source).not.toContain("consumeDiscoveryRunQuota");
     expect(source).not.toContain("consumeManualRunQuota");
+  });
+});
+
+/**
+ * Counting a hand-started run against the account's month.
+ *
+ * **The boundary is acceptance, not outcome.** Everything that could refuse the
+ * request — the session, the ownership, the slot, both hourly allowances — has
+ * already answered by the time the count moves, and nothing after it can turn
+ * an accepted run back into one that was never made. A page that had not moved
+ * and a provider that failed both still spent the operation somebody asked for.
+ *
+ * **Observation only.** The count never refuses, and it never fails a button
+ * press: it is measuring what a month looks like, not deciding what may happen
+ * in one.
+ */
+describe("runRoutineAction — counting the run against the month", () => {
+  it("counts one hand-started run", async () => {
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.recordUsageObservation).toHaveBeenCalledTimes(1);
+    expect(mocks.recordUsageObservation.mock.calls[0].slice(0, 2)).toEqual([
+      "user-1",
+      "manualRun",
+    ]);
+  });
+
+  /** After the last thing that could have refused it, and before it runs. */
+  it("counts after both allowances and before the run starts", async () => {
+    await runRoutineAction(null, form("worker-1"));
+
+    const counted = mocks.recordUsageObservation.mock.invocationCallOrder[0];
+
+    expect(mocks.consumeManualRunQuota.mock.invocationCallOrder[0]).toBeLessThan(
+      counted,
+    );
+    expect(counted).toBeLessThan(mocks.enqueueRoutine.mock.invocationCallOrder[0]);
+  });
+
+  /**
+   * **Nothing that was refused is counted.** Each of these ends the request
+   * before it was ever accepted, so counting it would describe a month in which
+   * somebody ran something they did not.
+   */
+  it("counts nothing when the worker belongs to somebody else", async () => {
+    mocks.getRoutine.mockResolvedValue(null);
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
+  });
+
+  it("counts nothing when no worker was named", async () => {
+    await runRoutineAction(null, form(""));
+
+    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
+  });
+
+  it("counts nothing when the account already has a run in progress", async () => {
+    mocks.acquireManualRunSlot.mockResolvedValue(null);
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
+  });
+
+  it("counts nothing when the hourly allowance is spent", async () => {
+    mocks.consumeManualRunQuota.mockResolvedValue(false);
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
+  });
+
+  it("counts nothing when the hourly discovery allowance is spent", async () => {
+    mocks.getRoutine.mockResolvedValue({ id: "worker-1", name: "Daily digest", kind: "discovery" });
+    mocks.consumeDiscoveryRunQuota.mockResolvedValue(false);
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **Accepted is accepted.** What the run turned out to be is a different
+   * question from whether the account asked for one.
+   */
+  it("still counts when the run itself fails", async () => {
+    mocks.enqueueRoutine.mockResolvedValue({
+      id: "run-1",
+      status: "failed",
+      errorMessage: "Execution failed.",
+    });
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.recordUsageObservation).toHaveBeenCalledTimes(1);
+  });
+
+  it("still counts when the worker was already running", async () => {
+    mocks.enqueueRoutine.mockRejectedValue(new ExecutionSuppressedError("busy"));
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.recordUsageObservation).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * **Observation must not change what it observes.** A month's counters are
+   * not something a button press may fail on.
+   */
+  it("starts the run even when the month cannot be counted", async () => {
+    mocks.recordUsageObservation.mockResolvedValue({
+      recorded: false,
+      reason: "unavailable",
+    });
+
+    const state = await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.enqueueRoutine).toHaveBeenCalledTimes(1);
+    expect(state?.status).toBe("success");
   });
 });

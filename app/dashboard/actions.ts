@@ -15,6 +15,7 @@ import { deleteRoutine, getRoutine } from "@/lib/routines";
 import { isRunPersistenceError } from "@/lib/runs";
 import { DEFAULT_LANGUAGE, t } from "@/lib/i18n";
 import { requireUserId } from "@/lib/session";
+import { recordUsageObservation } from "@/lib/usage/observe";
 import { getUserLanguage } from "@/lib/users";
 import type { ActionResult } from "@/types";
 
@@ -214,6 +215,17 @@ export async function runRoutineAction(
         };
       }
     }
+
+    // **The moment the account's request was accepted.** Everything that
+    // could refuse it — the session, the ownership, the slot, both hourly
+    // allowances — has already answered, and nothing below this line can turn
+    // it back into a request that was never made. What the run turns out to be
+    // does not matter: a page that had not moved and a provider that failed
+    // both still spent the operation somebody asked for.
+    //
+    // **Observation only.** It cannot refuse and it cannot throw; a month's
+    // counters are not something a button press may fail on.
+    await recordUsageObservation(userId, "manualRun");
 
     run = await enqueueRoutine(routineId);
   } catch (error) {

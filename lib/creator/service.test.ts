@@ -52,6 +52,7 @@ const {
   decisionCreate,
   contentItemCreate,
   usageCreate,
+  recordUsageObservation,
   draftCreate,
   transaction,
 } = vi.hoisted(() => ({
@@ -66,6 +67,7 @@ const {
   decisionCreate: vi.fn(),
   contentItemCreate: vi.fn(),
   usageCreate: vi.fn(),
+  recordUsageObservation: vi.fn(),
   draftCreate: vi.fn(),
   transaction: vi.fn(),
 }));
@@ -80,6 +82,10 @@ const tx = {
   creatorMemory: { create: memoryCreate, updateMany: memoryUpdateMany },
   creatorMemoryEvidence: { createMany: evidenceCreateMany },
 };
+
+vi.mock("@/lib/usage/observe", () => ({
+  recordUsageObservation,
+}));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -191,6 +197,7 @@ beforeEach(() => {
   }
 
   usageCreate.mockResolvedValue({});
+  recordUsageObservation.mockReset().mockResolvedValue({ recorded: true });
   transaction.mockReset().mockImplementation((run: (client: unknown) => unknown) => run(tx));
   profileFindUnique.mockResolvedValue(null);
   feedbackFindMany.mockResolvedValue([]);
@@ -1301,6 +1308,48 @@ describe("the summary of older answers", () => {
     });
 
     /**
+     * **Two real calls, two units — and that is not double counting.** The
+     * synthesis and the analysis each reached a model; one user action simply
+     * made two purchases.
+     */
+    it("counts both calls when a synthesis happened too", async () => {
+      agedOutFeedback();
+      const { analyzer } = fakeAnalyzer(threeRecommendations);
+      const { synthesizer } = fakeSynthesizer();
+
+      await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
+
+      expect(
+        recordUsageObservation.mock.calls.map((call: unknown[]) => String(call[1])),
+      ).toEqual(["aiProcessing", "aiProcessing"]);
+    });
+
+    /**
+     * **The compare-and-set does not undo the call.** Losing the race is a fact
+     * about persistence; the synthesis was still asked for and still paid for.
+     */
+    it("keeps both counts when the compare-and-set loses", async () => {
+      agedOutFeedback();
+      memoryUpdateMany.mockResolvedValue({ count: 0 });
+      const { analyzer } = fakeAnalyzer(threeRecommendations);
+      const { synthesizer } = fakeSynthesizer();
+
+      await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
+
+      expect(recordUsageObservation).toHaveBeenCalledTimes(2);
+    });
+
+    /** A synthesis nobody was eligible for asks nobody, and costs nothing. */
+    it("counts only the analysis when no synthesis was eligible", async () => {
+      const { analyzer } = fakeAnalyzer(threeRecommendations);
+      const { synthesizer } = fakeSynthesizer();
+
+      await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
+
+      expect(recordUsageObservation).toHaveBeenCalledTimes(1);
+    });
+
+    /**
      * **Observation must not change what it observes.** The memory is still
      * written when the bookkeeping beside it could not be.
      */
@@ -1671,6 +1720,81 @@ describe("what a Creator analysis records about its call", () => {
    */
   it("still completes the analysis when the usage row cannot be written", async () => {
     usageCreate.mockRejectedValue(new Error("connection lost"));
+    const { analyzer } = fakeAnalyzer(threeRecommendations);
+
+    await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer);
+
+    expect(contentItemCreate).toHaveBeenCalled();
+  });
+});
+
+/**
+ * Counting the Creator calls against the account's month.
+ *
+ * **Both are AI processing, and neither has a run.** In observation mode they
+ * spend the same unit a worker spends — no separate Creator counter exists yet,
+ * deliberately: what a Creator account really costs is the thing this phase is
+ * trying to find out, and inventing a unit before measuring would be deciding
+ * the answer first.
+ *
+ * **One user action may legitimately count twice.** An analysis that also
+ * triggers a memory synthesis made two real provider calls, and two is what
+ * happened.
+ */
+describe("counting the Creator calls against the month", () => {
+  /** Every kind observed during this action. */
+  function observed() {
+    return recordUsageObservation.mock.calls.map((call: unknown[]) =>
+      String(call[1]),
+    );
+  }
+
+  it("counts one unit for an analysis", async () => {
+    const { analyzer } = fakeAnalyzer(threeRecommendations);
+
+    await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer);
+
+    expect(observed()).toEqual(["aiProcessing"]);
+    expect(recordUsageObservation.mock.calls[0][0]).toBe(USER);
+  });
+
+  it("counts a call that was made and then failed", async () => {
+    const analyzer: CreatorAnalyzer = {
+      analyze: async () => {
+        throw new ProviderError("timeout", "took too long", {
+          attempt: {
+            provider: "anthropic",
+            model: "claude-sonnet-5",
+            usage: null,
+          },
+        });
+      },
+    };
+
+    await expect(
+      analyzeCreatorText(USER, { title: null, body: "b" }, analyzer),
+    ).rejects.toBeInstanceOf(ProviderError);
+
+    expect(observed()).toEqual(["aiProcessing"]);
+  });
+
+  /** A body refused before anything was sent cost nothing. */
+  it("counts nothing when the content never reached a provider", async () => {
+    const { analyzer } = fakeAnalyzer(threeRecommendations);
+
+    await expect(
+      analyzeCreatorText(USER, { title: null, body: "   " }, analyzer),
+    ).rejects.toSatisfy(isEmptyCreatorContent);
+
+    expect(recordUsageObservation).not.toHaveBeenCalled();
+  });
+
+  /** Observation must not change what it observes. */
+  it("still completes the analysis when the month cannot be counted", async () => {
+    recordUsageObservation.mockResolvedValue({
+      recorded: false,
+      reason: "unavailable",
+    });
     const { analyzer } = fakeAnalyzer(threeRecommendations);
 
     await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer);

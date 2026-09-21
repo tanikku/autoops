@@ -34,12 +34,17 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   notify: vi.fn(),
   usageCreate: vi.fn(),
+  recordUsageObservation: vi.fn(),
 }));
 
 vi.mock("@/lib/discovery/repository", () => ({
   getDiscoverySource: mocks.getSource,
   findSeenKeys: mocks.findSeenKeys,
   recordSeenItems: mocks.recordSeenItems,
+}));
+
+vi.mock("@/lib/usage/observe", () => ({
+  recordUsageObservation: mocks.recordUsageObservation,
 }));
 
 vi.mock("@/lib/discovery/factory", () => ({
@@ -186,6 +191,7 @@ beforeEach(() => {
     kind: "discovery",
     emailNotificationsEnabled: false,
   });
+  mocks.recordUsageObservation.mockResolvedValue({ recorded: true });
   mocks.runCreate.mockResolvedValue(run({ status: "running" }));
   mocks.runUpdate.mockImplementation(async (args: { data: Record<string, unknown> }) =>
     run(args.data),
@@ -836,6 +842,122 @@ describe("a discovery run — what it records about its call", () => {
     available([candidate("a")]);
     mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
     mocks.usageCreate.mockRejectedValue(new Error("connection lost"));
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(mocks.recordSeenItems).toHaveBeenCalledTimes(1);
+    const lastWrite = mocks.runUpdate.mock.calls[
+      mocks.runUpdate.mock.calls.length - 1
+    ][0].data;
+    expect(lastWrite).toMatchObject({ status: "completed" });
+  });
+});
+
+/**
+ * Counting a discovery run against the account's month.
+ *
+ * **A discovery run and an AI call are different product units**, and this is
+ * the path where that matters most: most discovery runs never ask a model. A
+ * source that found nothing, a search whose every result had been recommended
+ * before, and a model that chose none of what was left are all discovery runs
+ * that cost no AI processing at all.
+ *
+ * **Counted where the run exists, not where the provider is reached.** Tying
+ * the discovery counter to the model call would answer a question about AI
+ * processing while pretending to answer one about discovery.
+ */
+describe("a discovery run — counting it against the month", () => {
+  /** Every kind observed during this run, in order. */
+  function observed() {
+    return mocks.recordUsageObservation.mock.calls.map((call: unknown[]) =>
+      String(call[1]),
+    );
+  }
+
+  /**
+   * **Two units for one run, and that is not double counting.** A discovery run
+   * happened *and* a model was asked; they are different products and a plan
+   * sells them separately. The run is counted where the run exists and the call
+   * where the call was made.
+   */
+  it("counts a run and a call when a model was asked", async () => {
+    available([candidate("a")]);
+    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(observed()).toEqual(["discovery", "aiProcessing"]);
+    expect(mocks.recordUsageObservation.mock.calls[0][0]).toBe(USER_ID);
+  });
+
+  /**
+   * **Still a discovery run.** Nothing was asked of a model, and the operation
+   * the account's schedule spent is the same one either way.
+   */
+  it("counts the run when the source returned nothing", async () => {
+    available([]);
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(observed()).toEqual(["discovery"]);
+    expect(mocks.select).not.toHaveBeenCalled();
+  });
+
+  it("counts the run when everything found had been recommended before", async () => {
+    available([candidate("a")]);
+    mocks.findSeenKeys.mockResolvedValue(new Set(["youtube:a"]));
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(observed()).toEqual(["discovery"]);
+    expect(mocks.select).not.toHaveBeenCalled();
+  });
+
+  /** A model that chose nothing was still asked, and still paid for. */
+  it("counts both when the model chose nothing", async () => {
+    available([candidate("a")]);
+    mocks.select.mockResolvedValue(chosenBy([]));
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(observed()).toEqual(["discovery", "aiProcessing"]);
+  });
+
+  it("counts the run when the selection failed", async () => {
+    available([candidate("a")]);
+    mocks.select.mockRejectedValue(new Error("refused before sending"));
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(observed()).toEqual(["discovery"]);
+  });
+
+  /**
+   * **Each unit exactly once**, never twice because the run took two branches
+   * or because two layers both thought it was theirs to count.
+   */
+  it("counts each unit exactly once", async () => {
+    available([candidate("a")]);
+    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(observed().filter((kind) => kind === "discovery")).toHaveLength(1);
+    expect(observed().filter((kind) => kind === "aiProcessing")).toHaveLength(1);
+    expect(mocks.recordUsageObservation).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * **Observation must not change what it observes.** What was chosen is still
+   * chosen when the month could not be counted.
+   */
+  it("still finishes the run when the month cannot be counted", async () => {
+    available([candidate("a")]);
+    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
+    mocks.recordUsageObservation.mockResolvedValue({
+      recorded: false,
+      reason: "unavailable",
+    });
 
     await runRoutine(ROUTINE_ID);
 

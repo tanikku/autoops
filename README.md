@@ -1014,9 +1014,42 @@ What exists:
 | Plan catalogue | `lib/plans.ts` | Five plans, with their allowances. No prices and no provider price ids |
 | Effective entitlement | `lib/entitlements/` | Works out what an account may do from a stored row and an instant. **Imported by nothing that runs** |
 | Trial arithmetic | `lib/entitlements/trial.ts` | How long a trial is, and who may start one. **Nothing starts one** |
-| Usage period and counters | `lib/usage/period.ts`, `lib/usage/consume.ts` | How an allowance is opened and spent. **Nothing opens or spends** |
+| Usage period and counters | `lib/usage/period.ts`, `lib/usage/consume.ts` | How an allowance would be **enforced**. `consumeUsage` refuses past its limit; **nothing calls it** |
+| Usage observation | `lib/usage/observe.ts`, `lib/usage/snapshot.ts` | How usage is **counted without being enforced**. Live — see below |
 | Provider usage recording | `lib/usage/record.ts` | How a call to a model is written down. **Live for all six features** |
 | Beta grant | `lib/billing/admin.ts` | Gives a carried-over account the beta allowance. No route, no action, no UI, and it has not been run |
+
+**Usage is counted, and counting stops nothing.** Three product counters move
+as accounts work: `aiProcessing` on every real call to a model, `manualRun` on
+every hand-started run that was accepted, and `discovery` on every discovery run
+that happened. A counter may pass its limit and nothing changes — no run stops,
+no draft fails, no analysis is refused. The limit on the row is what a plan
+*would* allow, kept as a comparison rather than a rule.
+
+**`consumeUsage` and `recordUsageObservation` are different functions on
+purpose.** The first puts the limit inside the write so a spend past it cannot
+land; it is the shape enforcement will need and nothing calls it. The second
+adds to the counter whatever it already says. Setting the limits absurdly high
+to make enforcement "pass" would have produced the same non-enforcement and
+destroyed the measurement, which is why the real numbers are kept.
+
+**The observation period is the UTC calendar month**, and it is not a billing
+cycle. No account has a `Subscription`, so there is no cycle to read; the month
+is the neutral choice — the same boundary for everybody and obviously not
+something anybody bought. When entitlement arrives, paid plans will use
+`Subscription.currentPeriodStart`/`currentPeriodEnd` and trials will use
+`trialStartedAt`/`trialEndsAt`. See `observationWindowFor`.
+
+**A `UsagePeriod` is not an entitlement.** Its `planAtStart` records what the
+counters were compared against — `beta`, because that is the allowance the
+carried-over accounts would be given if anybody had granted them one. Nothing
+infers a right from it, and no `Subscription` row exists.
+
+**The counters started part-way through a month**, and nothing was backfilled.
+A period is opened by the first thing observed in it, so a month whose row was
+created after the month began does not cover the whole month; `getUsageSnapshot`
+reports that as `partialPeriod`. A number that looked like a month's total but
+was not would be worse than no number.
 
 **A trial is provider-independent.** It starts, runs and ends on Koqentra's own
 clock, and no payment provider is involved in any of it. There is no Stripe

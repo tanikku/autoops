@@ -37,6 +37,7 @@ import {
   MAX_WEBSITE_AI_REQUEST_CHARS,
   websiteRequestSize,
 } from "@/lib/watcher/website-request";
+import { recordUsageObservation } from "@/lib/usage/observe";
 import { recordAIExecution, recordAIFailure } from "@/lib/usage/record";
 import { workerFieldLimits } from "@/lib/worker-input";
 import {
@@ -890,6 +891,20 @@ async function executeDiscoveryRun(
   const run = await prisma.runHistory.create({
     data: { routineId, userId, status: "running" },
   });
+
+  // **One discovery run, counted once, at the point a run exists.** The lease
+  // is held and the row is written, so nothing after this can make it not have
+  // happened — and every outcome below is still a discovery run: a source that
+  // found nothing, a search whose every result had been recommended before, and
+  // a model that chose none of what was left all cost the same operation.
+  //
+  // **Deliberately not tied to the provider call.** Most discovery runs never
+  // ask a model, and counting only the ones that did would answer a question
+  // about AI processing rather than about discovery. The two counters are
+  // separate product units and a run may spend both.
+  //
+  // Observation only: it cannot refuse and it cannot throw.
+  await recordUsageObservation(userId, "discovery");
 
   let execution: DiscoveryExecution;
   try {
