@@ -16,10 +16,10 @@ import type {
 /**
  * What an account may do, worked out rather than looked up.
  *
- * **Nothing calls this yet.** No scheduler, no dispatcher, no run, no server
- * action: the answer exists before anything acts on it, which is the whole of
- * what this phase is. A worker that runs today runs for exactly the reasons it
- * ran yesterday.
+ * **Nothing acts on this.** One caller reads it — the eligibility rule, to see
+ * whether an account is already entitled before offering it a trial — and no
+ * scheduler, dispatcher or run does. A worker that runs today runs for exactly
+ * the reasons it ran yesterday, whatever the state below says.
  *
  * **`now` is an argument, everywhere it can be.** Three of the eight states
  * below are the clock's opinion about a stored row, and a boundary tested

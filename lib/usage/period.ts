@@ -55,8 +55,16 @@ export type UsagePeriodState = {
   readonly counters: readonly UsageCounterState[];
 };
 
-/** A plan's allowance for one kind. */
-function limitFor(plan: string, kind: UsageKind): number {
+/**
+ * A plan's allowance for one kind.
+ *
+ * **Exported because a period is not always opened here.** A trial's period is
+ * created inside the transaction that activates the first worker, so it cannot
+ * go through `openOrGetUsagePeriod` — but the limits it copies must be the same
+ * numbers, worked out the same way, or a trial would silently be compared
+ * against a second opinion of what a trial allows.
+ */
+export function planLimitFor(plan: string, kind: UsageKind): number {
   const definition = getPlanDefinition(plan);
 
   switch (kind) {
@@ -147,7 +155,7 @@ export async function openOrGetUsagePeriod(
           create: usageKinds.map((kind) => ({
             kind,
             used: 0,
-            limit: limitFor(window.plan, kind),
+            limit: planLimitFor(window.plan, kind),
           })),
         },
       },

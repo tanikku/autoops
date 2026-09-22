@@ -27,6 +27,9 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   lockUser: vi.fn(),
   countRoutines: vi.fn(),
+  findSubscription: vi.fn(),
+  createSubscription: vi.fn(),
+  createUsagePeriod: vi.fn(),
   revalidatePath: vi.fn(),
   redirect: vi.fn(),
 }));
@@ -92,6 +95,14 @@ const TX = {
   tag: "transaction-client",
   user: { update: mocks.lockUser },
   routine: { count: mocks.countRoutines },
+  // **The trial runs for real, not stubbed.** A worker created active is a
+  // first activation as surely as one switched on later, and this is the only
+  // place that fact is exercised. See `startTrialOnFirstWorkerActivation`.
+  subscription: {
+    findUnique: mocks.findSubscription,
+    create: mocks.createSubscription,
+  },
+  usagePeriod: { create: mocks.createUsagePeriod },
 } as const;
 
 const { createRoutineAction, generateWorkerDraftAction } = await import(
@@ -175,6 +186,10 @@ beforeEach(() => {
   mocks.lockUser.mockReset().mockResolvedValue({ id: "google-sub-1" });
   // An account with room for another worker, unless a test says otherwise.
   mocks.countRoutines.mockReset().mockResolvedValue(0);
+  // An account with no entitlement: nothing bought, nothing granted.
+  mocks.findSubscription.mockReset().mockResolvedValue(null);
+  mocks.createSubscription.mockReset().mockResolvedValue({ id: "subscription-1" });
+  mocks.createUsagePeriod.mockReset().mockResolvedValue({ id: "usage-period-1" });
   mocks.generate.mockReset();
   mocks.createWorkerDraftGenerator
     .mockReset()
@@ -1886,5 +1901,117 @@ describe("generateWorkerDraftAction — counting the call against the month", ()
     );
 
     expect(await ask("watch a page")).toMatchObject({ status: "unsupported" });
+  });
+});
+
+/**
+ * Hiring a worker, and the fourteen days it may or may not start.
+ *
+ * **The trigger is activation, not creation.** A worker can be created active
+ * as easily as it can be switched on later, so this form is a first-activation
+ * boundary — but only when the status says `active`. Drafting one is filling in
+ * a form, and a trial spent there would be spent by somebody who had not yet
+ * decided to run anything.
+ */
+describe("createRoutineAction — the trial", () => {
+  /** §11: signing up and drafting a worker consume nothing. */
+  it("starts no trial when the worker is created as a draft", async () => {
+    await createRoutineAction(null, form({ status: "draft" }));
+
+    expect(mocks.createSubscription).not.toHaveBeenCalled();
+    expect(mocks.createUsagePeriod).not.toHaveBeenCalled();
+  });
+
+  it("starts no trial when the worker is created paused", async () => {
+    await createRoutineAction(null, form({ status: "paused" }));
+
+    expect(mocks.createSubscription).not.toHaveBeenCalled();
+  });
+
+  /** §12: the first active worker is what starts the fortnight. */
+  it("starts a trial when the first worker is created active", async () => {
+    await createRoutineAction(null, form({ status: "active" }));
+
+    expect(mocks.createSubscription).toHaveBeenCalledTimes(1);
+    expect(mocks.createSubscription.mock.calls[0][0].data).toMatchObject({
+      plan: "trial",
+      state: "trialing",
+      source: "trial",
+    });
+    expect(mocks.createUsagePeriod).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * **Inside the same transaction as the worker**, which is what makes §7 true:
+   * a trial cannot outlive a hire that failed, because they commit together.
+   */
+  it("writes the trial with the same client as the worker", async () => {
+    await createRoutineAction(null, form({ status: "active" }));
+
+    expect(mocks.createSubscription.mock.calls[0][0]).not.toHaveProperty("tag");
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.createRoutine.mock.calls[0][2]).toBe(TX);
+  });
+
+  /** §13: an account that already has one running worker is not starting. */
+  it("starts no trial when a worker is already active", async () => {
+    mocks.countRoutines.mockResolvedValue(1);
+
+    await createRoutineAction(null, form({ status: "active" }));
+
+    expect(mocks.createSubscription).not.toHaveBeenCalled();
+  });
+
+  /**
+   * §20: the five carried-over accounts activate workers exactly as before,
+   * and nothing about their entitlement is written or changed.
+   */
+  it("starts no trial for an account that was given the beta allowance", async () => {
+    mocks.findSubscription.mockResolvedValue({
+      plan: "beta",
+      state: "active",
+      source: "admin",
+      trialStartedAt: null,
+      trialEndsAt: null,
+      trialConsumedAt: null,
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+      notificationWorkerId: null,
+      expiresAt: new Date("2026-12-31T23:59:59.000Z"),
+    });
+
+    const result = await createRoutineAction(null, form({ status: "active" }));
+
+    expect(result?.status).toBe("success");
+    expect(mocks.createSubscription).not.toHaveBeenCalled();
+    expect(mocks.createUsagePeriod).not.toHaveBeenCalled();
+  });
+
+  /**
+   * §7: a trial is spent by a successful activation, not by an attempt. The
+   * transaction here rejects after the trial was written, and the action
+   * reports a failure rather than a hire — in Production the rollback is
+   * PostgreSQL's, and what is fixed here is that nothing is reported as having
+   * worked.
+   */
+  it("reports a failure rather than a hire when the transaction cannot commit", async () => {
+    vi.mocked(console.error).mockClear();
+    mocks.transaction.mockRejectedValue(new Error("rolled back"));
+
+    const result = await createRoutineAction(null, form({ status: "active" }));
+
+    expect(result?.status).toBe("error");
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  /** Nothing is sent and nobody is charged: a trial is a row. */
+  it("calls no provider and writes no provider fields", async () => {
+    await createRoutineAction(null, form({ status: "active" }));
+
+    expect(mocks.createSubscription.mock.calls[0][0].data).toMatchObject({
+      providerCustomerId: null,
+      providerSubscriptionId: null,
+      providerUpdatedAt: null,
+    });
   });
 });

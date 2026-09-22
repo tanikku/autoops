@@ -26,11 +26,13 @@ const {
   usagePeriodFindUnique,
   usagePeriodCreate,
   usageUpdateMany,
+  subscriptionFindUnique,
 } = vi.hoisted(() => ({
   create: vi.fn(),
   usagePeriodFindUnique: vi.fn(),
   usagePeriodCreate: vi.fn(),
   usageUpdateMany: vi.fn(),
+  subscriptionFindUnique: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -43,6 +45,10 @@ vi.mock("@/lib/prisma", () => ({
       create: usagePeriodCreate,
     },
     usageCounter: { updateMany: usageUpdateMany },
+    // Which window a call is counted against is read before the counter is
+    // moved — see `resolveUsageWindow`. These tests describe accounts with no
+    // entitlement, so the answer is the calendar month.
+    subscription: { findUnique: subscriptionFindUnique },
   },
 }));
 
@@ -91,6 +97,7 @@ beforeEach(() => {
   create.mockReset();
   create.mockResolvedValue({});
   usagePeriodFindUnique.mockReset().mockResolvedValue(OBSERVED_PERIOD);
+  subscriptionFindUnique.mockReset().mockResolvedValue(null);
   usagePeriodCreate.mockReset().mockResolvedValue(OBSERVED_PERIOD);
   usageUpdateMany.mockReset().mockResolvedValue({ count: 1 });
   vi.spyOn(console, "error").mockImplementation(() => {});

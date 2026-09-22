@@ -5,13 +5,16 @@ import type { SubscriptionRecord } from "@/lib/entitlements/types";
 /**
  * When a trial would end, and whether one may be started at all.
  *
- * **Neither of these starts anything, and nothing calls them.** A trial begins
- * the first time a worker of an account becomes active, and that is a change to
- * `claimWorkerCreation` and `claimWorkerActivation` — both of them, since a
- * worker can be created active as easily as it can be switched on later.
- * Neither has been touched. What is here is the arithmetic and the eligibility
- * rule, so that when the integration arrives it is a call rather than a
- * decision.
+ * **The arithmetic and the rule, kept apart from the starting.** What calls
+ * these is `startTrialOnFirstWorkerActivation`, at the two boundaries where a
+ * worker of an account becomes active — a worker can be created active as
+ * easily as it can be switched on later, so both are activations. Keeping the
+ * decision here means it can be fixed by tests that hold a row and an instant,
+ * without a transaction anywhere near them.
+ *
+ * **Neither of these enforces anything.** A trial that has run out still
+ * refuses a second trial and stops nothing else; see `computeEntitlement`,
+ * where an ended trial is worked out rather than stored.
  */
 
 /** How long a trial lasts, in milliseconds. */

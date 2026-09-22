@@ -2,14 +2,11 @@ import "server-only";
 
 import { getPlanDefinition } from "@/lib/plans";
 import { prisma } from "@/lib/prisma";
-import {
-  OBSERVATION_PLAN,
-  observationWindowFor,
-} from "@/lib/usage/observe";
+import { resolveUsageWindow } from "@/lib/usage/observe";
 import { usageKinds, type UsageKind } from "@/lib/usage/types";
 
 /**
- * What an account has used this month, read rather than enforced.
+ * What an account has used in its current period, read rather than enforced.
  *
  * **Nothing calls this to decide anything.** It answers a question an operator
  * has — how close is anybody to what a plan would allow — and it is the only
@@ -35,11 +32,16 @@ export type UsageCounterSnapshot = {
   readonly status: UsageStatus;
 };
 
-/** An account's month, and what it spent in it. */
+/** An account's current period, and what it spent in it. */
 export type UsageSnapshot = {
   readonly periodStart: Date;
   readonly periodEnd: Date;
-  /** Which plan's numbers this was compared against. See `OBSERVATION_PLAN`. */
+  /**
+   * Which plan's numbers this was compared against.
+   *
+   * `trial` for an account inside its trial, and otherwise the observation
+   * yardstick — see `OBSERVATION_PLAN` and `resolveUsageWindow`.
+   */
   readonly planBaseline: string;
   /**
    * Whether the counters cover the whole period.
@@ -108,7 +110,11 @@ export async function getUsageSnapshot(
   userId: string,
   now: Date = new Date(),
 ): Promise<UsageSnapshot> {
-  const { periodStart, periodEnd } = observationWindowFor(now);
+  // **The same window the counting uses.** A trial's usage is written to the
+  // trial's own period, so reading the calendar month would show an operator an
+  // empty month for an account that is busy — the two must ask the same
+  // question or the screen is a second opinion. See `resolveUsageWindow`.
+  const { periodStart, periodEnd, plan } = await resolveUsageWindow(userId, now);
 
   const [period, activeWorkers] = await Promise.all([
     prisma.usagePeriod.findUnique({
@@ -122,7 +128,7 @@ export async function getUsageSnapshot(
     prisma.routine.count({ where: { userId, status: "active" } }),
   ]);
 
-  const planBaseline = period?.planAtStart ?? OBSERVATION_PLAN;
+  const planBaseline = period?.planAtStart ?? plan;
 
   const base = {
     periodStart,

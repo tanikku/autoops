@@ -14,21 +14,29 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * bookkeeping that simply did not happen.
  */
 
-const { findUnique, create, updateMany } = vi.hoisted(() => ({
-  findUnique: vi.fn(),
-  create: vi.fn(),
-  updateMany: vi.fn(),
-}));
+const { findUnique, create, updateMany, subscriptionFindUnique } = vi.hoisted(
+  () => ({
+    findUnique: vi.fn(),
+    create: vi.fn(),
+    updateMany: vi.fn(),
+    subscriptionFindUnique: vi.fn(),
+  }),
+);
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     usagePeriod: { findUnique, create },
     usageCounter: { updateMany },
+    subscription: { findUnique: subscriptionFindUnique },
   },
 }));
 
-const { OBSERVATION_PLAN, observationWindowFor, recordUsageObservation } =
-  await import("@/lib/usage/observe");
+const {
+  OBSERVATION_PLAN,
+  observationWindowFor,
+  recordUsageObservation,
+  resolveUsageWindow,
+} = await import("@/lib/usage/observe");
 
 const USER = "google-sub-1";
 const SEPTEMBER = new Date("2026-09-21T08:58:41.000Z");
@@ -53,6 +61,10 @@ beforeEach(() => {
   findUnique.mockReset().mockResolvedValue(storedPeriod());
   create.mockReset().mockResolvedValue(storedPeriod());
   updateMany.mockReset().mockResolvedValue({ count: 1 });
+  // No entitlement is the ordinary case, and the one every existing test
+  // below describes: the calendar month is what an account with no cycle of
+  // its own is counted against.
+  subscriptionFindUnique.mockReset().mockResolvedValue(null);
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
@@ -315,6 +327,141 @@ describe("what the module deliberately does not offer", () => {
       "OBSERVATION_PLAN",
       "observationWindowFor",
       "recordUsageObservation",
+      "resolveUsageWindow",
     ]);
+  });
+});
+
+/**
+ * Which window a number is written into, and why a trial has its own.
+ *
+ * **This chooses a place to write, never a right.** The columns are read
+ * directly rather than through `computeEntitlement`, so an unreadable
+ * entitlement cannot stop the counting and no observation can be mistaken for
+ * a permission. See `resolveUsageWindow`.
+ */
+describe("which period an account is counted against", () => {
+  const TRIAL_START = new Date("2026-09-15T09:30:00.000Z");
+  const TRIAL_END = new Date("2026-09-29T09:30:00.000Z");
+
+  function runningTrial(overrides: Record<string, unknown> = {}) {
+    return {
+      state: "trialing",
+      trialStartedAt: TRIAL_START,
+      trialEndsAt: TRIAL_END,
+      ...overrides,
+    };
+  }
+
+  it("uses the calendar month for an account with no entitlement", async () => {
+    subscriptionFindUnique.mockResolvedValue(null);
+
+    expect(await resolveUsageWindow(USER, SEPTEMBER)).toEqual({
+      periodStart: SEPTEMBER_START,
+      periodEnd: OCTOBER_START,
+      plan: OBSERVATION_PLAN,
+    });
+  });
+
+  /**
+   * **The whole point of the function.** A trial begun on the fifteenth would
+   * otherwise have its fortnight split at midnight on the first, and its
+   * allowance reset halfway through.
+   */
+  it("uses the trial's own fortnight while a trial is running", async () => {
+    subscriptionFindUnique.mockResolvedValue(runningTrial());
+
+    expect(await resolveUsageWindow(USER, SEPTEMBER)).toEqual({
+      periodStart: TRIAL_START,
+      periodEnd: TRIAL_END,
+      plan: "trial",
+    });
+  });
+
+  it("counts against the trial's numbers, not the observation yardstick", async () => {
+    subscriptionFindUnique.mockResolvedValue(runningTrial());
+
+    const { plan } = await resolveUsageWindow(USER, SEPTEMBER);
+
+    expect(plan).toBe("trial");
+    expect(plan).not.toBe(OBSERVATION_PLAN);
+  });
+
+  it("includes the instant the trial began", async () => {
+    subscriptionFindUnique.mockResolvedValue(runningTrial());
+
+    expect((await resolveUsageWindow(USER, TRIAL_START)).plan).toBe("trial");
+  });
+
+  /**
+   * **A closed period is not written into.** Continuing to add to a fortnight
+   * that has ended would keep changing a record of something that is over; what
+   * happens to an account after its trial is an enforcement question this phase
+   * does not answer.
+   */
+  it.each([
+    ["the instant it ends", TRIAL_END],
+    ["long afterwards", new Date("2026-10-20T00:00:00.000Z")],
+  ])("falls back to the month once the trial is over: %s", async (_label, at) => {
+    subscriptionFindUnique.mockResolvedValue(runningTrial());
+
+    expect((await resolveUsageWindow(USER, at)).plan).toBe(OBSERVATION_PLAN);
+  });
+
+  /**
+   * **A trial with no dates is not a trial that can be counted.** Guessing a
+   * window here would invent a fortnight nobody started.
+   */
+  it.each([
+    ["no start", { trialStartedAt: null }],
+    ["no end", { trialEndsAt: null }],
+  ])("falls back to the month when a trial row has %s", async (_label, broken) => {
+    subscriptionFindUnique.mockResolvedValue(runningTrial(broken));
+
+    expect((await resolveUsageWindow(USER, SEPTEMBER)).plan).toBe(
+      OBSERVATION_PLAN,
+    );
+  });
+
+  /**
+   * The carried-over accounts are not trialing and never will be — see
+   * `isAdminGrantedBeta`. Their month is exactly the month it was.
+   */
+  it("leaves a granted beta account on the calendar month", async () => {
+    subscriptionFindUnique.mockResolvedValue({
+      state: "active",
+      trialStartedAt: null,
+      trialEndsAt: null,
+    });
+
+    expect(await resolveUsageWindow(USER, SEPTEMBER)).toEqual({
+      periodStart: SEPTEMBER_START,
+      periodEnd: OCTOBER_START,
+      plan: OBSERVATION_PLAN,
+    });
+  });
+
+  it("sends an observed unit into the trial's period", async () => {
+    subscriptionFindUnique.mockResolvedValue(runningTrial());
+    findUnique.mockResolvedValue(null);
+    create.mockResolvedValue({
+      id: "trial-period",
+      periodStart: TRIAL_START,
+      periodEnd: TRIAL_END,
+      planAtStart: "trial",
+      counters: [{ kind: "manualRun", used: 0, limit: 20 }],
+    });
+
+    await recordUsageObservation(USER, "manualRun", 1, SEPTEMBER);
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          periodStart: TRIAL_START,
+          periodEnd: TRIAL_END,
+          planAtStart: "trial",
+        }),
+      }),
+    );
   });
 });

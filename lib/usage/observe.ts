@@ -70,6 +70,64 @@ export function observationWindowFor(now: Date): ObservationWindow {
   };
 }
 
+/** A window to count against, and the plan its limits were copied from. */
+export type UsageWindow = {
+  readonly periodStart: Date;
+  readonly periodEnd: Date;
+  readonly plan: string;
+};
+
+/**
+ * Which window an account's usage belongs in at this instant.
+ *
+ * **A trial is counted over its own fourteen days.** The calendar month is what
+ * observation falls back on for an account with no cycle of its own, and for a
+ * trial it would be wrong twice: a trial beginning on the twenty-eighth would
+ * have its allowance reset three days in, and the fortnight's usage would be
+ * split across two rows that neither of them describes. So a running trial
+ * sends the counting to the period opened when it started — see
+ * `startTrialOnFirstWorkerActivation`, which is the only thing that opens one.
+ *
+ * **The columns are read directly rather than through `computeEntitlement`.**
+ * What is being chosen here is a place to write a number, not a right: asking
+ * the entitlement would make observation depend on a decision it must not be
+ * able to act on, and would let an unreadable row stop the counting. The
+ * question this asks is narrower than entitlement and deliberately answerable
+ * without it — *is there a trial, and is now inside it*.
+ *
+ * **Outside the trial's own dates, the month comes back.** A trial that has run
+ * out has a period that is closed, and continuing to add to it would keep
+ * writing into a fortnight that has ended. What happens to an account after its
+ * trial is an enforcement question, and this phase does not answer it — it only
+ * avoids writing a false one down.
+ */
+export async function resolveUsageWindow(
+  userId: string,
+  now: Date,
+): Promise<UsageWindow> {
+  const record = await prisma.subscription.findUnique({
+    where: { userId },
+    select: { state: true, trialStartedAt: true, trialEndsAt: true },
+  });
+
+  if (
+    record !== null &&
+    record.state === "trialing" &&
+    record.trialStartedAt !== null &&
+    record.trialEndsAt !== null &&
+    now.getTime() >= record.trialStartedAt.getTime() &&
+    now.getTime() < record.trialEndsAt.getTime()
+  ) {
+    return {
+      periodStart: record.trialStartedAt,
+      periodEnd: record.trialEndsAt,
+      plan: "trial",
+    };
+  }
+
+  return { ...observationWindowFor(now), plan: OBSERVATION_PLAN };
+}
+
 /**
  * What an observation increment did, for anything that wants to know.
  *
@@ -124,14 +182,13 @@ export async function recordUsageObservation(
   }
 
   try {
-    const { periodStart, periodEnd } = observationWindowFor(now);
+    // **A trial's own period when there is one, the month otherwise.** The
+    // period is still only opened on first use: an account on a trial already
+    // has one, opened when the trial started, so this finds it rather than
+    // making it.
+    const window = await resolveUsageWindow(userId, now);
 
-    const period = await openOrGetUsagePeriod({
-      userId,
-      periodStart,
-      periodEnd,
-      plan: OBSERVATION_PLAN,
-    });
+    const period = await openOrGetUsagePeriod({ userId, ...window });
 
     const { count } = await prisma.usageCounter.updateMany({
       where: { periodId: period.id, kind },

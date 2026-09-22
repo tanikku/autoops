@@ -11,10 +11,11 @@ import {
 } from "@/lib/ai/worker-draft";
 import { createWorkerDraftGenerator } from "@/lib/ai/worker-draft-factory";
 import { createDiscoveryProvider } from "@/lib/discovery/factory";
+import { startTrialOnFirstWorkerActivation } from "@/lib/entitlements/start-trial";
 import { DISCOVERY_DEFAULT_MAX_RESULTS } from "@/lib/discovery/limits";
 import { saveDiscoverySource } from "@/lib/discovery/repository";
 import { t, type TranslationKey } from "@/lib/i18n";
-import { prisma } from "@/lib/prisma";
+import { type DbClient, prisma } from "@/lib/prisma";
 import { consumeAiDraftQuota } from "@/lib/rate-limit";
 import { createRoutine } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
@@ -266,6 +267,27 @@ export async function createRoutineAction(
   // `lib/worker-quota.ts`.
   let rejection: WorkerQuotaRejection | null = null;
 
+  /**
+   * Starts the trial when this hire is the account's first active worker.
+   *
+   * **Only a worker created active counts.** Drafting one is filling in a form,
+   * and a trial that began there would be spent by somebody who had not yet
+   * decided to run anything — which is why the trigger is activation rather
+   * than creation, even though the two arrive together here.
+   *
+   * **Called after the claim and before the insert**, in each branch below: the
+   * claim holds the account's row, so the count inside is stable, and it is
+   * still true that no worker of this account is active. Every branch is one
+   * transaction, so a trial cannot outlive a hire that failed.
+   */
+  const startTrialIfActivating = async (tx: DbClient): Promise<void> => {
+    if (status !== "active") {
+      return;
+    }
+
+    await startTrialOnFirstWorkerActivation(tx, provisionedUserId);
+  };
+
   try {
     if (discovery !== null) {
       // **Both rows or neither**, for the reason a website worker's pair is one
@@ -279,6 +301,8 @@ export async function createRoutineAction(
         if (rejection !== null) {
           return;
         }
+
+        await startTrialIfActivating(tx);
 
         const created = await createRoutine(routine, provisionedUserId, tx);
         // **The existing writer, ownership check and all.** It reads the
@@ -310,6 +334,8 @@ export async function createRoutineAction(
           return;
         }
 
+        await startTrialIfActivating(tx);
+
         await createRoutine(routine, provisionedUserId, tx);
       });
     } else {
@@ -328,6 +354,8 @@ export async function createRoutineAction(
         if (rejection !== null) {
           return;
         }
+
+        await startTrialIfActivating(tx);
 
         const created = await createRoutine(routine, provisionedUserId, tx);
         await createWebsiteSource(created.id, websiteUrl, tx);

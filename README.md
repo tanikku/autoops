@@ -1013,7 +1013,8 @@ What exists:
 | --- | --- | --- |
 | Plan catalogue | `lib/plans.ts` | Five plans, with their allowances. No prices and no provider price ids |
 | Effective entitlement | `lib/entitlements/` | Works out what an account may do from a stored row and an instant. **Imported by nothing that runs** |
-| Trial arithmetic | `lib/entitlements/trial.ts` | How long a trial is, and who may start one. **Nothing starts one** |
+| Trial arithmetic | `lib/entitlements/trial.ts` | How long a trial is, and who may start one |
+| Trial start | `lib/entitlements/start-trial.ts` | Starts a trial on an account's first successful worker activation. **Live — and enforced by nothing** |
 | Usage period and counters | `lib/usage/period.ts`, `lib/usage/consume.ts` | How an allowance would be **enforced**. `consumeUsage` refuses past its limit; **nothing calls it** |
 | Usage observation | `lib/usage/observe.ts`, `lib/usage/snapshot.ts` | How usage is **counted without being enforced**. Live — see below |
 | Provider usage recording | `lib/usage/record.ts` | How a call to a model is written down. **Live for all six features** |
@@ -1036,12 +1037,16 @@ adds to the counter whatever it already says. Setting the limits absurdly high
 to make enforcement "pass" would have produced the same non-enforcement and
 destroyed the measurement, which is why the real numbers are kept.
 
-**The observation period is the UTC calendar month**, and it is not a billing
-cycle. No account has a `Subscription`, so there is no cycle to read; the month
-is the neutral choice — the same boundary for everybody and obviously not
-something anybody bought. When entitlement arrives, paid plans will use
-`Subscription.currentPeriodStart`/`currentPeriodEnd` and trials will use
-`trialStartedAt`/`trialEndsAt`. See `observationWindowFor`.
+**The observation period is the UTC calendar month, unless a trial is
+running.** The month is not a billing cycle; it is the neutral fallback for an
+account with no cycle of its own — the same boundary for everybody and obviously
+not something anybody bought. An account inside its trial is counted over the
+trial's own fourteen days instead, because a month boundary would reset its
+allowance halfway through the fortnight. Which of the two applies is decided in
+one place, `resolveUsageWindow`, and both the counting and the operator snapshot
+read it — so the screen cannot show a different period from the one being
+written to. Paid plans will read
+`Subscription.currentPeriodStart`/`currentPeriodEnd` when there are any.
 
 **A `UsagePeriod` is not an entitlement.** Its `planAtStart` records what the
 counters were compared against — `beta`, because that is the allowance the
@@ -1139,9 +1144,22 @@ and would have meant rewriting rows that are already correct. Nothing about the
 current cohort is written into the rule either — no id, no date — so an account
 granted the allowance next year is covered by the same two columns.
 
-**Trials are still not live.** Nothing starts one: `claimWorkerCreation` and
-`claimWorkerActivation` are untouched, and the eligibility rule is read by
-nothing that runs.
+**A trial starts on the first successful worker activation, and nothing
+enforces it.** Signing up starts nothing, and drafting a worker starts nothing:
+the trigger is a worker of the account becoming active while none of its others
+is. It runs inside the transaction that activates the worker, after the quota
+has taken the account's row — so two activations arriving together produce one
+trial, and an activation that fails leaves no trial behind. What it writes is a
+`trial`/`trialing` `Subscription`, one `UsagePeriod` covering exactly the
+fourteen days, and its three counters at 50 / 20 / 14.
+
+**What the trial does not do is stop anything.** No scheduler, no run, no draft
+and no analysis reads it, so an account whose fourteen days have elapsed keeps
+working exactly as it did the day before. That is deliberate: the durable state
+is made correct first, and the phase that acts on it is a change to callers
+rather than a change to the truth. A trial's end is **worked out rather than
+stored** — nothing runs at midnight to expire one, nothing is deleted, and
+nobody is charged.
 
 **A trial is provider-independent.** It starts, runs and ends on Koqentra's own
 clock, and no payment provider is involved in any of it. There is no Stripe

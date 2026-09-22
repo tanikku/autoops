@@ -10,7 +10,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * nothing calls this to decide anything.
  */
 
-const { findUnique, count } = vi.hoisted(() => ({
+const { findUnique, count, subscriptionFindUnique } = vi.hoisted(() => ({
+  subscriptionFindUnique: vi.fn(),
   findUnique: vi.fn(),
   count: vi.fn(),
 }));
@@ -19,6 +20,11 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     usagePeriod: { findUnique },
     routine: { count },
+    // A snapshot reads which window an account is in before it reads the
+    // window — see `resolveUsageWindow`. Null is an account with no
+    // entitlement, which is every account these tests describe unless one
+    // says otherwise.
+    subscription: { findUnique: subscriptionFindUnique },
   },
 }));
 
@@ -47,6 +53,7 @@ const FULL = [
 beforeEach(() => {
   findUnique.mockReset().mockResolvedValue(storedPeriod(FULL));
   count.mockReset().mockResolvedValue(4);
+  subscriptionFindUnique.mockReset().mockResolvedValue(null);
 });
 
 describe("where a number falls", () => {

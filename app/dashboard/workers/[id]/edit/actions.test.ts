@@ -24,6 +24,9 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   lockUser: vi.fn(),
   countRoutines: vi.fn(),
+  findSubscription: vi.fn(),
+  createSubscription: vi.fn(),
+  createUsagePeriod: vi.fn(),
   revalidatePath: vi.fn(),
   notFound: vi.fn(),
   redirect: vi.fn(),
@@ -76,6 +79,15 @@ const TX = {
   tag: "transaction-client",
   user: { update: mocks.lockUser },
   routine: { count: mocks.countRoutines },
+  // **The trial runs for real here too**, for the same reason the quota does:
+  // turning on an account's first worker is what starts one, and a stub of it
+  // would leave the boundary untested in the only place it exists. See
+  // `startTrialOnFirstWorkerActivation`.
+  subscription: {
+    findUnique: mocks.findSubscription,
+    create: mocks.createSubscription,
+  },
+  usagePeriod: { create: mocks.createUsagePeriod },
 } as const;
 
 const { updateRoutineAction } = await import(
@@ -145,6 +157,11 @@ beforeEach(() => {
     .mockReset()
     .mockImplementation((run: (tx: unknown) => Promise<unknown>) => run(TX));
   mocks.lockUser.mockReset().mockResolvedValue({ id: "google-sub-1" });
+  // No entitlement, which is the ordinary state of an account that has not
+  // bought anything and been given nothing.
+  mocks.findSubscription.mockReset().mockResolvedValue(null);
+  mocks.createSubscription.mockReset().mockResolvedValue({ id: "subscription-1" });
+  mocks.createUsagePeriod.mockReset().mockResolvedValue({ id: "usage-period-1" });
   // An account with room to turn another worker on, unless a test says so.
   mocks.countRoutines.mockReset().mockResolvedValue(0);
   mocks.getUserTimezone.mockReset().mockResolvedValue("UTC");
@@ -1227,5 +1244,143 @@ describe("updateRoutineAction — the other kinds are unchanged", () => {
     expect(result).toMatchObject({ status: "success" });
     expect(mocks.getDiscoverySource).not.toHaveBeenCalled();
     expect(mocks.saveDiscoverySource).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Switching a worker on, and the fourteen days that may start with it.
+ *
+ * **Only a transition starts a trial**, for the same reason only a transition
+ * asks the quota: a worker that is already active is not becoming active, and
+ * re-saving one must not spend an offer. What these fix is which edits start a
+ * trial, which leave one alone, and that a trial and the activation it came
+ * with are the same transaction.
+ */
+describe("updateRoutineAction — the trial", () => {
+  const paused = () => stored({ status: "paused" });
+  const active = () => stored({ status: "active" });
+
+  /** An account whose one trial is already spent, however it ended. */
+  const consumed = (overrides: Record<string, unknown> = {}) => ({
+    plan: "trial",
+    state: "trialing",
+    source: "trial",
+    trialStartedAt: new Date("2026-08-01T00:00:00.000Z"),
+    trialEndsAt: new Date("2026-08-15T00:00:00.000Z"),
+    trialConsumedAt: new Date("2026-08-01T00:00:00.000Z"),
+    currentPeriodStart: null,
+    currentPeriodEnd: null,
+    notificationWorkerId: null,
+    expiresAt: null,
+    ...overrides,
+  });
+
+  /** §12: turning on the account's first worker is what starts a trial. */
+  it("starts a trial when the account's first worker is switched on", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+    mocks.countRoutines.mockResolvedValue(0);
+
+    await save(form({ prompt: "Summarise today's news.", status: "active" }));
+
+    expect(mocks.createSubscription).toHaveBeenCalledTimes(1);
+    expect(mocks.createSubscription.mock.calls[0][0].data).toMatchObject({
+      plan: "trial",
+      state: "trialing",
+      source: "trial",
+    });
+    expect(mocks.createUsagePeriod).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes the trial in the transaction that activates the worker", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+    mocks.countRoutines.mockResolvedValue(0);
+
+    await save(form({ prompt: "Summarise today's news.", status: "active" }));
+
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.updateRoutine.mock.calls[0][3]).toBe(TX);
+  });
+
+  /** §13: a second worker joins a trial rather than restarting one. */
+  it("starts no trial when another worker of the account is already active", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+    mocks.countRoutines.mockResolvedValue(1);
+
+    await save(form({ prompt: "Summarise today's news.", status: "active" }));
+
+    expect(mocks.createSubscription).not.toHaveBeenCalled();
+    expect(mocks.createUsagePeriod).not.toHaveBeenCalled();
+  });
+
+  /**
+   * §14: pausing everything and switching one back on does not wind the clock
+   * back. The count is zero again, and the trial row is what answers.
+   */
+  it("does not restart a trial when the last worker is switched back on", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+    mocks.countRoutines.mockResolvedValue(0);
+    mocks.findSubscription.mockResolvedValue(consumed());
+
+    await save(form({ prompt: "Summarise today's news.", status: "active" }));
+
+    expect(mocks.createSubscription).not.toHaveBeenCalled();
+    expect(mocks.createUsagePeriod).not.toHaveBeenCalled();
+  });
+
+  /** §5: re-saving a worker that is already on is not an activation at all. */
+  it("starts no trial when an already active worker is edited", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(active());
+    mocks.countRoutines.mockResolvedValue(0);
+
+    await save(form({ prompt: "Something else entirely.", status: "active" }));
+
+    expect(mocks.findSubscription).not.toHaveBeenCalled();
+    expect(mocks.createSubscription).not.toHaveBeenCalled();
+  });
+
+  it("starts no trial when a worker is paused", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(active());
+
+    await save(form({ prompt: "Summarise today's news.", status: "paused" }));
+
+    expect(mocks.createSubscription).not.toHaveBeenCalled();
+  });
+
+  /** §20: the carried-over accounts are left exactly as they are. */
+  it("starts no trial for an account that was given the beta allowance", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+    mocks.countRoutines.mockResolvedValue(0);
+    mocks.findSubscription.mockResolvedValue({
+      ...consumed(),
+      plan: "beta",
+      state: "active",
+      source: "admin",
+      trialStartedAt: null,
+      trialEndsAt: null,
+      trialConsumedAt: null,
+      expiresAt: new Date("2026-12-31T23:59:59.000Z"),
+    });
+
+    await save(form({ prompt: "Summarise today's news.", status: "active" }));
+
+    expect(mocks.createSubscription).not.toHaveBeenCalled();
+    expect(mocks.createUsagePeriod).not.toHaveBeenCalled();
+  });
+
+  /**
+   * An account at its active limit is refused before anything is read about
+   * its entitlement, so a refused activation cannot spend a trial.
+   */
+  it("starts no trial when the activation is refused by the quota", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+    mocks.countRoutines.mockResolvedValue(ACTIVE_WORKER_LIMIT);
+
+    const result = await save(
+      form({ prompt: "Summarise today's news.", status: "active" }),
+    );
+
+    expect(result?.status).toBe("error");
+    expect(mocks.findSubscription).not.toHaveBeenCalled();
+    expect(mocks.createSubscription).not.toHaveBeenCalled();
   });
 });

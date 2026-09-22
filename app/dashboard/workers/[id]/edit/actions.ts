@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { notFound } from "next/navigation";
 import { createDiscoveryProvider } from "@/lib/discovery/factory";
+import { startTrialOnFirstWorkerActivation } from "@/lib/entitlements/start-trial";
 import {
   getDiscoverySource,
   saveDiscoverySource,
@@ -324,6 +325,14 @@ export async function updateRoutineAction(
           quotaRejected = true;
           return null;
         }
+
+        // **After the claim and before the update.** The claim has taken the
+        // account's row, so the count this reads is one nothing else can be
+        // changing; and it reads "no worker is active yet", which is only true
+        // until the line below makes one. A trial written here and an
+        // activation that then failed cannot come apart — they are this
+        // transaction.
+        await startTrialOnFirstWorkerActivation(tx, userId);
 
         return applyUpdate(tx);
       });
