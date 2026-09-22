@@ -1018,6 +1018,7 @@ What exists:
 | Usage observation | `lib/usage/observe.ts`, `lib/usage/snapshot.ts` | How usage is **counted without being enforced**. Live — see below |
 | Provider usage recording | `lib/usage/record.ts` | How a call to a model is written down. **Live for all six features** |
 | Beta grant | `lib/billing/admin.ts` | Gives a carried-over account the beta allowance. No route, no action, no UI, and it has not been run |
+| Beta grant runner | `scripts/grant-beta.ts` | The command an operator runs to grant the cohort. **Dry-run by default**, and it has not been run against Production — see below |
 
 **Usage is counted, and counting stops nothing.** Three product counters move
 as accounts work: `aiProcessing` on every real call to a model, `manualRun` on
@@ -1052,6 +1053,60 @@ A period is opened by the first thing observed in it, so a month whose row was
 created after the month began does not cover the whole month; `getUsageSnapshot`
 reports that as `partialPeriod`. A number that looked like a month's total but
 was not would be worse than no number.
+
+### Granting the closed beta
+
+`scripts/grant-beta.ts` is the one way the carried-over accounts are given their
+beta entitlement. It is an operational command, not an admin screen: there is no
+route, no page and no button, and it does nothing unless an operator runs it on
+purpose.
+
+```
+railway run pnpm exec tsx --conditions=react-server scripts/grant-beta.ts   --expected-users=5   --expires-at=2026-12-31T23:59:59Z
+```
+
+**That command writes nothing.** Adding `--execute` is the only thing that turns
+it into a write. `--conditions=react-server` is not optional — `server-only`
+resolves to an empty module under that condition and to a throwing one without
+it, so leaving it off fails at import rather than half-way through.
+
+**The cohort is "everybody who is already here", and `--expected-users` guards
+it.** No account is named on the command line: identifiers are the key to every
+owned row, and a command that took them would invite typing them. Instead the
+command says how many accounts it expects, and refuses if the number has moved —
+which is what stops an account created later from being swept in.
+
+**Every reason to stop is found before the first row is written.** The helper
+writes one row per account with no transaction spanning them, so a conflict
+discovered on the fourth account after three were written would leave a
+half-granted cohort. The runner therefore reads the whole cohort first and
+refuses all of it if any account already has a different entitlement, or has
+more active workers than the beta plan allows.
+
+**It prints counts, never people.** No account id, email, name or worker id
+appears in any output, in any outcome — including when a write fails, where the
+failure's category is reported rather than the driver's own complaint.
+
+**Running it again is safe.** `grantBetaSubscription` is idempotent for the
+identical grant: a second run creates nothing, changes no expiry, and reports
+what it found. A run that stopped part-way is diagnosed and re-run rather than
+rolled back — deleting rows automatically would be the tool deciding that a
+half-granted cohort is worse than none.
+
+**It does not touch what has already been measured.** The observation
+`UsagePeriod` and `UsageCounter` rows are read so the operator can see they did
+not move, and there is no code path that could reset a counter or backfill a
+month. Granting an entitlement is not a reason to reinterpret a month that has
+already been counted.
+
+**Hard enforcement stays off.** The grant establishes a durable `Subscription`
+and nothing else: no scheduler, dispatcher, run, draft or Creator path reads it.
+
+**Locked, and deliberately not implemented yet:** accounts holding an
+admin-granted beta entitlement are ineligible for the future 14-day trial,
+*including after that entitlement expires*. `isTrialEligible` does not yet
+express this — today it would offer a trial once the grant lapses — and closing
+that gap belongs to the phase that makes trials live.
 
 **A trial is provider-independent.** It starts, runs and ends on Koqentra's own
 clock, and no payment provider is involved in any of it. There is no Stripe

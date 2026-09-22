@@ -44,7 +44,8 @@ export type BetaGrantResult =
    */
   | { readonly granted: false; readonly reason: "already-entitled" };
 
-type ExistingGrant = {
+/** What an existing entitlement has to look like to be this grant. */
+export type ExistingGrant = {
   plan: string;
   state: string;
   source: string;
@@ -58,8 +59,17 @@ type ExistingGrant = {
  * day is a different grant, and treating it as the same one would let a second
  * call quietly move an expiry somebody chose — which is the overwriting this
  * whole function exists to refuse.
+ *
+ * **Exported so the runner can ask before writing anything.** An operator
+ * granting a cohort has to know whether the whole cohort is safe *before* the
+ * first row is created, and the only way to answer that without writing is to
+ * compare. It is the same comparison the write itself makes, shared rather than
+ * restated so the two can never drift apart.
  */
-function isSameGrant(existing: ExistingGrant, expiresAt: Date): boolean {
+export function isIdenticalBetaGrant(
+  existing: ExistingGrant,
+  expiresAt: Date,
+): boolean {
   return (
     existing.plan === BETA_GRANT.plan &&
     existing.state === BETA_GRANT.state &&
@@ -114,7 +124,7 @@ export async function grantBetaSubscription(
   });
 
   if (existing !== null) {
-    return isSameGrant(existing, expiresAt)
+    return isIdenticalBetaGrant(existing, expiresAt)
       ? { granted: true, created: false }
       : { granted: false, reason: "already-entitled" };
   }
@@ -139,7 +149,7 @@ export async function grantBetaSubscription(
     select: EXISTING_SELECT,
   });
 
-  if (raced !== null && isSameGrant(raced, expiresAt)) {
+  if (raced !== null && isIdenticalBetaGrant(raced, expiresAt)) {
     return { granted: true, created: false };
   }
 
