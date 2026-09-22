@@ -1062,13 +1062,37 @@ route, no page and no button, and it does nothing unless an operator runs it on
 purpose.
 
 ```
-railway run pnpm exec tsx --conditions=react-server scripts/grant-beta.ts   --expected-users=5   --expires-at=2026-12-31T23:59:59Z
+railway ssh --service autoops --   "node /app/dist/ops/grant-beta.mjs --expected-users=5 --expires-at=2026-12-31T23:59:59Z"
 ```
 
 **That command writes nothing.** Adding `--execute` is the only thing that turns
-it into a write. `--conditions=react-server` is not optional — `server-only`
-resolves to an empty module under that condition and to a throwing one without
-it, so leaving it off fails at import rather than half-way through.
+it into a write:
+
+```
+railway ssh --service autoops --   "node /app/dist/ops/grant-beta.mjs --execute --expected-users=5 --expires-at=2026-12-31T23:59:59Z"
+```
+
+**It runs inside the container, and it has to.** The database answers only on
+`postgres.railway.internal`, which exists on Railway's private network and
+nowhere else — `railway run` injects the environment but runs the process on the
+laptop, where that name does not resolve. Reaching it from outside would mean
+giving PostgreSQL a public address, which is a permanent opening for an
+occasional errand.
+
+**What runs there is a compiled artifact.** The image has Node, the repository
+sources and the production `node_modules`, but no TypeScript runtime: `tsx` is a
+development dependency and is pruned before the image is finished. `pnpm build`
+therefore compiles `scripts/grant-beta.ts` into `dist/ops/grant-beta.mjs` before
+building the application, and a compilation failure fails the build rather than
+shipping an image with a runner nobody can run. The artifact is generated, not
+committed — `dist/` is ignored, and the only source is under `scripts/`.
+
+**Plain `node`, with no flags.** Running the TypeScript source needs
+`--conditions=react-server`, because `server-only` resolves to a throwing module
+without it. The build resolves that marker to the same empty module Next.js uses,
+so the command an operator types has nothing to forget. The marker itself stays
+on `lib/billing/admin.ts` and `lib/prisma.ts`, where every application import is
+still checked against it.
 
 **The cohort is "everybody who is already here", and `--expected-users` guards
 it.** No account is named on the command line: identifiers are the key to every

@@ -55,3 +55,6 @@ next-env.d.ts
 
 # local scratch: databases and files moved out of the way, never committed
 /削除用
+
+# the compiled operational runner, produced by `pnpm build`
+/dist
