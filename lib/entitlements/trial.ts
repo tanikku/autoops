@@ -38,16 +38,45 @@ export function computeTrialEnd(startedAt: Date): Date {
 }
 
 /**
+ * Whether this entitlement is one somebody was given rather than bought.
+ *
+ * **Two durable columns and nothing else.** Not the expiry, not the state, not
+ * whether it currently entitles anything — all of those are answers about
+ * *now*, and this is a question about what the account has been. A grant that
+ * ran out is still a grant that was made.
+ *
+ * **Nothing about the current cohort is written here.** No account id, no
+ * email, no date: any account given the beta allowance in future is covered by
+ * the same two columns, because that is what being given it consists of.
+ */
+export function isAdminGrantedBeta(record: SubscriptionRecord): boolean {
+  return record.plan === "beta" && record.source === "admin";
+}
+
+/**
  * Whether this account may begin a trial.
  *
- * Two conditions, and both are needed:
+ * Three questions, asked in this order:
  *
- * - **It has never used one.** `trialConsumedAt` stays set after the trial ends
+ * - **Has it ever been given the beta allowance?** If so, never — see below.
+ * - **Has it used a trial?** `trialConsumedAt` stays set after the trial ends
  *   and after a plan is bought, because what was spent was the offer.
- * - **Nothing currently entitles it.** An account in the middle of a paid plan,
- *   or holding a grant, is not owed a free fortnight on top.
+ * - **Does anything currently entitle it?** An account in the middle of a paid
+ *   plan is not owed a free fortnight on top.
  *
- * No row at all means both are true, which is the ordinary case.
+ * No row at all means the last two are both true, which is the ordinary case.
+ *
+ * **Why the first question exists.** The carried-over accounts were given the
+ * beta allowance free, for months, without a card. The trial is an offer to
+ * people who have not tried Koqentra yet, and they have — so when their grant
+ * ends they are being asked to decide, not offered another free run at it.
+ *
+ * **Why it is asked first, and from the grant rather than from a trial
+ * column.** Every other signal moves: the grant expires, `entitled` turns
+ * false, and the two conditions below would then both be true. Marking the
+ * accounts as having consumed a trial would have made them lie — they never had
+ * one — and would have meant rewriting five rows that are already correct. What
+ * is durable is that the grant was made at all, and that is what this reads.
  */
 export function isTrialEligible(
   record: SubscriptionRecord | null,
@@ -55,6 +84,12 @@ export function isTrialEligible(
 ): boolean {
   if (record === null) {
     return true;
+  }
+
+  // **Before the entitlement is computed**, so an expired grant — or one whose
+  // state this version could not read — answers the same way a live one does.
+  if (isAdminGrantedBeta(record)) {
+    return false;
   }
 
   return (

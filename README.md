@@ -1126,11 +1126,22 @@ already been counted.
 **Hard enforcement stays off.** The grant establishes a durable `Subscription`
 and nothing else: no scheduler, dispatcher, run, draft or Creator path reads it.
 
-**Locked, and deliberately not implemented yet:** accounts holding an
-admin-granted beta entitlement are ineligible for the future 14-day trial,
-*including after that entitlement expires*. `isTrialEligible` does not yet
-express this — today it would offer a trial once the grant lapses — and closing
-that gap belongs to the phase that makes trials live.
+**An admin-granted beta account is never offered the trial**, including after
+the grant expires. `isAdminGrantedBeta` reads the two columns that do not move —
+`plan = "beta"` and `source = "admin"` — and `isTrialEligible` asks that before
+anything else. The carried-over accounts had Koqentra free for months without a
+card; when their grant ends they are being asked to decide, not offered another
+free run at it.
+
+**The rule reads the grant, not a trial column.** Marking those accounts as
+having consumed a trial would have been a lie about people who never had one,
+and would have meant rewriting rows that are already correct. Nothing about the
+current cohort is written into the rule either — no id, no date — so an account
+granted the allowance next year is covered by the same two columns.
+
+**Trials are still not live.** Nothing starts one: `claimWorkerCreation` and
+`claimWorkerActivation` are untouched, and the eligibility rule is read by
+nothing that runs.
 
 **A trial is provider-independent.** It starts, runs and ends on Koqentra's own
 clock, and no payment provider is involved in any of it. There is no Stripe

@@ -13,7 +13,7 @@ import type { SubscriptionRecord } from "@/lib/entitlements/types";
 
 vi.mock("@/lib/prisma", () => ({ prisma: { subscription: { findUnique: vi.fn() } } }));
 
-const { computeTrialEnd, isTrialEligible } = await import(
+const { computeTrialEnd, isAdminGrantedBeta, isTrialEligible } = await import(
   "@/lib/entitlements/trial"
 );
 
@@ -98,9 +98,11 @@ describe("who may begin a trial", () => {
   });
 
   /**
-   * **An account already entitled is not owed a free fortnight on top.** This
-   * is the clause that keeps the five carried-over beta accounts out of a
-   * trial — their grant entitles them, so there is nothing to start.
+   * **An account already entitled is not owed a free fortnight on top.**
+   *
+   * The beta grant below is refused twice over: by this clause while it is in
+   * force, and by the exclusion in the next block for good. Only the second one
+   * survives the grant expiring.
    */
   it.each([
     ["a paid plan", record()],
@@ -122,15 +124,181 @@ describe("who may begin a trial", () => {
    * **Both conditions are needed, and this is the case that shows it.** A grant
    * that has run out entitles nothing, and the account never used a trial — so
    * a trial is still available to it.
+   *
+   * **Written with a granted *plan* rather than a granted *beta*.** An expired
+   * beta grant used to answer this way too, and that was the defect: the beta
+   * cohort was offered a second free run the moment their allowance lapsed. It
+   * is now refused on its own grounds — see the next block — which is why this
+   * demonstration needs a plan the exclusion does not cover.
    */
   it("allows an account whose grant expired without a trial ever starting", () => {
     const expired = record({
-      plan: "beta",
+      plan: "pro",
       state: "active",
       source: "admin",
       expiresAt: new Date("2026-09-01T00:00:00.000Z"),
     });
 
     expect(isTrialEligible(expired, NOW)).toBe(true);
+  });
+});
+
+/**
+ * The carried-over accounts, and the offer they are not owed.
+ *
+ * **They were given the beta allowance free, for months, without a card.** The
+ * trial exists for people who have not tried Koqentra; these people have. When
+ * the grant ends they are being asked to decide, not offered another free run
+ * at it.
+ *
+ * **What makes that stick is the grant itself, not a trial column.** Every
+ * other signal moves — the grant expires, `entitled` turns false — and marking
+ * them as having consumed a trial would have been a lie about people who never
+ * had one, written into five rows that are already correct.
+ */
+describe("an account that was given the beta allowance", () => {
+  const adminBeta = (overrides: Partial<SubscriptionRecord> = {}) =>
+    record({
+      plan: "beta",
+      state: "active",
+      source: "admin",
+      expiresAt: new Date("2026-12-31T23:59:59.000Z"),
+      ...overrides,
+    });
+
+  it("is recognised by the two columns that do not move", () => {
+    expect(isAdminGrantedBeta(adminBeta())).toBe(true);
+  });
+
+  it("is never offered a trial while the grant is in force", () => {
+    expect(isTrialEligible(adminBeta(), NOW)).toBe(false);
+  });
+
+  /**
+   * **The case this rule exists for.** Before it, an expired grant made
+   * `entitled` false while `trialConsumedAt` was still null, and both of the
+   * older conditions became true at once.
+   */
+  it("is never offered a trial after the grant has expired", () => {
+    const afterExpiry = new Date("2027-01-01T00:00:00.000Z");
+
+    expect(isTrialEligible(adminBeta(), afterExpiry)).toBe(false);
+  });
+
+  it("is never offered a trial at the very instant the grant ends", () => {
+    expect(
+      isTrialEligible(adminBeta(), new Date("2026-12-31T23:59:59.000Z")),
+    ).toBe(false);
+  });
+
+  it("is never offered a trial when the grant already lapsed long ago", () => {
+    expect(
+      isTrialEligible(
+        adminBeta({ expiresAt: new Date("2026-01-01T00:00:00.000Z") }),
+        NOW,
+      ),
+    ).toBe(false);
+  });
+
+  /** The state of the five Production rows today: no trial was ever consumed. */
+  it("is refused even though it has never consumed a trial", () => {
+    const untouched = adminBeta({ trialConsumedAt: null });
+
+    expect(untouched.trialConsumedAt).toBeNull();
+    expect(isTrialEligible(untouched, NOW)).toBe(false);
+  });
+
+  it("is refused when it has consumed one as well", () => {
+    expect(
+      isTrialEligible(
+        adminBeta({ trialConsumedAt: new Date("2026-05-01T00:00:00.000Z") }),
+        NOW,
+      ),
+    ).toBe(false);
+  });
+
+  /**
+   * **Whatever the row says about right now.** The answer comes from the grant
+   * having been made, so a state this version could not otherwise read still
+   * produces a refusal rather than a throw.
+   */
+  it.each(["active", "grace", "inactive", "something-later-versions-know"])(
+    "is refused whatever state the row carries (%o)",
+    (state) => {
+      expect(isTrialEligible(adminBeta({ state }), NOW)).toBe(false);
+    },
+  );
+
+  it("is refused with no expiry at all", () => {
+    expect(isTrialEligible(adminBeta({ expiresAt: null }), NOW)).toBe(false);
+  });
+
+  /** A future grant is covered by the same two columns, with nothing added. */
+  it("covers an account granted the allowance later, on another date", () => {
+    expect(
+      isTrialEligible(
+        adminBeta({ expiresAt: new Date("2028-06-30T00:00:00.000Z") }),
+        NOW,
+      ),
+    ).toBe(false);
+  });
+});
+
+/**
+ * **Only the granted cohort is excluded.** The rule is about having been given
+ * the beta allowance, not about the word "beta" or the word "admin" appearing
+ * anywhere.
+ */
+describe("what the exclusion deliberately does not cover", () => {
+  it.each([
+    ["a beta plan that was not granted by an operator", "beta", "stripe"],
+    ["an operator grant of some other plan", "pro", "admin"],
+    ["an ordinary paid plan", "pro", "stripe"],
+  ])("does not treat %s as a granted beta", (_label, plan, source) => {
+    expect(isAdminGrantedBeta(record({ plan, source }))).toBe(false);
+  });
+
+  /**
+   * A beta row from a billing provider is judged the old way: it entitles the
+   * account today, so no trial — but for the ordinary reason, not this one.
+   */
+  it("judges a non-granted beta by the existing rules", () => {
+    const boughtBeta = record({
+      plan: "beta",
+      state: "active",
+      source: "stripe",
+      expiresAt: null,
+    });
+
+    expect(isAdminGrantedBeta(boughtBeta)).toBe(false);
+    expect(isTrialEligible(boughtBeta, NOW)).toBe(false);
+
+    // And once it stops entitling, the old answer comes back — which is what
+    // shows the new rule did not quietly swallow this case.
+    expect(isTrialEligible({ ...boughtBeta, state: "inactive" }, NOW)).toBe(true);
+  });
+
+  it("judges an operator grant of another plan by the existing rules", () => {
+    const grantedPro = record({ plan: "pro", state: "inactive", source: "admin" });
+
+    expect(isAdminGrantedBeta(grantedPro)).toBe(false);
+    expect(isTrialEligible(grantedPro, NOW)).toBe(true);
+  });
+
+  /** Everything that was true before this rule is still true. */
+  it.each([
+    ["a live paid plan", record(), false],
+    ["a plan in grace", record({ state: "grace" }), false],
+    ["a lapsed paid plan", record({ state: "inactive" }), true],
+    [
+      "a lapsed plan whose trial was already used",
+      record({
+        state: "inactive",
+        trialConsumedAt: new Date("2026-05-01T00:00:00.000Z"),
+      }),
+      false,
+    ],
+  ])("still answers %s the way it always did", (_label, held, expected) => {
+    expect(isTrialEligible(held, NOW)).toBe(expected);
   });
 });
