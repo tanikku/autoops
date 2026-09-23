@@ -213,9 +213,13 @@ describe("createRoutineAction", () => {
   it("creates the worker for the signed-in account", async () => {
     const result = await createRoutineAction(null, form());
 
+    // **The hire and the trial in one sentence.** This form activates the
+    // worker, and the account has no entitlement — so this is the first
+    // activation, and it starts the fourteen days. The plain wording is fixed
+    // below, for a hire that starts nothing.
     expect(result).toEqual({
       status: "success",
-      message: 'Worker "Daily digest" created.',
+      message: 'Worker "Daily digest" created. Your trial has started.',
     });
     expect(mocks.createRoutine).toHaveBeenCalledWith(
       expect.objectContaining({ name: "Daily digest", frequency: "daily" }),
@@ -1393,7 +1397,8 @@ describe("createRoutineAction — the words it answers in", () => {
 
     expect(result).toMatchObject({
       status: "success",
-      message: "Worker「宝塚市 パブリック・コメント」を作成しました。",
+      message:
+        "Worker「宝塚市 パブリック・コメント」を作成しました。トライアルを開始しました。",
     });
   });
 
@@ -2104,5 +2109,59 @@ describe("createRoutineAction — carrying pre-trial AI into the trial", () => {
     await createRoutineAction(null, form({ status: "draft" }));
 
     expect(mocks.aggregateUsageCounters).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What the answer says, and when it mentions the trial at all.
+ *
+ * **One sentence for one act.** Activating a first Worker starts the fourteen
+ * days, and saying so belongs in the same message as the hire it came with.
+ * A hire that starts nothing says nothing about a trial — which is what these
+ * two fix between them.
+ */
+describe("createRoutineAction — what the answer says about the trial", () => {
+  it("mentions the trial when the hire started one", async () => {
+    const result = await createRoutineAction(null, form({ status: "active" }));
+
+    expect(result?.message).toBe(
+      'Worker "Daily digest" created. Your trial has started.',
+    );
+  });
+
+  it("says nothing about a trial when the worker is a draft", async () => {
+    const result = await createRoutineAction(null, form({ status: "draft" }));
+
+    expect(result?.message).toBe('Worker "Daily digest" created.');
+    expect(result?.message).not.toContain("trial");
+  });
+
+  /** A second worker joins a trial rather than starting one. */
+  it("says nothing about a trial when one is already running", async () => {
+    mocks.countRoutines.mockResolvedValue(1);
+
+    const result = await createRoutineAction(null, form({ status: "active" }));
+
+    expect(result?.message).toBe('Worker "Daily digest" created.');
+  });
+
+  /** The carried-over cohort is never told about a trial. */
+  it("says nothing about a trial for a granted beta account", async () => {
+    mocks.findSubscription.mockResolvedValue({
+      plan: "beta",
+      state: "active",
+      source: "admin",
+      trialStartedAt: null,
+      trialEndsAt: null,
+      trialConsumedAt: null,
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+      notificationWorkerId: null,
+      expiresAt: new Date("2026-12-31T23:59:59.000Z"),
+    });
+
+    const result = await createRoutineAction(null, form({ status: "active" }));
+
+    expect(result?.message).toBe('Worker "Daily digest" created.');
   });
 });

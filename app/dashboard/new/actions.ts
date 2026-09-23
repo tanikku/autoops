@@ -266,6 +266,10 @@ export async function createRoutineAction(
   // before it counts, so a second hire waits and then counts this one. See
   // `lib/worker-quota.ts`.
   let rejection: WorkerQuotaRejection | null = null;
+  // **Whether this hire also began the account's fourteen days.** Recorded so
+  // the answer can say so once; the detail belongs on the dashboard card,
+  // which is where it stays true afterwards.
+  let trialStarted = false;
 
   /**
    * Starts the trial when this hire is the account's first active worker.
@@ -285,7 +289,12 @@ export async function createRoutineAction(
       return;
     }
 
-    await startTrialOnFirstWorkerActivation(tx, provisionedUserId);
+    const trial = await startTrialOnFirstWorkerActivation(
+      tx,
+      provisionedUserId,
+    );
+
+    trialStarted = trial.outcome === "started";
   };
 
   try {
@@ -385,7 +394,9 @@ export async function createRoutineAction(
   // sentence exactly as it was typed, in whichever language it was written.
   return {
     status: "success",
-    message: t(language, "worker.action.created", { name: input.name }),
+    message: trialStarted
+      ? t(language, "worker.action.createdWithTrial", { name: input.name })
+      : t(language, "worker.action.created", { name: input.name }),
   };
 }
 

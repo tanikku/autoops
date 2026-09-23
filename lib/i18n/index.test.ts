@@ -53,6 +53,11 @@ describe("the dictionaries", () => {
         // "long-form" describes a shape rather than naming a place.
         "creator.channel.x",
         "creator.channel.reddit",
+        // The feature's own name, as the dashboard and the hire form already
+        // write it. A Japanese reader looking for their Discovery Worker is
+        // looking for "Discovery"; translating only the usage label would
+        // leave one screen calling it something no other screen does.
+        "trial.usage.discovery",
       ].sort(),
     );
   });

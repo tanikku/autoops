@@ -106,12 +106,18 @@ const CARRIED_KIND = "aiProcessing" as const;
  * holding a lock on the account; pulling rows back to add them up would hold it
  * open for work the database does in the same round trip.
  *
+ * **Exported so the screen and the write say the same number.** The form that
+ * explains "this will carry into your trial" has to mean exactly what the
+ * trial start will do, and two readings of "how much AI has this account
+ * used" would eventually disagree — most likely at the moment somebody is
+ * looking at one of them. There is one definition, and this is it.
+ *
  * **Nothing is repaired.** A unit that observation failed to record is gone,
  * and reconstructing it from the provider's side would be answering a product
  * question with a cost measurement. What this returns is what was durably
  * observed, which is what the allowance is denominated in.
  */
-async function readPreTrialAiProcessing(
+export async function readPreTrialAiProcessing(
   client: DbClient,
   userId: string,
 ): Promise<number> {

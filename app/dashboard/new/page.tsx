@@ -4,6 +4,7 @@ import { RoutineForm } from "@/components/routine-form";
 import { t } from "@/lib/i18n";
 import { getDocumentLanguage } from "@/lib/i18n/server";
 import { requireUserId } from "@/lib/session";
+import { getTrialUsageView } from "@/lib/usage/trial-view";
 import { getUserLanguage, getUserTimezone } from "@/lib/users";
 
 /**
@@ -38,9 +39,13 @@ export default async function NewRoutinePage() {
   // schedule it is about to create. The action reads the same value again when
   // it works out the first slot.
   const userId = await requireUserId();
-  const [timezone, language] = await Promise.all([
+  const [timezone, language, trial] = await Promise.all([
     getUserTimezone(userId),
     getUserLanguage(userId),
+    // **Read to explain, never to start.** Nothing here begins a trial or
+    // opens a period; an account that has done nothing still has no rows after
+    // looking at this page.
+    getTrialUsageView(userId),
   ]);
 
   return (
@@ -56,6 +61,29 @@ export default async function NewRoutinePage() {
         <p className="mt-2 text-sm text-muted-foreground">
           {t(language, "worker.create.description")}
         </p>
+
+        {/* **Said here because here is where a trial starts.** Activating the
+            first Worker begins the fourteen days, and somebody who learns that
+            only afterwards has been surprised by their own account.
+
+            **The carried-in line appears only when there is something to
+            carry.** An account that has used no AI processing is told nothing
+            about a number that is zero. */}
+        {trial.kind === "pre-trial" ? (
+          <div className="mt-4 rounded-lg border border-border bg-muted/40 p-4">
+            <p className="text-sm text-muted-foreground">
+              {t(language, "trial.preStart.explanation")}
+            </p>
+            {trial.aiUsed > 0 ? (
+              <p className="mt-2 text-sm text-muted-foreground">
+                {t(language, "trial.preStart.carryIn", {
+                  used: trial.aiUsed,
+                  limit: trial.aiLimit,
+                })}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         <RoutineForm timezone={timezone} language={language} />
       </main>

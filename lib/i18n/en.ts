@@ -1300,6 +1300,79 @@ Notes for the report:
     "Koqentra is in Closed Beta. If something is not working the way you expected, or you are not sure whether it is working at all, write to us — that is what the beta is for.",
   "settings.support.action": "Email support",
   "settings.support.subject": "Koqentra support",
+  /**
+   * The trial, in the words somebody reading a screen uses.
+   *
+   * **Every quantity is written "used / limit", never as a remainder.** A trial
+   * can legitimately begin past its AI limit — what an account spent before it
+   * started is carried in — and "47 remaining" has no honest reading at 63/50.
+   * One format that is always true is worth more than two that are usually
+   * shorter.
+   *
+   * **None of this stops anything.** "Limit reached" describes a number; the
+   * account works exactly as it did the day before. Wording that implied
+   * otherwise would be a promise this version does not keep.
+   *
+   * **Deliberately not the rate-limit copy.** An hourly allowance comes back
+   * by waiting and says so; a plan's does not, so "try again later" would be
+   * advice that never works. The two never share a key.
+   */
+  "trial.title": "Trial",
+  "trial.daysRemaining": "{days} days left",
+  "trial.usage.aiProcessing": "AI processing",
+  "trial.usage.activeWorkers": "Workers",
+  "trial.usage.manualRun": "Manual runs",
+  "trial.usage.discovery": "Discovery",
+  "trial.status.approaching": "Approaching the limit",
+  "trial.status.reached": "Limit reached",
+  "trial.status.over": "Over the limit",
+  /**
+   * Why a trial can start already past its AI limit.
+   *
+   * **Said where the number is**, because the number is the surprising part.
+   * Somebody seeing 63/50 on the day they started is owed the reason on the
+   * same card rather than in a help page.
+   */
+  "trial.carriedIn":
+    "AI processing used before your trial started has been carried over.",
+  "trial.started": "Your trial has started",
+  /**
+   * What an ended trial says.
+   *
+   * **The two fears, answered first.** Somebody whose free period just ended
+   * wants to know whether their work is gone and whether they have been
+   * charged. Neither has happened; saying so plainly is the whole message.
+   *
+   * **No upgrade button, because there is nowhere to send anybody yet.** A
+   * call to action leading to a page that does not exist is worse than none.
+   */
+  "trial.expired.title": "Your trial has ended",
+  "trial.expired.retained":
+    "Your Workers, history, and settings are still saved. Nothing was deleted and you have not been charged.",
+  /**
+   * Said on the hire form, where the trial actually starts.
+   *
+   * **Before the activation rather than after it.** Activating the first
+   * Worker starts the fourteen days, so the sentence belongs beside the
+   * control that does it.
+   */
+  "trial.preStart.explanation":
+    "Your 14-day free trial starts when you activate your first Worker.",
+  "trial.preStart.carryIn":
+    "Your {used} previous AI processing uses will carry into the trial ({used}/{limit} at start).",
+
+  /**
+   * The same hire, when it also began the account's fourteen days.
+   *
+   * **Two facts in one sentence rather than two messages.** Somebody who has
+   * just activated their first Worker has done one thing; telling them twice
+   * would suggest otherwise. The detail — what has been used against what —
+   * lives on the dashboard card, which is where it stays true.
+   */
+  "worker.action.createdWithTrial":
+    "Worker \"{name}\" created. Your trial has started.",
+  "worker.action.savedWithTrial": "Worker \"{name}\" saved. Your trial has started.",
+
 } as const;
 
 /**

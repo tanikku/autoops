@@ -737,4 +737,28 @@ export const ja: Record<TranslationKey, string> = {
     "Koqentra は Closed Beta です。思ったとおりに動かないとき、そもそも動いているのか分からないときは、お気軽にご連絡ください。ベータはそのためのものです。",
   "settings.support.action": "メールで問い合わせる",
   "settings.support.subject": "Koqentra サポート",
+  "trial.title": "トライアル",
+  "trial.daysRemaining": "残り {days}日",
+  "trial.usage.aiProcessing": "AI処理",
+  "trial.usage.activeWorkers": "Worker",
+  "trial.usage.manualRun": "手動実行",
+  "trial.usage.discovery": "Discovery",
+  "trial.status.approaching": "上限に近づいています",
+  "trial.status.reached": "上限に達しています",
+  "trial.status.over": "上限を超えています",
+  "trial.carriedIn": "トライアル開始前に使った AI処理 が引き継がれています。",
+  "trial.started": "トライアルを開始しました",
+  "trial.expired.title": "トライアルが終了しました",
+  "trial.expired.retained":
+    "Worker、履歴、設定はそのまま保存されています。削除されたものはありません。料金は発生していません。",
+  "trial.preStart.explanation":
+    "最初の Worker を「有効」にすると、14日間の無料トライアルが始まります。",
+  "trial.preStart.carryIn":
+    "これまでに使った AI処理 {used}回 は、トライアル開始時に引き継がれます（{used}/{limit} から開始）。",
+
+  "worker.action.createdWithTrial":
+    "Worker「{name}」を作成しました。トライアルを開始しました。",
+  "worker.action.savedWithTrial":
+    "Worker「{name}」を保存しました。トライアルを開始しました。",
+
 };

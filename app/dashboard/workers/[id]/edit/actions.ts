@@ -312,6 +312,8 @@ export async function updateRoutineAction(
   const activating = existing.status !== "active" && status === "active";
 
   let quotaRejected = false;
+  // Whether turning this Worker on also began the account's fourteen days.
+  let trialStarted = false;
   let saved;
   try {
     if (activating) {
@@ -332,7 +334,9 @@ export async function updateRoutineAction(
         // until the line below makes one. A trial written here and an
         // activation that then failed cannot come apart — they are this
         // transaction.
-        await startTrialOnFirstWorkerActivation(tx, userId);
+        const trial = await startTrialOnFirstWorkerActivation(tx, userId);
+
+        trialStarted = trial.outcome === "started";
 
         return applyUpdate(tx);
       });
@@ -408,6 +412,8 @@ export async function updateRoutineAction(
 
   return {
     status: "success",
-    message: t(language, "worker.action.saved", { name: input.name }),
+    message: trialStarted
+      ? t(language, "worker.action.savedWithTrial", { name: input.name })
+      : t(language, "worker.action.saved", { name: input.name }),
   };
 }

@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   summarizeRunsByWorker: vi.fn(),
   getUserTimezone: vi.fn(),
   getUserLanguage: vi.fn(),
+  getTrialUsageView: vi.fn(),
 }));
 
 vi.mock("@/auth", () => ({ auth: vi.fn(), signIn: vi.fn(), signOut: vi.fn() }));
@@ -38,6 +39,11 @@ vi.mock("@/lib/runs", () => ({
 vi.mock("@/lib/users", () => ({
   getUserTimezone: mocks.getUserTimezone,
   getUserLanguage: mocks.getUserLanguage,
+}));
+// The trial card reads through one domain function; the page hands it the
+// same instant it judges everything else against.
+vi.mock("@/lib/usage/trial-view", () => ({
+  getTrialUsageView: mocks.getTrialUsageView,
 }));
 
 const DashboardPage = (await import("@/app/dashboard/page")).default;
@@ -71,6 +77,9 @@ beforeEach(() => {
   mocks.summarizeRunsByWorker.mockReset().mockResolvedValue(new Map());
   mocks.getUserTimezone.mockReset().mockResolvedValue("UTC");
   mocks.getUserLanguage.mockReset().mockResolvedValue("en");
+  // Not a trial account, which is what an account with no entitlement and the
+  // granted beta cohort both look like from here: no trial wording at all.
+  mocks.getTrialUsageView.mockReset().mockResolvedValue({ kind: "hidden" });
 });
 
 describe("what the dashboard reads", () => {

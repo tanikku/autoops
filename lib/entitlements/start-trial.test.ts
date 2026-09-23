@@ -681,7 +681,10 @@ describe("a trial at the instant it ends", () => {
       "computeEntitlement",
       "getEffectiveEntitlement",
     ]);
-    expect(Object.keys(startTrial)).toEqual([
+    // Two exports: the one that starts a trial, and the read the hire form
+    // uses to say what will be carried into it. Neither refuses anything.
+    expect(Object.keys(startTrial).sort()).toEqual([
+      "readPreTrialAiProcessing",
       "startTrialOnFirstWorkerActivation",
     ]);
   });

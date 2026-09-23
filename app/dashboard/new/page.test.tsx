@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   requireUserId: vi.fn(),
   getUserTimezone: vi.fn(),
   getUserLanguage: vi.fn(),
+  getTrialUsageView: vi.fn(),
 }));
 
 vi.mock("@/auth", () => ({ auth: vi.fn(), signIn: vi.fn(), signOut: vi.fn() }));
@@ -27,6 +28,11 @@ vi.mock("@/lib/session", () => ({ requireUserId: mocks.requireUserId }));
 vi.mock("@/lib/users", () => ({
   getUserTimezone: mocks.getUserTimezone,
   getUserLanguage: mocks.getUserLanguage,
+}));
+// Read to explain what activating the first Worker will do. It never starts a
+// trial and never opens a period — see `getTrialUsageView`.
+vi.mock("@/lib/usage/trial-view", () => ({
+  getTrialUsageView: mocks.getTrialUsageView,
 }));
 
 const NewRoutinePage = (await import("@/app/dashboard/new/page")).default;
@@ -73,6 +79,10 @@ beforeEach(() => {
   mocks.requireUserId.mockReset().mockResolvedValue("user-1");
   mocks.getUserTimezone.mockReset().mockResolvedValue("Asia/Tokyo");
   mocks.getUserLanguage.mockReset().mockResolvedValue("en");
+  // A new account: no entitlement, and nothing spent on AI yet.
+  mocks.getTrialUsageView
+    .mockReset()
+    .mockResolvedValue({ kind: "pre-trial", aiUsed: 0, aiLimit: 50 });
 });
 
 describe("hire worker page", () => {

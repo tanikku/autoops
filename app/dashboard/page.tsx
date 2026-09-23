@@ -4,6 +4,7 @@ import { DashboardNav } from "@/components/dashboard-nav";
 import { OverviewCards } from "@/components/overview-cards";
 import { RoutineCard } from "@/components/routine-card";
 import { RunHistoryList } from "@/components/run-history-list";
+import { TrialUsageCard } from "@/components/trial-usage-card";
 import { Button } from "@/components/ui/button";
 import { groupHealthByWorker, NEVER_RUN } from "@/lib/health";
 import { t } from "@/lib/i18n";
@@ -12,6 +13,7 @@ import { latestExecution, summarizeWorkers } from "@/lib/overview";
 import { listRoutines } from "@/lib/routines";
 import { listRecentRuns, summarizeRunsByWorker } from "@/lib/runs";
 import { requireUserId } from "@/lib/session";
+import { getTrialUsageView } from "@/lib/usage/trial-view";
 import { getUserLanguage, getUserTimezone } from "@/lib/users";
 
 /**
@@ -51,19 +53,23 @@ export default async function DashboardPage() {
   // every run there is. One query cannot answer both without one of them being
   // wrong — a bounded list cannot say how many runs a worker has had, and a
   // count cannot say what the last one produced.
-  const [routines, recentRuns, runSummaries, timezone, language] =
+  // **One reading of the clock for the whole page.** The summaries, every
+  // activity row and the trial are judged against the same instant, so nothing
+  // on screen can disagree with the rest of it about what "now" was — which
+  // matters most for the trial, whose state is the clock's opinion about a row.
+  const now = new Date();
+
+  const [routines, recentRuns, runSummaries, timezone, language, trial] =
     await Promise.all([
       listRoutines(userId),
       listRecentRuns(userId),
       summarizeRunsByWorker(userId),
       getUserTimezone(userId),
       getUserLanguage(userId),
+      // Reads and never writes: looking at a trial must not open a period or
+      // start one. See `getTrialUsageView`.
+      getTrialUsageView(userId, now),
     ]);
-
-  // **One reading of the clock for the whole page.** The summaries and every
-  // activity row are judged against the same instant, so nothing on screen can
-  // disagree with the rest of it about what "now" was.
-  const now = new Date();
 
   // Both are already in memory, so the summaries below add no queries.
   const overview = summarizeWorkers(routines, latestExecution(runSummaries), now);
@@ -91,6 +97,16 @@ export default async function DashboardPage() {
             {t(language, "dashboard.hireWorker")}
           </Button>
         </div>
+
+        {/* **Above the summaries, and only when there is a trial to describe.**
+            An account on the granted beta allowance or on a plan it bought
+            gets nothing here — see `getTrialUsageView`, which answers `hidden`
+            for every state that is not a trial. */}
+        {trial.kind === "active" || trial.kind === "expired" ? (
+          <section className="mt-10">
+            <TrialUsageCard view={trial} language={language} />
+          </section>
+        ) : null}
 
         <section className="mt-10">
           <h2 className="text-lg font-medium tracking-tight">
