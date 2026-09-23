@@ -34,11 +34,19 @@ const routineCount = vi.fn();
 const subscriptionFindUnique = vi.fn();
 const subscriptionCreate = vi.fn();
 const usagePeriodCreate = vi.fn();
+const usageCounterAggregate = vi.fn();
 
+/**
+ * **Four tables, and `providerUsageEvent` is deliberately not one of them.**
+ * A client that cannot reach the cost telemetry is how these fix that carry-in
+ * is read from the product's own counters — anything querying the other table
+ * would fail here rather than pass.
+ */
 const clientStub = {
   routine: { count: routineCount },
   subscription: { findUnique: subscriptionFindUnique, create: subscriptionCreate },
   usagePeriod: { create: usagePeriodCreate },
+  usageCounter: { aggregate: usageCounterAggregate },
 };
 
 /** Stands in for a transaction client: the three tables a trial start touches. */
@@ -86,11 +94,26 @@ function eligibleAndFirst() {
   subscriptionFindUnique.mockResolvedValue(null);
 }
 
+/** What the account has already spent on AI, as the aggregate reports it. */
+function alreadyUsedAi(used: number | null) {
+  usageCounterAggregate.mockResolvedValue({ _sum: { used } });
+}
+
+/** One counter from the period that was created, by kind. */
+function createdCounter(kind: string) {
+  return createdPeriod().counters.create.find(
+    (counter: { kind: string }) => counter.kind === kind,
+  );
+}
+
 beforeEach(() => {
   routineCount.mockReset();
   subscriptionFindUnique.mockReset();
   subscriptionCreate.mockReset().mockResolvedValue({ id: "sub" });
   usagePeriodCreate.mockReset().mockResolvedValue({ id: "period" });
+  // Nothing observed yet, which is what an account that has done nothing looks
+  // like: no counter rows, so no sum.
+  usageCounterAggregate.mockReset().mockResolvedValue({ _sum: { used: null } });
 });
 
 describe("the first worker an account activates", () => {
@@ -463,7 +486,11 @@ describe("an account that was given the beta allowance", () => {
  * row rather than an event anybody needs to be told about yet.
  */
 describe("what starting a trial does not do", () => {
-  it("touches nothing but the three tables it writes", async () => {
+  /**
+   * **Four tables: three written, one read.** The counters are read to find out
+   * what the account has already spent; everything else here is a write.
+   */
+  it("touches nothing but the four tables it needs", async () => {
     eligibleAndFirst();
 
     await startTrialOnFirstWorkerActivation(client, USER, NOW);
@@ -471,8 +498,25 @@ describe("what starting a trial does not do", () => {
     expect(Object.keys(clientStub).sort()).toEqual([
       "routine",
       "subscription",
+      "usageCounter",
       "usagePeriod",
     ]);
+  });
+
+  /**
+   * **The cost telemetry is not among them, and that is the decision.**
+   * `ProviderUsageEvent` says what a call to a model cost; an allowance is
+   * denominated in product units, and the two move together today only because
+   * of where the recording happens to sit. A client with no such table is how
+   * that stays true: reaching for it would fail here rather than pass.
+   */
+  it("never reaches for the provider cost telemetry", async () => {
+    eligibleAndFirst();
+
+    await startTrialOnFirstWorkerActivation(client, USER, NOW);
+
+    expect(clientStub).not.toHaveProperty("providerUsageEvent");
+    expect(usageCounterAggregate).toHaveBeenCalledTimes(1);
   });
 
   /**
@@ -640,5 +684,326 @@ describe("a trial at the instant it ends", () => {
     expect(Object.keys(startTrial)).toEqual([
       "startTrialOnFirstWorkerActivation",
     ]);
+  });
+});
+
+
+/**
+ * What the account already spent, arriving with the trial.
+ *
+ * **A trial is an offer to try Koqentra, not fifty more of it.** Drafting a
+ * worker with AI, and both Creator features, all reach a model without any
+ * worker being active — so an account can spend a good deal of AI processing
+ * before it ever activates anything. Starting the fortnight at zero would make
+ * that a way to have the allowance twice, and the second time would be free.
+ *
+ * **The carry-in is read from the product's own counters.** What is being
+ * carried is units of AI processing, which is what `UsageCounter` counts;
+ * `ProviderUsageEvent` counts what calls to a model cost, which is a different
+ * question that happens to have the same answer today.
+ */
+describe("what an account has already spent on AI", () => {
+  /** The ordinary case: somebody who has done nothing observable yet. */
+  it("starts a trial at nothing when nothing was used", async () => {
+    eligibleAndFirst();
+    alreadyUsedAi(null);
+
+    await startTrialOnFirstWorkerActivation(client, USER, NOW);
+
+    expect(createdCounter("aiProcessing")).toEqual({
+      kind: "aiProcessing",
+      used: 0,
+      limit: 50,
+    });
+  });
+
+  /** A sum of zero is the same answer as no rows at all. */
+  it("starts at nothing when the counters add up to nothing", async () => {
+    eligibleAndFirst();
+    alreadyUsedAi(0);
+
+    await startTrialOnFirstWorkerActivation(client, USER, NOW);
+
+    expect(createdCounter("aiProcessing").used).toBe(0);
+  });
+
+  it.each([
+    ["a few drafts", 3],
+    ["exactly the whole allowance", 50],
+    ["one more than the allowance", 51],
+    ["twice the allowance", 100],
+    ["the sixty-three from the investigation", 63],
+  ])("carries %s into the trial", async (_label, used) => {
+    eligibleAndFirst();
+    alreadyUsedAi(used);
+
+    await startTrialOnFirstWorkerActivation(client, USER, NOW);
+
+    expect(createdCounter("aiProcessing")).toEqual({
+      kind: "aiProcessing",
+      used,
+      limit: 50,
+    });
+  });
+
+  /**
+   * **Nothing is clamped, and the limit does not move.** A counter reading
+   * `63 / 50` is a true statement about an account that used sixty-three; a
+   * clamp would lose the thirteen, and raising the limit would say a trial
+   * allows more than it does. Over-limit is a state the counters can already
+   * hold — see `usageStatusFor` — so there is nothing to invent.
+   */
+  it("neither clamps the number nor moves the limit", async () => {
+    eligibleAndFirst();
+    alreadyUsedAi(63);
+
+    await startTrialOnFirstWorkerActivation(client, USER, NOW);
+
+    const counter = createdCounter("aiProcessing");
+
+    expect(counter.used).toBe(63);
+    expect(counter.used).not.toBe(50);
+    expect(counter.limit).toBe(50);
+  });
+
+  /** An account already past the allowance still gets its fourteen days. */
+  it("starts the trial anyway when more was used than a trial allows", async () => {
+    eligibleAndFirst();
+    alreadyUsedAi(100);
+
+    const result = await startTrialOnFirstWorkerActivation(client, USER, NOW);
+
+    expect(result).toEqual({
+      outcome: "started",
+      startedAt: NOW,
+      endsAt: new Date(NOW.getTime() + 14 * DAY_MS),
+    });
+    expect(subscriptionCreate).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * **Every period the account has, not the current month.** Observation falls
+   * back to the calendar month, so somebody who drafted in September and
+   * activated in October has two rows — and reading one would hand the other
+   * back to them unspent. The database adds them up; nothing is loaded to be
+   * summed here.
+   */
+  it("sums across every period the account has, through the account", async () => {
+    eligibleAndFirst();
+    alreadyUsedAi(5);
+
+    await startTrialOnFirstWorkerActivation(client, USER, NOW);
+
+    expect(usageCounterAggregate).toHaveBeenCalledWith({
+      _sum: { used: true },
+      where: { kind: "aiProcessing", period: { userId: USER } },
+    });
+    expect(createdCounter("aiProcessing").used).toBe(5);
+  });
+
+  /**
+   * **Read before the trial's own period exists**, which is what makes "every
+   * counter this account has" mean "everything from before the trial". Asking
+   * afterwards would include the row being created.
+   */
+  it("reads the total before it creates anything", async () => {
+    eligibleAndFirst();
+    alreadyUsedAi(4);
+
+    await startTrialOnFirstWorkerActivation(client, USER, NOW);
+
+    expect(usageCounterAggregate.mock.invocationCallOrder[0]).toBeLessThan(
+      subscriptionCreate.mock.invocationCallOrder[0],
+    );
+    expect(usageCounterAggregate.mock.invocationCallOrder[0]).toBeLessThan(
+      usagePeriodCreate.mock.invocationCallOrder[0],
+    );
+  });
+
+  /**
+   * **Only AI processing arrives already spent.** The other two allowances are
+   * things an active worker does, and an account with no active worker has done
+   * neither — so a number here would be invented rather than carried.
+   */
+  it("starts the other two allowances at nothing", async () => {
+    eligibleAndFirst();
+    alreadyUsedAi(40);
+
+    await startTrialOnFirstWorkerActivation(client, USER, NOW);
+
+    expect(createdCounter("manualRun")).toEqual({
+      kind: "manualRun",
+      used: 0,
+      limit: 20,
+    });
+    expect(createdCounter("discovery")).toEqual({
+      kind: "discovery",
+      used: 0,
+      limit: 14,
+    });
+  });
+
+  it("still opens exactly three counters, and none for active workers", async () => {
+    eligibleAndFirst();
+    alreadyUsedAi(12);
+
+    await startTrialOnFirstWorkerActivation(client, USER, NOW);
+
+    const counters = createdPeriod().counters.create;
+
+    expect(counters).toHaveLength(3);
+    expect(
+      counters.map((counter: { kind: string }) => counter.kind).sort(),
+    ).toEqual(["aiProcessing", "discovery", "manualRun"]);
+  });
+
+  /**
+   * **Creator's AI is in the total without being named anywhere.** Creator
+   * analysis and Creator memory record product AI processing through the same
+   * path as every other feature, so they are already in the sum — there is no
+   * Creator branch to get wrong, and this test exists to fix that there is not
+   * one. The number below is deliberately made of both kinds of work.
+   */
+  it("includes Creator's AI through the same total, with no branch for it", async () => {
+    eligibleAndFirst();
+    // Three drafts and four Creator analyses, indistinguishable by the time
+    // they reach a counter — which is the point.
+    alreadyUsedAi(7);
+
+    await startTrialOnFirstWorkerActivation(client, USER, NOW);
+
+    expect(usageCounterAggregate).toHaveBeenCalledTimes(1);
+    expect(usageCounterAggregate.mock.calls[0][0].where).toEqual({
+      kind: "aiProcessing",
+      period: { userId: USER },
+    });
+    expect(createdCounter("aiProcessing").used).toBe(7);
+  });
+});
+
+/**
+ * When the total cannot be read.
+ *
+ * **The activation goes down with it.** A trial that began at zero because a
+ * query failed would hand back an allowance the account had already spent, and
+ * nothing afterwards could tell that trial from an honest one. Failing is the
+ * only answer that cannot quietly give something away.
+ */
+describe("when the carry-in cannot be read", () => {
+  it("lets the failure roll the activation back", async () => {
+    eligibleAndFirst();
+    usageCounterAggregate.mockRejectedValue(new Error("aggregate failed"));
+
+    await expect(
+      startTrialOnFirstWorkerActivation(client, USER, NOW),
+    ).rejects.toThrow("aggregate failed");
+  });
+
+  it("writes no trial and no period", async () => {
+    eligibleAndFirst();
+    usageCounterAggregate.mockRejectedValue(new Error("aggregate failed"));
+
+    await expect(
+      startTrialOnFirstWorkerActivation(client, USER, NOW),
+    ).rejects.toThrow();
+
+    expect(subscriptionCreate).not.toHaveBeenCalled();
+    expect(usagePeriodCreate).not.toHaveBeenCalled();
+  });
+
+  /** Never absorbed into a zero, which is the specific mistake being refused. */
+  it("does not start a trial at nothing instead", async () => {
+    eligibleAndFirst();
+    usageCounterAggregate.mockRejectedValue(new Error("aggregate failed"));
+
+    await expect(
+      startTrialOnFirstWorkerActivation(client, USER, NOW),
+    ).rejects.toThrow();
+
+    expect(subscriptionCreate).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The activations that must not read the total at all.
+ *
+ * **Short-circuited before the aggregate, not after it.** An account that is
+ * not starting a trial has no carry-in to work out, and a query run anyway
+ * would be work done to throw away — and, for the carried-over cohort, a
+ * question asked about an account this code has no business measuring.
+ */
+describe("activations that compute no carry-in", () => {
+  it("asks nothing when a worker is already active", async () => {
+    routineCount.mockResolvedValue(1);
+    subscriptionFindUnique.mockResolvedValue(null);
+
+    await startTrialOnFirstWorkerActivation(client, USER, NOW);
+
+    expect(usageCounterAggregate).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing for an account that was given the beta allowance", async () => {
+    routineCount.mockResolvedValue(0);
+    subscriptionFindUnique.mockResolvedValue(ADMIN_BETA);
+
+    const result = await startTrialOnFirstWorkerActivation(client, USER, NOW);
+
+    expect(result).toEqual({ outcome: "not-eligible" });
+    expect(usageCounterAggregate).not.toHaveBeenCalled();
+    expect(subscriptionCreate).not.toHaveBeenCalled();
+    expect(usagePeriodCreate).not.toHaveBeenCalled();
+  });
+
+  /** A second activation during a trial leaves the carried number alone. */
+  it("asks nothing, and rewrites nothing, on a second activation", async () => {
+    routineCount.mockResolvedValue(1);
+    subscriptionFindUnique.mockResolvedValue(
+      record({
+        plan: "trial",
+        state: "trialing",
+        source: "trial",
+        trialStartedAt: new Date("2026-09-15T00:00:00.000Z"),
+        trialEndsAt: new Date("2026-09-29T00:00:00.000Z"),
+        trialConsumedAt: new Date("2026-09-15T00:00:00.000Z"),
+      }),
+    );
+
+    await startTrialOnFirstWorkerActivation(client, USER, NOW);
+
+    expect(usageCounterAggregate).not.toHaveBeenCalled();
+    expect(usagePeriodCreate).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Pausing every worker and switching one back on: the count is zero again,
+   * so the trial row is what answers — and it answers before any total is read.
+   */
+  it("asks nothing when the last worker is switched back on", async () => {
+    routineCount.mockResolvedValue(0);
+    subscriptionFindUnique.mockResolvedValue(
+      record({
+        plan: "trial",
+        state: "trialing",
+        source: "trial",
+        trialStartedAt: new Date("2026-09-15T00:00:00.000Z"),
+        trialEndsAt: new Date("2026-09-29T00:00:00.000Z"),
+        trialConsumedAt: new Date("2026-09-15T00:00:00.000Z"),
+      }),
+    );
+
+    const result = await startTrialOnFirstWorkerActivation(client, USER, NOW);
+
+    expect(result).toEqual({ outcome: "already-trialing" });
+    expect(usageCounterAggregate).not.toHaveBeenCalled();
+    expect(usagePeriodCreate).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing for an account a paid plan already entitles", async () => {
+    routineCount.mockResolvedValue(0);
+    subscriptionFindUnique.mockResolvedValue(record());
+
+    await startTrialOnFirstWorkerActivation(client, USER, NOW);
+
+    expect(usageCounterAggregate).not.toHaveBeenCalled();
   });
 });

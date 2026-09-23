@@ -1172,6 +1172,39 @@ trial, and an activation that fails leaves no trial behind. What it writes is a
 `trial`/`trialing` `Subscription`, one `UsagePeriod` covering exactly the
 fourteen days, and its three counters at 50 / 20 / 14.
 
+**A trial starts with whatever AI the account already spent.** Drafting a
+worker with AI, and both Creator features, reach a model without any worker
+being active — so somebody can use a good deal of the allowance before they
+activate anything, and a trial that began at zero would be a way to have it
+twice. At the first activation the trial's `aiProcessing` counter is opened at
+the sum of every `aiProcessing` counter the account already has, across every
+period, since observation's fallback window is the calendar month and pre-trial
+usage can straddle one. The other two allowances start at nothing: they are
+things an active worker does.
+
+**The sum comes from `UsageCounter`, deliberately, and not from
+`ProviderUsageEvent`.** What is being carried is units of product AI
+processing; what the event table holds is what calls to a model cost. The two
+move together today, but only because of where the recording sits — a feature
+that one day made two model calls for one unit would break the arithmetic
+silently, and the wrong number would be an allowance somebody was given or
+denied. `ProviderUsageEvent` remains independent cost telemetry, unread by any
+of this.
+
+**The carried number is never clamped.** An account that used sixty-three
+begins its trial at `63 / 50`, which is a true statement; clamping would lose
+the thirteen and raising the limit would say a trial allows more than it does.
+Over-limit is a state the counters already hold. The activation is not refused
+either — the fourteen days start as normal, and enforcement, when it exists,
+will read `used > limit` and act. **Until then an account can begin a trial
+already over its allowance and keep working**, which is the same dormancy as
+everything else here.
+
+**If the total cannot be read, the activation fails.** Starting a trial at an
+assumed zero because a query failed would hand back an allowance that had
+already been spent, and nothing afterwards could tell that trial from an honest
+one.
+
 **What the trial does not do is stop anything.** No scheduler, no run, no draft
 and no analysis reads it, so an account whose fourteen days have elapsed keeps
 working exactly as it did the day before. That is deliberate: the durable state

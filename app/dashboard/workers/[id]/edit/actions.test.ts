@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   findSubscription: vi.fn(),
   createSubscription: vi.fn(),
   createUsagePeriod: vi.fn(),
+  aggregateUsageCounters: vi.fn(),
   revalidatePath: vi.fn(),
   notFound: vi.fn(),
   redirect: vi.fn(),
@@ -88,6 +89,10 @@ const TX = {
     create: mocks.createSubscription,
   },
   usagePeriod: { create: mocks.createUsagePeriod },
+  // **What the account already spent on AI, carried into the trial.** Read
+  // from the product's own counters rather than the cost telemetry — see
+  // `startTrialOnFirstWorkerActivation`.
+  usageCounter: { aggregate: mocks.aggregateUsageCounters },
 } as const;
 
 const { updateRoutineAction } = await import(
@@ -162,6 +167,9 @@ beforeEach(() => {
   mocks.findSubscription.mockReset().mockResolvedValue(null);
   mocks.createSubscription.mockReset().mockResolvedValue({ id: "subscription-1" });
   mocks.createUsagePeriod.mockReset().mockResolvedValue({ id: "usage-period-1" });
+  mocks.aggregateUsageCounters
+    .mockReset()
+    .mockResolvedValue({ _sum: { used: null } });
   // An account with room to turn another worker on, unless a test says so.
   mocks.countRoutines.mockReset().mockResolvedValue(0);
   mocks.getUserTimezone.mockReset().mockResolvedValue("UTC");

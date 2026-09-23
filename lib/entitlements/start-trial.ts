@@ -78,6 +78,55 @@ const RECORD_FIELDS = {
   expiresAt: true,
 } as const;
 
+/** The one allowance an account can spend before it has a trial. */
+const CARRIED_KIND = "aiProcessing" as const;
+
+/**
+ * How much AI processing this account has already done.
+ *
+ * **Counted from the product's own bookkeeping, not from the provider's.**
+ * `UsageCounter` is what "AI processing" means as a thing an account spends;
+ * `ProviderUsageEvent` is what a call to a model cost. The two happen to move
+ * together today — one row each, from the same two functions — but that is a
+ * property of where the recording sits rather than a promise. A feature that
+ * one day makes two model calls for one unit of processing would break the
+ * arithmetic silently, and the wrong number would be a quota somebody was given
+ * or denied. So this reads the counters, and nothing here goes near the
+ * telemetry.
+ *
+ * **Every counter the account has is pre-trial usage, and the reason is the
+ * ordering.** A trial has no period until the lines below create one, so at the
+ * moment this runs there is nothing to exclude: whatever `UsagePeriod` rows
+ * exist were opened by observation before any trial began. It sums across all
+ * of them on purpose — observation's fallback window is the calendar month, so
+ * somebody who drafted in September and activated in October has two rows, and
+ * reading only the current one would hand back the September usage as unspent.
+ *
+ * **Summed by PostgreSQL, not in JavaScript.** This runs inside a transaction
+ * holding a lock on the account; pulling rows back to add them up would hold it
+ * open for work the database does in the same round trip.
+ *
+ * **Nothing is repaired.** A unit that observation failed to record is gone,
+ * and reconstructing it from the provider's side would be answering a product
+ * question with a cost measurement. What this returns is what was durably
+ * observed, which is what the allowance is denominated in.
+ */
+async function readPreTrialAiProcessing(
+  client: DbClient,
+  userId: string,
+): Promise<number> {
+  const { _sum } = await client.usageCounter.aggregate({
+    _sum: { used: true },
+    // Reached through the period because that is where the account is named —
+    // a counter belongs to a period, and a period belongs to somebody.
+    where: { kind: CARRIED_KIND, period: { userId } },
+  });
+
+  // Null rather than zero when no counter matched: the account has done nothing
+  // observable, which is the ordinary case and not a missing answer.
+  return _sum.used ?? 0;
+}
+
 /**
  * Starts the trial, if this activation is the one that should start it.
  *
@@ -147,6 +196,13 @@ export async function startTrialOnFirstWorkerActivation(
     return { outcome: "not-eligible" };
   }
 
+  // **Read before anything is written, and never caught.** A trial that began
+  // with an assumed zero because this query failed would hand back an allowance
+  // the account had already spent — so a failure here takes the activation down
+  // with it, and the person retries against a database that is answering. See
+  // the function's own note.
+  const carriedIn = await readPreTrialAiProcessing(client, userId);
+
   const startedAt = now;
   const endsAt = computeTrialEnd(startedAt);
 
@@ -206,7 +262,11 @@ export async function startTrialOnFirstWorkerActivation(
         // them, and a counter for it would be a number nothing could spend.
         create: usageKinds.map((kind) => ({
           kind,
-          used: 0,
+          // **Only AI processing arrives already spent.** The other two are
+          // things an active worker does, and an account with no active worker
+          // has not done them — so there is nothing to carry and a number here
+          // would be invented. See `readPreTrialAiProcessing`.
+          used: kind === CARRIED_KIND ? carriedIn : 0,
           limit: planLimitFor(TRIAL_PLAN, kind),
         })),
       },

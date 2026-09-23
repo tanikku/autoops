@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   findSubscription: vi.fn(),
   createSubscription: vi.fn(),
   createUsagePeriod: vi.fn(),
+  aggregateUsageCounters: vi.fn(),
   revalidatePath: vi.fn(),
   redirect: vi.fn(),
 }));
@@ -103,6 +104,10 @@ const TX = {
     create: mocks.createSubscription,
   },
   usagePeriod: { create: mocks.createUsagePeriod },
+  // **What the account already spent on AI, carried into the trial.** Read
+  // from the product's own counters rather than the cost telemetry — see
+  // `startTrialOnFirstWorkerActivation`.
+  usageCounter: { aggregate: mocks.aggregateUsageCounters },
 } as const;
 
 const { createRoutineAction, generateWorkerDraftAction } = await import(
@@ -190,6 +195,9 @@ beforeEach(() => {
   mocks.findSubscription.mockReset().mockResolvedValue(null);
   mocks.createSubscription.mockReset().mockResolvedValue({ id: "subscription-1" });
   mocks.createUsagePeriod.mockReset().mockResolvedValue({ id: "usage-period-1" });
+  mocks.aggregateUsageCounters
+    .mockReset()
+    .mockResolvedValue({ _sum: { used: null } });
   mocks.generate.mockReset();
   mocks.createWorkerDraftGenerator
     .mockReset()
@@ -2013,5 +2021,88 @@ describe("createRoutineAction — the trial", () => {
       providerSubscriptionId: null,
       providerUpdatedAt: null,
     });
+  });
+});
+
+
+/**
+ * The AI somebody spent on the form, arriving with the trial they then start.
+ *
+ * **This is the path the carry-in exists for.** Drafting a worker with AI is
+ * the ordinary way to reach this form, it calls a model, and it needs no worker
+ * — so by the time somebody presses the button that activates their first one,
+ * they may already have spent a good deal of the allowance the trial is about
+ * to hand them.
+ */
+describe("createRoutineAction — carrying pre-trial AI into the trial", () => {
+  /** The counters the trial period was opened with, by kind. */
+  function counter(kind: string) {
+    return mocks.createUsagePeriod.mock.calls[0][0].data.counters.create.find(
+      (row: { kind: string }) => row.kind === kind,
+    );
+  }
+
+  it("starts the trial's AI allowance at what was already used", async () => {
+    mocks.aggregateUsageCounters.mockResolvedValue({ _sum: { used: 3 } });
+
+    await createRoutineAction(null, form({ status: "active" }));
+
+    expect(counter("aiProcessing")).toEqual({
+      kind: "aiProcessing",
+      used: 3,
+      limit: 50,
+    });
+  });
+
+  it("leaves the other two allowances at nothing", async () => {
+    mocks.aggregateUsageCounters.mockResolvedValue({ _sum: { used: 3 } });
+
+    await createRoutineAction(null, form({ status: "active" }));
+
+    expect(counter("manualRun").used).toBe(0);
+    expect(counter("discovery").used).toBe(0);
+  });
+
+  /** Over the allowance is a state to record, not a reason to refuse a hire. */
+  it("still hires the worker when more was used than a trial allows", async () => {
+    mocks.aggregateUsageCounters.mockResolvedValue({ _sum: { used: 63 } });
+
+    const result = await createRoutineAction(null, form({ status: "active" }));
+
+    expect(result?.status).toBe("success");
+    expect(counter("aiProcessing").used).toBe(63);
+    expect(counter("aiProcessing").limit).toBe(50);
+  });
+
+  /** Read with the same client as the worker: one transaction, or neither. */
+  it("reads the total inside the activation transaction", async () => {
+    mocks.aggregateUsageCounters.mockResolvedValue({ _sum: { used: 1 } });
+
+    await createRoutineAction(null, form({ status: "active" }));
+
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.createRoutine.mock.calls[0][2]).toBe(TX);
+  });
+
+  /**
+   * §13: a total that cannot be read takes the hire with it. Starting a trial
+   * at zero because a query failed would hand back an allowance the account had
+   * already spent.
+   */
+  it("reports a failure rather than a hire when the total cannot be read", async () => {
+    vi.mocked(console.error).mockClear();
+    mocks.transaction.mockRejectedValue(new Error("aggregate failed"));
+
+    const result = await createRoutineAction(null, form({ status: "active" }));
+
+    expect(result?.status).toBe("error");
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  /** A draft is not an activation, so nothing is read and nothing is carried. */
+  it("reads no total when the worker is created as a draft", async () => {
+    await createRoutineAction(null, form({ status: "draft" }));
+
+    expect(mocks.aggregateUsageCounters).not.toHaveBeenCalled();
   });
 });
