@@ -1038,14 +1038,33 @@ to make enforcement "pass" would have produced the same non-enforcement and
 destroyed the measurement, which is why the real numbers are kept.
 
 **The observation period is the UTC calendar month, unless a trial is
-running.** The month is not a billing cycle; it is the neutral fallback for an
+involved.** The month is not a billing cycle; it is the neutral fallback for an
 account with no cycle of its own — the same boundary for everybody and obviously
-not something anybody bought. An account inside its trial is counted over the
-trial's own fourteen days instead, because a month boundary would reset its
-allowance halfway through the fortnight. Which of the two applies is decided in
-one place, `resolveUsageWindow`, and both the counting and the operator snapshot
-read it — so the screen cannot show a different period from the one being
-written to. Paid plans will read
+not something anybody bought. It is what the granted beta cohort is counted
+against, unchanged. An account inside its trial is counted over the trial's own
+fourteen days instead, because a month boundary would reset its allowance
+halfway through the fortnight.
+
+**Once a trial ends, product usage is counted nowhere.** A trial account is not
+a beta account, so the month must not quietly take over when the fortnight runs
+out — that would file the account under an allowance nobody put it on. Adding to
+the finished trial period would be no better: it would keep changing the record
+of something that is over. So `recordUsageObservation` answers
+`not-counted` and writes nothing at all.
+
+**Writing and looking are therefore different questions**, and they are two
+functions: `resolveUsageWriteWindow` says where a unit goes, or that it goes
+nowhere; `resolveUsageSnapshotWindow` says which period a screen reads, and
+keeps reading a completed trial so that what it used stays answerable
+afterwards. A trial row that does not say when it ran is skipped by both rather
+than falling back to a month.
+
+**Cost telemetry is unaffected by any of this.** `ProviderUsageEvent` records
+what a call to a model actually used, and it is written whether or not a product
+counter moves — so an execution after a trial has ended is deliberately
+asymmetric: the cost is kept, the allowance is not. Enforcement will eventually
+stop such executions; until it does, the cost is still the only number that
+cannot be recomputed later. Paid plans will read
 `Subscription.currentPeriodStart`/`currentPeriodEnd` when there are any.
 
 **A `UsagePeriod` is not an entitlement.** Its `planAtStart` records what the

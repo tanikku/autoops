@@ -253,3 +253,141 @@ describe("what a snapshot is not", () => {
     }
   });
 });
+
+/**
+ * What a screen shows for an account on a trial, during it and after it.
+ *
+ * **A finished trial is still shown.** Its counters are the record of the
+ * fortnight, so what it used stays answerable once the fourteen days are over —
+ * out of the row that is already there, with nothing created to answer it and
+ * no calendar month invented to stand in for it.
+ */
+describe("a snapshot of an account on a trial", () => {
+  const TRIAL_START = new Date("2026-09-01T00:00:00.000Z");
+  const TRIAL_END = new Date("2026-09-15T00:00:00.000Z");
+  const DURING = new Date("2026-09-10T00:00:00.000Z");
+  const AFTER = new Date("2026-09-21T08:58:41.000Z");
+
+  /** The trial's period, as it stands when the fortnight is done. */
+  function trialPeriod() {
+    return {
+      createdAt: TRIAL_START,
+      planAtStart: "trial",
+      counters: [
+        { kind: "aiProcessing", used: 31, limit: 50 },
+        { kind: "manualRun", used: 4, limit: 20 },
+        { kind: "discovery", used: 9, limit: 14 },
+      ],
+    };
+  }
+
+  beforeEach(() => {
+    subscriptionFindUnique.mockResolvedValue({
+      plan: "trial",
+      state: "trialing",
+      trialStartedAt: TRIAL_START,
+      trialEndsAt: TRIAL_END,
+    });
+    findUnique.mockResolvedValue(trialPeriod());
+  });
+
+  it("reads the trial's own period while the trial runs", async () => {
+    const snapshot = await getUsageSnapshot(USER, DURING);
+
+    expect(findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId_periodStart: { userId: USER, periodStart: TRIAL_START } },
+      }),
+    );
+    expect(snapshot.periodStart).toEqual(TRIAL_START);
+    expect(snapshot.periodEnd).toEqual(TRIAL_END);
+    expect(snapshot.planBaseline).toBe("trial");
+  });
+
+  /** The point of the correction: the numbers survive the trial ending. */
+  it("still reads the completed trial period afterwards", async () => {
+    const snapshot = await getUsageSnapshot(USER, AFTER);
+
+    expect(snapshot.periodStart).toEqual(TRIAL_START);
+    expect(snapshot.periodEnd).toEqual(TRIAL_END);
+    expect(snapshot.counters).toEqual([
+      { kind: "aiProcessing", used: 31, limit: 50, percent: 62, status: "normal" },
+      { kind: "manualRun", used: 4, limit: 20, percent: 20, status: "normal" },
+      { kind: "discovery", used: 9, limit: 14, percent: 64, status: "normal" },
+    ]);
+  });
+
+  it("shows the trial's own numbers rather than a beta month's", async () => {
+    const snapshot = await getUsageSnapshot(USER, AFTER);
+
+    expect(snapshot.planBaseline).toBe("trial");
+    expect(snapshot.planBaseline).not.toBe("beta");
+    expect(snapshot.activeWorkerLimit).toBe(3);
+  });
+
+  /** A period opened at its own first instant covers all of it. */
+  it("does not call a completed trial period partial", async () => {
+    expect((await getUsageSnapshot(USER, AFTER)).partialPeriod).toBe(false);
+  });
+
+  /**
+   * **Nothing is read on behalf of an unreadable trial.** The month that a
+   * lookup would find could be this account's own pre-trial drafting, counted
+   * against beta's numbers, and returning it would present it as what the trial
+   * used.
+   */
+  it("reads no period at all when the trial dates are unreadable", async () => {
+    subscriptionFindUnique.mockResolvedValue({
+      plan: "trial",
+      state: "trialing",
+      trialStartedAt: null,
+      trialEndsAt: null,
+    });
+
+    const snapshot = await getUsageSnapshot(USER, AFTER);
+
+    expect(findUnique).not.toHaveBeenCalled();
+    expect(snapshot.counters).toBeNull();
+    expect(snapshot.planBaseline).toBe("trial");
+  });
+
+  it("still says how many workers are active when there is no period", async () => {
+    subscriptionFindUnique.mockResolvedValue({
+      plan: "trial",
+      state: "trialing",
+      trialStartedAt: null,
+      trialEndsAt: null,
+    });
+    count.mockResolvedValue(2);
+
+    expect((await getUsageSnapshot(USER, AFTER)).activeWorkers).toBe(2);
+  });
+
+  /** Reading is reading: a lookup, and never an opening. */
+  it("only ever reads the period", async () => {
+    await getUsageSnapshot(USER, AFTER);
+
+    expect(findUnique).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The carried-over accounts, whose screen must not have moved.
+ */
+describe("a snapshot of a granted beta account", () => {
+  beforeEach(() => {
+    subscriptionFindUnique.mockResolvedValue({
+      plan: "beta",
+      state: "active",
+      trialStartedAt: null,
+      trialEndsAt: null,
+    });
+  });
+
+  it("reads the calendar month, exactly as before", async () => {
+    const snapshot = await getUsageSnapshot(USER, NOW);
+
+    expect(snapshot.periodStart).toEqual(new Date("2026-09-01T00:00:00.000Z"));
+    expect(snapshot.periodEnd).toEqual(new Date("2026-10-01T00:00:00.000Z"));
+  });
+});

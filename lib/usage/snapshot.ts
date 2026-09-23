@@ -2,7 +2,10 @@ import "server-only";
 
 import { getPlanDefinition } from "@/lib/plans";
 import { prisma } from "@/lib/prisma";
-import { resolveUsageWindow } from "@/lib/usage/observe";
+import {
+  observationWindowFor,
+  resolveUsageSnapshotWindow,
+} from "@/lib/usage/observe";
 import { usageKinds, type UsageKind } from "@/lib/usage/types";
 
 /**
@@ -110,11 +113,34 @@ export async function getUsageSnapshot(
   userId: string,
   now: Date = new Date(),
 ): Promise<UsageSnapshot> {
-  // **The same window the counting uses.** A trial's usage is written to the
-  // trial's own period, so reading the calendar month would show an operator an
-  // empty month for an account that is busy — the two must ask the same
-  // question or the screen is a second opinion. See `resolveUsageWindow`.
-  const { periodStart, periodEnd, plan } = await resolveUsageWindow(userId, now);
+  // **Which period to look at, which is not always where counting goes.** A
+  // finished trial is written to no longer and read from still: its counters
+  // are the record of the fortnight, and `50 / 20 / 14` has to stay answerable
+  // after the fourteen days. See `resolveUsageSnapshotWindow`.
+  const window = await resolveUsageSnapshotWindow(userId, now);
+
+  // **Nothing is read at all when there is no period to read.** A trial whose
+  // dates are unreadable must not have the calendar month looked up on its
+  // behalf: the row that came back could be this account's own pre-trial
+  // drafting, counted against beta's numbers, and returning it here would
+  // present it as what the trial used.
+  if (window.kind === "none") {
+    return {
+      // **The current month as a frame for the screen, not as a period.** It is
+      // derivable without a row and obviously not a billing cycle; what says
+      // nothing was counted is `counters: null`, immediately below.
+      ...observationWindowFor(now),
+      planBaseline: window.plan,
+      partialPeriod: true,
+      counters: null,
+      activeWorkers: await prisma.routine.count({
+        where: { userId, status: "active" },
+      }),
+      activeWorkerLimit: getPlanDefinition(window.plan).activeWorkerLimit,
+    };
+  }
+
+  const { periodStart, periodEnd, plan } = window;
 
   const [period, activeWorkers] = await Promise.all([
     prisma.usagePeriod.findUnique({

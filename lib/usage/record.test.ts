@@ -682,3 +682,83 @@ describe("when one of the two writes fails", () => {
     ).resolves.toBeUndefined();
   });
 });
+
+/**
+ * What an ended trial does to cost telemetry: nothing.
+ *
+ * **The two writes were always independent, and this is where that pays.** A
+ * `ProviderUsageEvent` says what a call to a model actually used; a
+ * `UsageCounter` says how much of a product allowance an account has spent.
+ * When a trial ends there is no honest period for the second — see
+ * `resolveUsageWriteWindow` — and stopping it must not take the first with it,
+ * because what a call cost is still true and still the only number that cannot
+ * be recomputed later.
+ *
+ * **So an expired-trial execution is deliberately asymmetric**: the cost is
+ * recorded, the product counter is not. Enforcement will eventually stop such
+ * executions happening at all; until it does, this is what is wanted.
+ */
+describe("a call made after a trial has ended", () => {
+  const AFTER = new Date("2026-09-21T08:58:41.000Z");
+
+  const succeeded = {
+    provider: "anthropic" as const,
+    model: "claude-opus-5",
+    usage: {
+      inputTokens: 1_200,
+      outputTokens: 340,
+      cacheReadTokens: 0,
+      cacheWriteTokens: null,
+    },
+  };
+
+  const failedAfterReaching = new ProviderError("timeout", "took too long", {
+    attempt: {
+      provider: "anthropic" as const,
+      model: "claude-opus-5",
+      usage: UNKNOWN_PROVIDER_USAGE,
+    },
+  });
+
+  beforeEach(() => {
+    subscriptionFindUnique.mockResolvedValue({
+      plan: "trial",
+      state: "trialing",
+      trialStartedAt: new Date("2026-09-01T00:00:00.000Z"),
+      trialEndsAt: new Date("2026-09-15T00:00:00.000Z"),
+    });
+  });
+
+  it("still writes what the call cost", async () => {
+    await recordAIExecution(
+      { userId: USER, feature: "prompt", runId: "run-1" },
+      succeeded,
+      AFTER,
+    );
+
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("moves no product counter and opens no period", async () => {
+    await recordAIExecution(
+      { userId: USER, feature: "prompt", runId: "run-1" },
+      succeeded,
+      AFTER,
+    );
+
+    expect(usageUpdateMany).not.toHaveBeenCalled();
+    expect(usagePeriodCreate).not.toHaveBeenCalled();
+  });
+
+  /** A failed call is the same story: the cost is kept, the allowance is not. */
+  it("keeps the cost of a call that failed after reaching the model", async () => {
+    await recordAIFailure(
+      { userId: USER, feature: "website", runId: "run-2" },
+      failedAfterReaching,
+      AFTER,
+    );
+
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(usageUpdateMany).not.toHaveBeenCalled();
+  });
+});

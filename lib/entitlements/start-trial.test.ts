@@ -566,3 +566,79 @@ describe("when two activations arrive at once", () => {
     ).rejects.toMatchObject({ code: "P2002" });
   });
 });
+
+
+/**
+ * The fourteenth day, read three ways, and the same answer from all of them.
+ *
+ * **One trial, described by three modules that must agree.** The entitlement
+ * says it is over, the counting stops, and the screen still shows what it used
+ * — and a reader who only saw one of those could reasonably expect the other
+ * two to say something else. These hold them side by side.
+ */
+describe("a trial at the instant it ends", () => {
+  const STARTED = new Date("2026-09-01T00:00:00.000Z");
+  const ENDS = new Date("2026-09-15T00:00:00.000Z");
+
+  const endedTrial = record({
+    plan: "trial",
+    state: "trialing",
+    source: "trial",
+    trialStartedAt: STARTED,
+    trialEndsAt: ENDS,
+    trialConsumedAt: STARTED,
+  });
+
+  it("is worked out as expired rather than written down as expired", async () => {
+    const { computeEntitlement } = await import("@/lib/entitlements/index");
+
+    const entitlement = computeEntitlement(endedTrial, ENDS);
+
+    expect(entitlement.state).toBe("trial_expired");
+    expect(entitlement.entitled).toBe(false);
+    // The row still says `trialing`: nothing ran to change it, and nothing had
+    // to. See `resolveState`.
+    expect(endedTrial.state).toBe("trialing");
+  });
+
+  it("still reports what a trial allows, for a screen to explain with", async () => {
+    const { computeEntitlement } = await import("@/lib/entitlements/index");
+
+    expect(computeEntitlement(endedTrial, ENDS).limits).toMatchObject({
+      aiProcessingLimit: 50,
+      manualRunLimit: 20,
+      discoveryLimit: 14,
+    });
+  });
+
+  /** An account whose fortnight is over is not offered a second one. */
+  it("cannot start another trial", async () => {
+    routineCount.mockResolvedValue(0);
+    subscriptionFindUnique.mockResolvedValue(endedTrial);
+
+    expect(
+      await startTrialOnFirstWorkerActivation(client, USER, ENDS),
+    ).toEqual({ outcome: "already-trialing" });
+    expect(subscriptionCreate).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **And nothing stops.** An expired trial refuses a second trial and refuses
+   * nothing else: no scheduler, dispatcher or run reads any of this, so the
+   * account's workers run tomorrow exactly as they ran yesterday. Enforcement
+   * is a later phase, and saying so in a test is how it stays one.
+   */
+  it("is enforced by nothing", async () => {
+    const entitlements = await import("@/lib/entitlements/index");
+    const startTrial = await import("@/lib/entitlements/start-trial");
+
+    expect(Object.keys(entitlements).sort()).toEqual([
+      "NO_ENTITLEMENT",
+      "computeEntitlement",
+      "getEffectiveEntitlement",
+    ]);
+    expect(Object.keys(startTrial)).toEqual([
+      "startTrialOnFirstWorkerActivation",
+    ]);
+  });
+});
