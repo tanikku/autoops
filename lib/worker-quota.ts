@@ -1,5 +1,6 @@
 import "server-only";
 
+import { resolveActiveWorkerLimit } from "@/lib/entitlements/active-worker-limit";
 import type { DbClient } from "@/lib/prisma";
 
 /**
@@ -36,6 +37,11 @@ export const TOTAL_WORKER_LIMIT = 20;
 /**
  * How many of an account's workers may be `active` at once.
  *
+ * **This is now the plan's number, not a constant.** It is read per account
+ * from the entitlement — see `resolveActiveWorkerLimit` — so a trial allows
+ * three and the granted beta allowance ten, from the one catalogue that says
+ * so. The constant that used to live here applied ten to everybody.
+ *
  * **A manual worker that is active spends one of these**, even though nothing
  * schedules it. The limit is about a state somebody can see and change rather
  * than about what the scheduler will do with it: a rule that let a `manual`
@@ -45,10 +51,22 @@ export const TOTAL_WORKER_LIMIT = 20;
  * What the scheduler actually picks up is narrower — `active` *and* a cadence
  * other than `manual` — and that remains true and separate.
  */
-export const ACTIVE_WORKER_LIMIT = 10;
 
-/** Which limit an operation ran into. Neither is a failure. */
-export type WorkerQuotaRejection = "total" | "active";
+/**
+ * Which limit an operation ran into, and what that limit was.
+ *
+ * **Neither is a failure**, and neither is a rate limit: both are capacity an
+ * account can free by itself. The number travels with the answer because it is
+ * no longer a constant a caller could look up — it depends on the account.
+ *
+ * The two names are the stable internal reasons. They are not shown to
+ * anybody: a caller turns them into a sentence, which is where the account's
+ * language is known.
+ */
+export type WorkerQuotaRejection = {
+  readonly reason: "total" | "active";
+  readonly limit: number;
+};
 
 /**
  * Takes the account's own row so that its quota can be counted safely.
@@ -104,23 +122,29 @@ export async function claimWorkerCreation(
   client: DbClient,
   userId: string,
   status: string,
+  now: Date = new Date(),
 ): Promise<WorkerQuotaRejection | null> {
   await lockAccountForWorkerQuota(client, userId);
 
   const total = await client.routine.count({ where: { userId } });
   if (total >= TOTAL_WORKER_LIMIT) {
-    return "total";
+    return { reason: "total", limit: TOTAL_WORKER_LIMIT };
   }
 
   if (status !== "active") {
     return null;
   }
 
+  // **Read inside the lock, with the same client.** The plan the account is on
+  // and the number of workers it already has must be read at one moment, and
+  // that moment is this transaction.
+  const limit = await resolveActiveWorkerLimit(client, userId, now);
+
   const active = await client.routine.count({
     where: { userId, status: "active" },
   });
 
-  return active >= ACTIVE_WORKER_LIMIT ? "active" : null;
+  return active >= limit ? { reason: "active", limit } : null;
 }
 
 /**
@@ -142,12 +166,15 @@ export async function claimWorkerCreation(
 export async function claimWorkerActivation(
   client: DbClient,
   userId: string,
+  now: Date = new Date(),
 ): Promise<WorkerQuotaRejection | null> {
   await lockAccountForWorkerQuota(client, userId);
+
+  const limit = await resolveActiveWorkerLimit(client, userId, now);
 
   const active = await client.routine.count({
     where: { userId, status: "active" },
   });
 
-  return active >= ACTIVE_WORKER_LIMIT ? "active" : null;
+  return active >= limit ? { reason: "active", limit } : null;
 }

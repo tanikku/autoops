@@ -116,9 +116,21 @@ const { createRoutineAction, generateWorkerDraftAction } = await import(
 const { ProviderError } = await import("@/lib/ai/provider");
 // The limits belong to the quota module; these read them rather than restating
 // them, so raising one does not leave these testing nothing.
-const { ACTIVE_WORKER_LIMIT, TOTAL_WORKER_LIMIT } = await import(
+const { TOTAL_WORKER_LIMIT } = await import(
   "@/lib/worker-quota"
 );
+
+/**
+ * The active limit these tests run against.
+ *
+ * **Read from the catalogue, not written down.** The account in this file has
+ * no entitlement, so the quota judges it by what a trial allows — the same
+ * number the trial it is about to start will carry. Stating it as a constant
+ * here would be a second opinion about a plan.
+ */
+const ACTIVE_WORKER_LIMIT = (await import("@/lib/plans")).getPlanDefinition(
+  "trial",
+).activeWorkerLimit;
 const { InvalidWorkerDraftResponseError, MAX_WORKER_DRAFT_REQUEST_CHARS } =
   await import("@/lib/ai/worker-draft");
 
@@ -688,7 +700,7 @@ describe("createRoutineAction — the worker limits", () => {
     );
 
     expect(result?.errors?.status).toBe(
-      "You can have 10 active Workers at a time. Pause one to activate another.",
+      `You can have ${ACTIVE_WORKER_LIMIT} active Workers at a time. Pause one to activate another.`,
     );
     expect(result?.message).toBe(result?.errors?.status);
     expect(result?.values?.name).toBe("Typed name");
@@ -703,7 +715,7 @@ describe("createRoutineAction — the worker limits", () => {
     const result = await createRoutineAction(null, form({ status: "active" }));
 
     expect(result?.errors?.status).toBe(
-      "同時に Active にできる Worker は 10 個までです。別の Worker を Active にするには、どれかを一時停止してください。",
+      `同時に Active にできる Worker は ${ACTIVE_WORKER_LIMIT} 個までです。別の Worker を Active にするには、どれかを一時停止してください。`,
     );
   });
 

@@ -20,9 +20,7 @@ import { consumeAiDraftQuota } from "@/lib/rate-limit";
 import { createRoutine } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
 import {
-  ACTIVE_WORKER_LIMIT,
   claimWorkerCreation,
-  TOTAL_WORKER_LIMIT,
   type WorkerQuotaRejection,
 } from "@/lib/worker-quota";
 import { requireProvisionedUserId, requireUserId } from "@/lib/session";
@@ -82,11 +80,14 @@ function quotaRejection(
   language: string,
   input: WorkerFormInput,
 ): CreateRoutineState {
-  if (rejection === "total") {
+  // **The number comes back with the refusal.** The active limit is the
+  // account's plan's, not a constant anybody can look up, so the only place
+  // that knows it is the decision that was just made.
+  if (rejection.reason === "total") {
     return {
       status: "error",
       message: t(language, "worker.validation.totalLimitReached", {
-        limit: TOTAL_WORKER_LIMIT,
+        limit: rejection.limit,
       }),
       values: input,
     };
@@ -94,7 +95,7 @@ function quotaRejection(
 
   const errors: WorkerFieldErrors = {
     status: t(language, "worker.validation.activeLimitReached", {
-      limit: ACTIVE_WORKER_LIMIT,
+      limit: rejection.limit,
     }),
   };
 

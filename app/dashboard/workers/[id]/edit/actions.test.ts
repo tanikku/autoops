@@ -100,7 +100,17 @@ const { updateRoutineAction } = await import(
 );
 // The limit itself belongs to the quota module; these read it rather than
 // restating it, so raising it does not silently leave these testing nothing.
-const { ACTIVE_WORKER_LIMIT } = await import("@/lib/worker-quota");
+/**
+ * The active limit these tests run against.
+ *
+ * **Read from the catalogue, not written down.** The account in this file has
+ * no entitlement, so the quota judges it by what a trial allows — the same
+ * number the trial it is about to start will carry. Stating it as a constant
+ * here would be a second opinion about a plan.
+ */
+const ACTIVE_WORKER_LIMIT = (await import("@/lib/plans")).getPlanDefinition(
+  "trial",
+).activeWorkerLimit;
 
 class RedirectSignal extends Error {}
 class NotFoundSignal extends Error {}
@@ -292,7 +302,7 @@ describe("updateRoutineAction — the active-worker limit", () => {
     );
 
     expect(result?.errors?.status).toBe(
-      "You can have 10 active Workers at a time. Pause one to activate another.",
+      `You can have ${ACTIVE_WORKER_LIMIT} active Workers at a time. Pause one to activate another.`,
     );
     expect(result?.message).toBe(result?.errors?.status);
     expect(result?.values?.name).toBe("Renamed");
@@ -306,7 +316,7 @@ describe("updateRoutineAction — the active-worker limit", () => {
     const result = await save(form({ status: "active", frequency: "manual" }));
 
     expect(result?.errors?.status).toBe(
-      "同時に Active にできる Worker は 10 個までです。別の Worker を Active にするには、どれかを一時停止してください。",
+      `同時に Active にできる Worker は ${ACTIVE_WORKER_LIMIT} 個までです。別の Worker を Active にするには、どれかを一時停止してください。`,
     );
   });
 
@@ -1376,8 +1386,14 @@ describe("updateRoutineAction — the trial", () => {
   });
 
   /**
-   * An account at its active limit is refused before anything is read about
-   * its entitlement, so a refused activation cannot spend a trial.
+   * **An account at its active limit spends no trial.** The quota answers
+   * before the trial is offered anything, so a refused activation cannot take
+   * somebody's one fortnight.
+   *
+   * **The entitlement is read, and that is not the trial starting.** The
+   * active limit is the account's plan's, so working out whether there is room
+   * means reading which plan it is on — see `resolveActiveWorkerLimit`. What
+   * must not happen is a write, and neither write happens.
    */
   it("starts no trial when the activation is refused by the quota", async () => {
     mocks.getRoutineForEdit.mockResolvedValue(paused());
@@ -1388,7 +1404,224 @@ describe("updateRoutineAction — the trial", () => {
     );
 
     expect(result?.status).toBe("error");
-    expect(mocks.findSubscription).not.toHaveBeenCalled();
     expect(mocks.createSubscription).not.toHaveBeenCalled();
+    expect(mocks.createUsagePeriod).not.toHaveBeenCalled();
+    expect(mocks.updateRoutine).not.toHaveBeenCalled();
+  });
+});
+
+
+/**
+ * Turning a Worker on, against the plan the account is actually on.
+ *
+ * **Only a transition asks, and only the plan's number answers.** A worker that
+ * is already active is part of the count rather than an addition to it; the
+ * limit it is counted against is whatever its account's entitlement allows,
+ * which for these accounts is what a trial allows.
+ *
+ * **Nothing is ever paused or deleted to make room.** An account over its
+ * limit keeps every worker it has; what it cannot do is turn on one more. That
+ * is the whole of the enforcement, and the absence of anything else is fixed
+ * below.
+ */
+describe("updateRoutineAction — the plan's active-worker limit", () => {
+  const paused = () => stored({ status: "paused" });
+  const draft = () => stored({ status: "draft" });
+  const active = () => stored({ status: "active" });
+
+  /** Puts the account on a plan, for the entitlement the quota computes. */
+  function onPlan(overrides: Record<string, unknown>) {
+    mocks.findSubscription.mockResolvedValue({
+      plan: "standard",
+      state: "active",
+      trialStartedAt: null,
+      trialEndsAt: null,
+      trialConsumedAt: null,
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+      notificationWorkerId: null,
+      source: "stripe",
+      expiresAt: null,
+      ...overrides,
+    });
+  }
+
+  it.each([
+    ["a paused worker", paused],
+    ["a draft", draft],
+  ])("checks the limit when %s is turned on", async (_label, fixture) => {
+    mocks.getRoutineForEdit.mockResolvedValue(fixture());
+    mocks.countRoutines.mockResolvedValue(ACTIVE_WORKER_LIMIT);
+
+    const result = await save(
+      form({ prompt: "Summarise today's news.", status: "active" }),
+    );
+
+    expect(result?.status).toBe("error");
+    expect(mocks.updateRoutine).not.toHaveBeenCalled();
+  });
+
+  /** The boundary: below the limit it goes ahead, at the limit it does not. */
+  it("turns one on at the slot before the limit", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+    mocks.countRoutines.mockResolvedValue(ACTIVE_WORKER_LIMIT - 1);
+
+    const result = await save(
+      form({ prompt: "Summarise today's news.", status: "active" }),
+    );
+
+    expect(result?.status).toBe("success");
+  });
+
+  /**
+   * **An account already past its limit keeps everything it has.** Nothing is
+   * paused, nothing is deleted, no worker is chosen for it, and no status is
+   * rewritten — only the new activation is refused.
+   */
+  it("changes no worker when the account is already over its limit", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+    mocks.countRoutines.mockResolvedValue(ACTIVE_WORKER_LIMIT + 2);
+
+    const result = await save(
+      form({ prompt: "Summarise today's news.", status: "active" }),
+    );
+
+    expect(result?.status).toBe("error");
+    expect(mocks.updateRoutine).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **Editing an already active worker is not an activation.** The account
+   * being full is what it is full *of*, so renaming one must not be refused.
+   */
+  it("saves an already active worker even when the account is at its limit", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(active());
+    mocks.countRoutines.mockResolvedValue(ACTIVE_WORKER_LIMIT);
+
+    const result = await save(
+      form({ prompt: "Something else entirely.", status: "active" }),
+    );
+
+    expect(result?.status).toBe("success");
+    expect(mocks.updateRoutine).toHaveBeenCalled();
+  });
+
+  it("pauses a worker without asking the limit at all", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(active());
+    mocks.countRoutines.mockResolvedValue(ACTIVE_WORKER_LIMIT);
+
+    const result = await save(
+      form({ prompt: "Summarise today's news.", status: "paused" }),
+    );
+
+    expect(result?.status).toBe("success");
+  });
+
+  /** The granted beta allowance is ten, and the message says ten. */
+  it("judges a granted beta account by its own allowance", async () => {
+    onPlan({
+      plan: "beta",
+      state: "active",
+      source: "admin",
+      expiresAt: new Date("2026-12-31T23:59:59.000Z"),
+    });
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+    mocks.countRoutines.mockResolvedValue(9);
+
+    expect(
+      (await save(form({ prompt: "Summarise today's news.", status: "active" })))
+        ?.status,
+    ).toBe("success");
+  });
+
+  it("refuses a granted beta account at ten, naming ten", async () => {
+    onPlan({
+      plan: "beta",
+      state: "active",
+      source: "admin",
+      expiresAt: new Date("2026-12-31T23:59:59.000Z"),
+    });
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+    mocks.countRoutines.mockResolvedValue(10);
+
+    const result = await save(
+      form({ prompt: "Summarise today's news.", status: "active" }),
+    );
+
+    expect(result?.status).toBe("error");
+    expect(result?.errors?.status).toBe(
+      "You can have 10 active Workers at a time. Pause one to activate another.",
+    );
+  });
+
+  it.each([
+    ["Lite", "lite", 2],
+    ["Standard", "standard", 8],
+    ["Pro", "pro", 15],
+  ])("refuses %s at its own limit, naming it", async (_label, plan, limit) => {
+    onPlan({ plan });
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+    mocks.countRoutines.mockResolvedValue(limit);
+
+    const result = await save(
+      form({ prompt: "Summarise today's news.", status: "active" }),
+    );
+
+    expect(result?.errors?.status).toBe(
+      `You can have ${limit} active Workers at a time. Pause one to activate another.`,
+    );
+  });
+
+  it.each([
+    ["Lite", "lite", 2],
+    ["Standard", "standard", 8],
+    ["Pro", "pro", 15],
+  ])("lets %s activate one below its limit", async (_label, plan, limit) => {
+    onPlan({ plan });
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+    mocks.countRoutines.mockResolvedValue(limit - 1);
+
+    expect(
+      (await save(form({ prompt: "Summarise today's news.", status: "active" })))
+        ?.status,
+    ).toBe("success");
+  });
+
+  /**
+   * **The refusal offers a way out that costs nothing.** Pausing a worker is
+   * the self-service recovery path, so no message asks anybody to pay, and
+   * none tells them to wait — a plan's capacity does not come back on its own.
+   */
+  it("tells the owner to pause one, and asks for nothing else", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+    mocks.countRoutines.mockResolvedValue(ACTIVE_WORKER_LIMIT);
+
+    const result = await save(
+      form({ prompt: "Summarise today's news.", status: "active" }),
+    );
+
+    const message = `${result?.message ?? ""} ${result?.errors?.status ?? ""}`;
+
+    expect(message).toMatch(/Pause one/i);
+    expect(message).not.toMatch(/upgrade|choose a plan|subscribe|pay|pricing/i);
+    expect(message).not.toMatch(/try again later/i);
+  });
+
+  it("says the same in Japanese, with no upgrade and no waiting", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    mocks.getRoutineForEdit.mockResolvedValue(paused());
+    mocks.countRoutines.mockResolvedValue(ACTIVE_WORKER_LIMIT);
+
+    const result = await save(
+      form({ prompt: "Summarise today's news.", status: "active" }),
+    );
+
+    const message = `${result?.message ?? ""} ${result?.errors?.status ?? ""}`;
+
+    expect(message).toContain("一時停止");
+    expect(message).not.toContain("しばらくしてから");
+    expect(message).not.toContain("プラン");
+    expect(message).not.toContain("アップグレード");
   });
 });

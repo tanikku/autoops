@@ -12,8 +12,8 @@ import { type DbClient, prisma } from "@/lib/prisma";
 import { getRoutineForEdit, updateRoutine } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
 import {
-  ACTIVE_WORKER_LIMIT,
   claimWorkerActivation,
+  type WorkerQuotaRejection,
 } from "@/lib/worker-quota";
 import { t } from "@/lib/i18n";
 import { requireUserId } from "@/lib/session";
@@ -311,7 +311,10 @@ export async function updateRoutineAction(
   // Turning one on is the only edit that needs room — see `lib/worker-quota.ts`.
   const activating = existing.status !== "active" && status === "active";
 
-  let quotaRejected = false;
+  // **The refusal carries the number.** The active limit is the account's
+  // plan's rather than a constant, so the only place that knows it is the
+  // decision below.
+  let quotaRejection: WorkerQuotaRejection | null = null;
   // Whether turning this Worker on also began the account's fourteen days.
   let trialStarted = false;
   let saved;
@@ -323,8 +326,9 @@ export async function updateRoutineAction(
       // between. The address change, when there is one, joins this transaction
       // rather than opening a second.
       saved = await prisma.$transaction(async (tx) => {
-        if ((await claimWorkerActivation(tx, userId)) !== null) {
-          quotaRejected = true;
+        quotaRejection = await claimWorkerActivation(tx, userId);
+
+        if (quotaRejection !== null) {
           return null;
         }
 
@@ -379,10 +383,10 @@ export async function updateRoutineAction(
   // **Not a failure, and nothing was written.** The account is at its active
   // limit, which is something its owner can change; the message says so under
   // the control that would change it.
-  if (quotaRejected) {
+  if (quotaRejection !== null) {
     const errors: WorkerFieldErrors = {
       status: t(language, "worker.validation.activeLimitReached", {
-        limit: ACTIVE_WORKER_LIMIT,
+        limit: (quotaRejection as WorkerQuotaRejection).limit,
       }),
     };
 
