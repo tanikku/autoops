@@ -318,10 +318,46 @@ describe("on a narrow screen", () => {
     expect(render(recommended)).toContain("flex-wrap");
   });
 
+  /**
+   * **The pattern, named so that it can be checked itself.**
+   *
+   * It was written inline, and a stray control character sat where its `\b`
+   * belonged — so the expression asked for a backspace before `w-[`, which no
+   * markup contains, and the assertion passed whatever the component did. A
+   * negative assertion is worth only as much as the pattern behind it, and one
+   * that can match nothing says nothing.
+   *
+   * `\b` is what stops it matching `w-[` inside a longer word. What it exists
+   * to catch is the arbitrary width Tailwind writes as `w-[320px]`.
+   */
+  const FIXED_WIDTH_CLASS = /\bw-\[\d/;
+
   it("writes no fixed width anywhere", () => {
     const html = render(recommended);
 
     expect(html).not.toMatch(/style="[^"]*width/);
-    expect(html).not.toMatch(/w-\[\d/);
+    expect(html).not.toMatch(FIXED_WIDTH_CLASS);
+  });
+
+  /**
+   * **Proof that the guard above is able to fail.** These hold the pattern
+   * against markup rather than against the component, so that a pattern which
+   * quietly stopped matching anything would be caught here rather than pass
+   * silently for another year.
+   */
+  it.each([
+    ["a bare arbitrary width", '<div class="w-[320px]">'],
+    ["one among other classes", '<div class="flex w-[24rem] gap-2">'],
+    ["a minimum written the same way", '<div class="min-w-[40px]">'],
+  ])("recognises %s as a fixed width", (_label, markup) => {
+    expect(markup).toMatch(FIXED_WIDTH_CLASS);
+  });
+
+  it.each([
+    ["a full-width utility", '<div class="w-full flex-wrap">'],
+    ["a width from the spacing scale", '<div class="w-4 gap-2">'],
+    ["the markup this component actually writes", '<div class="flex flex-wrap gap-2">'],
+  ])("leaves %s alone", (_label, markup) => {
+    expect(markup).not.toMatch(FIXED_WIDTH_CLASS);
   });
 });
