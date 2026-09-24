@@ -1373,6 +1373,21 @@ Notes for the report:
     "Worker \"{name}\" created. Your trial has started.",
   "worker.action.savedWithTrial": "Worker \"{name}\" saved. Your trial has started.",
 
+  /**
+   * The two things a notification is for: the page that moved, and the run
+   * that noticed.
+   *
+   * **The watched page comes first, and that ordering is the point.** Somebody
+   * who has just been told a hotel has rooms wants the hotel, not Koqentra;
+   * making them open the dashboard to find an address they configured weeks
+   * ago is friction charged against the thing the notification exists to
+   * enable. Koqentra's own page is offered second, for the reading rather than
+   * the acting.
+   */
+  "notify.email.openMonitored": "Open monitored page:",
+  /** On the run's own page, beside what the run found. */
+  "run.detail.openMonitored": "Open monitored page",
+
 } as const;
 
 /**

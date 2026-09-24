@@ -6,6 +6,7 @@ import {
   type EmailDeliveryFailure,
 } from "@/lib/notify/email";
 import { formatDateTime } from "@/lib/datetime";
+import { monitoredPageLink } from "@/lib/watcher/monitored-link";
 import { t, type TranslationKey } from "@/lib/i18n";
 import { getNotificationRecipient } from "@/lib/users";
 import { workerFieldLimits } from "@/lib/worker-input";
@@ -69,6 +70,16 @@ export type RunNotification = {
    * failed and links to the page where the reason is shown as recorded.
    */
   output: string;
+  /**
+   * The page this worker watches, for the kinds that watch one.
+   *
+   * **Null for every worker that has no such page**, which is most of them: a
+   * prompt worker watches nothing, and inventing an address for it would be a
+   * link to somewhere nobody chose. Null is also what a website worker gets
+   * when its stored address no longer passes the watcher's own parser — see
+   * `monitoredPageLink`.
+   */
+  sourceUrl?: string | null;
 };
 
 /**
@@ -258,6 +269,17 @@ function body(
 ): string {
   const time = formatDateTime(notification.finishedAt, timezone);
 
+  // **The watched page first, Koqentra second, and the order is the message.**
+  // Somebody told that a page they are waiting on has moved wants the page;
+  // making them open the dashboard to recover an address they configured weeks
+  // ago is friction charged against the one thing the notification exists to
+  // enable. Koqentra's own page follows, for reading rather than acting.
+  //
+  // **Offered only when there is something to offer.** A worker that watches
+  // nothing, and one whose stored address no longer passes the watcher's
+  // parser, both get no action rather than a link that does not work.
+  const monitored = monitoredPageLink(notification.sourceUrl);
+
   const lines = [
     "Koqentra",
     "",
@@ -274,6 +296,9 @@ function body(
       ? t(language, "notify.email.failedBody")
       : outputSection(notification.output, language),
     "",
+    ...(monitored === null
+      ? []
+      : [t(language, "notify.email.openMonitored"), monitored, ""]),
     t(language, "notify.email.viewRun"),
     url,
   ];

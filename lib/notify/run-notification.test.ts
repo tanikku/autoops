@@ -391,3 +391,199 @@ describe("the words an email is made of", () => {
     expect(ja[key]).toBeTruthy();
   });
 });
+
+
+/**
+ * The two things a notification is for: the page that moved, and the run that
+ * noticed it.
+ *
+ * **The watched page comes first, and the order is the point.** Somebody told
+ * that a page they are waiting on has rooms wants the rooms; sending them into
+ * Koqentra to recover an address they configured weeks ago is friction charged
+ * against the one thing the notification exists to enable.
+ *
+ * The fixtures below are synthetic — an example hotel on `example.test` — and
+ * contain nobody's real booking.
+ */
+describe("what a changed-page notification offers to do next", () => {
+  const WATCHED = "https://hotel.example.test/rooms?checkin=2026-10-01&n=2";
+
+  it("carries the exact address the worker watches", async () => {
+    await notifyRunOutcome(notification({ sourceUrl: WATCHED }));
+
+    expect(sent().text).toContain(WATCHED);
+  });
+
+  /** Not normalised, not re-encoded: the page the worker actually watches. */
+  it("does not rewrite the address", async () => {
+    const awkward = "https://hotel.example.test/Rooms?b=2&a=1";
+
+    await notifyRunOutcome(notification({ sourceUrl: awkward }));
+
+    expect(sent().text).toContain(awkward);
+  });
+
+  it("names the action in the reader's language", async () => {
+    await notifyRunOutcome(notification({ sourceUrl: WATCHED }));
+
+    expect(sent().text).toContain(en["notify.email.openMonitored"]);
+  });
+
+  it("names it in Japanese for an account that reads Japanese", async () => {
+    mocks.getRecipient.mockResolvedValue({ ...OWNER, language: "ja" });
+
+    await notifyRunOutcome(notification({ sourceUrl: WATCHED }));
+
+    expect(sent().text).toContain(ja["notify.email.openMonitored"]);
+  });
+
+  /** The run's own page, at the exact run that prompted the message. */
+  it("also links the run that noticed, by its own id", async () => {
+    await notifyRunOutcome(
+      notification({ runId: "run-42", sourceUrl: WATCHED }),
+    );
+
+    expect(sent().text).toContain(
+      "https://autoops.example.test/dashboard/runs/run-42",
+    );
+  });
+
+  /** Built from the configured base, never from a hardcoded host. */
+  it("builds the Koqentra link from the configured base address", async () => {
+    process.env.AUTH_URL = "https://koqentra.example.test/";
+
+    await notifyRunOutcome(notification({ sourceUrl: WATCHED }));
+
+    const { text } = sent();
+
+    expect(text).toContain(
+      "https://koqentra.example.test/dashboard/runs/run-1",
+    );
+    expect(text).not.toContain("app.koqentra.com");
+  });
+
+  /**
+   * **The watched page before Koqentra's own.** This is the assertion that
+   * would fail if somebody later moved the product link above the task.
+   */
+  it("offers the watched page before the dashboard", async () => {
+    await notifyRunOutcome(notification({ sourceUrl: WATCHED }));
+
+    const { text } = sent();
+
+    expect(text.indexOf(WATCHED)).toBeLessThan(
+      text.indexOf("/dashboard/runs/"),
+    );
+  });
+
+  /** No detour: the address is in the message, not behind a settings page. */
+  it("sends nobody to the worker's settings to find the address", async () => {
+    await notifyRunOutcome(notification({ sourceUrl: WATCHED }));
+
+    const { text } = sent();
+
+    expect(text).not.toContain("/edit");
+    expect(text).not.toContain("/dashboard/workers");
+  });
+});
+
+/**
+ * When there is nothing safe or real to offer.
+ *
+ * **An action that cannot be completed is worse than no action.** Somebody
+ * following it learns only that Koqentra showed them something that does not
+ * work.
+ */
+describe("when a notification has no watched page", () => {
+  it("invents no address for a prompt worker", async () => {
+    await notifyRunOutcome(
+      notification({ kind: "prompt-completed", sourceUrl: null }),
+    );
+
+    const { text } = sent();
+
+    expect(text).not.toContain(en["notify.email.openMonitored"]);
+    expect(text).toContain(en["notify.email.viewRun"]);
+  });
+
+  it("invents no address when none was supplied at all", async () => {
+    await notifyRunOutcome(notification());
+
+    expect(sent().text).not.toContain(en["notify.email.openMonitored"]);
+  });
+
+  /**
+   * **A stored address that no longer passes is not surfaced.** The watcher
+   * refuses these, and so does the email — a row predating a rule cannot put a
+   * credential or a non-page scheme in front of somebody.
+   */
+  it.each([
+    ["a javascript scheme", "javascript:alert(1)"],
+    ["a data scheme", "data:text/html,<script>"],
+    ["a file scheme", "file:///etc/passwd"],
+    ["an address carrying credentials", "https://user:pw@hotel.example.test/"],
+    ["something that will not parse", "not a url"],
+  ])("offers nothing for %s", async (_label, url) => {
+    await notifyRunOutcome(notification({ sourceUrl: url }));
+
+    const { text } = sent();
+
+    expect(text).not.toContain(url);
+    expect(text).not.toContain(en["notify.email.openMonitored"]);
+  });
+
+  /** Still sent, and still linking the run: the action is what is missing. */
+  it("still sends the notification", async () => {
+    await notifyRunOutcome(notification({ sourceUrl: "javascript:alert(1)" }));
+
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(sent().text).toContain("/dashboard/runs/run-1");
+  });
+});
+
+/**
+ * **Who is written to, and whether anything is written at all, are unchanged.**
+ * This phase made a message more useful; it decided nothing new about when one
+ * is sent.
+ */
+describe("what this change did not touch", () => {
+  it("still writes to the owner's address and nobody else's", async () => {
+    await notifyRunOutcome(
+      notification({ sourceUrl: "https://hotel.example.test/rooms" }),
+    );
+
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(sent().to).toBe(OWNER.email);
+    expect(mocks.getRecipient).toHaveBeenCalledWith("user-a");
+  });
+
+  it("keeps the subject it always used", async () => {
+    await notifyRunOutcome(
+      notification({ sourceUrl: "https://hotel.example.test/rooms" }),
+    );
+
+    expect(sent().subject).toBe(
+      en["notify.email.changedSubject"].replace("{name}", "Careers page"),
+    );
+  });
+
+  /**
+   * **A failed run carries no watched-page action.** Its message is that it
+   * failed and where to read why; offering the page would suggest the page is
+   * what went wrong.
+   */
+  it("adds no watched-page action to a failure", async () => {
+    await notifyRunOutcome(
+      notification({
+        kind: "failed",
+        output: "",
+        sourceUrl: "https://hotel.example.test/rooms",
+      }),
+    );
+
+    const { text } = sent();
+
+    expect(text).toContain(en["notify.email.failedBody"]);
+    expect(text).toContain("/dashboard/runs/run-1");
+  });
+});

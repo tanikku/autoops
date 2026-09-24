@@ -51,6 +51,7 @@ import {
   WEBSITE_BASELINE_OUTPUT,
   WEBSITE_UNCHANGED_OUTPUT,
 } from "@/lib/run-display";
+import { monitoredPageLink } from "@/lib/watcher/monitored-link";
 import { getWebsiteSource } from "@/lib/website-sources";
 import { acquireWebsiteDomainThrottle } from "@/lib/website-throttle";
 import {
@@ -464,7 +465,19 @@ export async function getRun(
 ): Promise<RunHistoryDetail | null> {
   const found = await prisma.runHistory.findFirst({
     where: { id, userId },
-    include: { routine: { select: { name: true, prompt: true, kind: true } } },
+    include: {
+      routine: {
+        select: {
+          name: true,
+          prompt: true,
+          kind: true,
+          // The watched page, so the run's own screen can offer it without a
+          // detour through the worker's settings. One join rather than a
+          // second round trip.
+          websiteSource: { select: { url: true } },
+        },
+      },
+    },
   });
 
   if (!found) {
@@ -481,6 +494,9 @@ export async function getRun(
     // against instructions applied to a change that was found — so a kind
     // nobody recognises has to stay unrecognised all the way to the page.
     routineKind: isRoutineKind(routine.kind) ? routine.kind : null,
+    // Held to the watcher's own standard rather than trusted because it was
+    // stored — see `monitoredPageLink`.
+    monitoredUrl: monitoredPageLink(routine.websiteSource?.url),
   };
 }
 
@@ -701,12 +717,27 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
   // **Nothing here can change the run.** `notifyRunOutcome` returns a promise
   // that always resolves, whatever the provider did.
   if (routine.emailNotificationsEnabled && outcome.notification !== null) {
+    // **Read only when the message will carry it.** A changed page is the one
+    // notification whose reader's next move is the page itself, so the address
+    // is fetched here rather than threaded through the execution — this branch
+    // is reached only when a page actually moved, which is rare and has just
+    // finished doing far more expensive work.
+    //
+    // **A read that fails costs the message nothing.** `getWebsiteSource`
+    // answering null, or throwing, leaves a notification with no watched-page
+    // action rather than no notification.
+    const sourceUrl =
+      outcome.notification === "website-changed"
+        ? await websiteSourceUrlForNotification(routineId, routine.userId)
+        : null;
+
     await notifyRunOutcome({
       runId: outcome.run.id,
       routineId,
       userId: routine.userId,
       workerName: routine.name,
       kind: outcome.notification,
+      sourceUrl,
       // Set by whichever write recorded the outcome. The fallback is for the
       // shape rather than for a case that happens: a run that reaches here has
       // been finished by `recordSuccess` or `recordFailure`, and both write it.
@@ -716,6 +747,32 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
   }
 
   return outcome.run;
+}
+
+/**
+ * The watched address, for a notification that is about to mention it.
+ *
+ * **Best effort, like the notification it feeds.** Everything here happens
+ * after the run's outcome is in the database, and a message that arrives
+ * without its watched-page action is better than one that does not arrive —
+ * so a read that fails is a missing link rather than a missing email.
+ *
+ * **Scoped by owner, through the reader that already enforces it.** The id of
+ * a worker is not a secret, and `getWebsiteSource` answers null for somebody
+ * else's — which is the same answer as "has none", and the right one.
+ */
+async function websiteSourceUrlForNotification(
+  routineId: string,
+  userId: string,
+): Promise<string | null> {
+  try {
+    return (await getWebsiteSource(routineId, userId))?.url ?? null;
+  } catch {
+    // The driver's own complaint names tables and connection strings; a run
+    // that has already been recorded is not made wrong by it.
+    console.warn("[notify] watched address could not be read —", routineId);
+    return null;
+  }
 }
 
 /**

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { TriangleAlert } from "lucide-react";
+import { ExternalLink, TriangleAlert } from "lucide-react";
 import { DashboardNav } from "@/components/dashboard-nav";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -79,11 +79,24 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-function Block({ label, value }: { label: string; value: string }) {
+function Block({
+  label,
+  value,
+  className,
+}: {
+  label: string;
+  value: string;
+  className?: string;
+}) {
   return (
-    <section className="mt-8">
+    <section className={className ?? "mt-8"}>
       <h2 className="text-sm font-medium tracking-tight">{label}</h2>
-      <pre className="mt-2 overflow-x-auto rounded-xl bg-muted p-4 text-sm whitespace-pre-wrap">
+      {/* **`break-words` and `leading-relaxed` are the mobile fix.** A long URL
+          or an unbroken run of characters used to push the panel wider than the
+          phone, and the default line height made several screens of model
+          output hard to follow. Wrapping is still preserved — what a model
+          wrote is shown as it wrote it. */}
+      <pre className="mt-2 overflow-x-auto rounded-xl bg-muted p-4 text-sm leading-relaxed break-words whitespace-pre-wrap">
         {value || "—"}
       </pre>
     </section>
@@ -156,7 +169,77 @@ export default async function RunDetailPage({
           {t(language, "run.detail.title")}
         </h1>
 
-        <dl className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        {/* **The result first, because the result is why anybody is here.**
+            A notification said something happened; the next question is what.
+            The metadata and the instructions used to come first and pushed the
+            answer below the fold on a phone — they are still here, further
+            down, where an audit looks for them. */}
+        {run.status === "failed" ? (
+          <Block
+            className="mt-6"
+            label={t(language, "run.detail.error")}
+            value={run.errorMessage ?? ""}
+          />
+        ) : (
+          <Block
+            className="mt-6"
+            label={t(language, "run.detail.output")}
+            /* The same reading as the activity list makes: Koqentra' own two
+               sentences are shown in the account's language, and a model's
+               answer is shown as it was written. */
+            value={formatRunOutputForDisplay(
+              run.output,
+              run.routineKind,
+              language,
+            )}
+          />
+        )}
+
+        {/* Directly under the result, where somebody who has just read that a
+            page changed will look for the page. Absent entirely for a worker
+            that watches nothing. */}
+        {/* **The point of the whole screen, for a watcher.** Somebody who came
+            here from a notification saying a page moved is usually going to
+            that page next; sending them back through the worker's settings to
+            recover an address they configured weeks ago is friction charged
+            against the thing they came to do.
+
+            **`noreferrer` as well as `noopener`.** The destination is a page
+            the owner chose, and it has no business learning which run of which
+            worker sent somebody to it.
+
+            **Written inline rather than as a component** so that the address
+            and its `rel` are visible in the page's own element tree — which is
+            what this screen's tests read. */}
+        {run.monitoredUrl === null ? null : (
+          <div className="mt-4">
+            <Button
+              variant="outline"
+              size="sm"
+              nativeButton={false}
+              render={
+                <a
+                  href={run.monitoredUrl}
+                  target="_blank"
+                  rel="noopener noreferrer nofollow"
+                />
+              }
+            >
+              <ExternalLink className="size-4 shrink-0" aria-hidden />
+              {t(language, "run.detail.openMonitored")}
+            </Button>
+            {/* The address itself, because somebody deciding whether to follow
+                a link is owed the chance to see where it goes. */}
+            <p className="mt-2 text-xs break-all text-muted-foreground">
+              {run.monitoredUrl}
+            </p>
+          </div>
+        )}
+
+        {/* **Compact, and below the answer.** Two columns on a phone rather
+            than one long stack: these are short values, and giving each its own
+            full-width row was most of the scrolling. */}
+        <dl className="mt-10 grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3 lg:grid-cols-5">
           <Field
             label={t(language, "run.detail.worker")}
             value={run.routineName}
@@ -200,7 +283,12 @@ export default async function RunDetailPage({
         {/* The same column, and two different things in it. A prompt worker's
             is the instruction the run sends; a website worker's is what to do
             about a change once one has been found. Naming both "Prompt" was
-            accurate for one of them. */}
+            accurate for one of them.
+
+            **Last, because it is the audit rather than the answer.** It does
+            not change between runs, and somebody who has just been notified
+            almost never wants it — but somebody checking why a run said what
+            it said always does, so it stays on the page. */}
         {run.routineKind === null ? null : (
           <Block
             label={t(
@@ -216,32 +304,6 @@ export default async function RunDetailPage({
           <Block
             label={t(language, "run.detail.renderedPrompt")}
             value={renderedPrompt}
-          />
-        )}
-        {/*
-          A failed run has no output, and calling its reason one was the older
-          shape of this page: the two shared a column, so the heading described
-          whichever had been written. They are separate now, and this is the
-          one screen the diagnostic belongs on — it is the provider's wording,
-          or a driver's, and it is read by someone who came here to find out
-          what went wrong. The activity list deliberately shows neither.
-        */}
-        {run.status === "failed" ? (
-          <Block
-            label={t(language, "run.detail.error")}
-            value={run.errorMessage ?? ""}
-          />
-        ) : (
-          <Block
-            label={t(language, "run.detail.output")}
-            /* The same reading as the activity list makes: Koqentra' own two
-               sentences are shown in the account's language, and a model's
-               answer is shown as it was written. */
-            value={formatRunOutputForDisplay(
-              run.output,
-              run.routineKind,
-              language,
-            )}
           />
         )}
       </main>

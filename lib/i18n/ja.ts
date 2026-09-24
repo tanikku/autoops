@@ -761,4 +761,7 @@ export const ja: Record<TranslationKey, string> = {
   "worker.action.savedWithTrial":
     "Worker「{name}」を保存しました。トライアルを開始しました。",
 
+  "notify.email.openMonitored": "監視先を開く:",
+  "run.detail.openMonitored": "監視先を開く",
+
 };

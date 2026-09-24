@@ -43,6 +43,12 @@ vi.mock("@/lib/users", () => ({
 }));
 
 const RunDetailPage = (await import("@/app/dashboard/runs/[id]/page")).default;
+const { en } = await vi.importActual<typeof import("@/lib/i18n/en")>(
+  "@/lib/i18n/en",
+);
+const { ja } = await vi.importActual<typeof import("@/lib/i18n/ja")>(
+  "@/lib/i18n/ja",
+);
 const { generateMetadata } = await import("@/app/dashboard/runs/[id]/page");
 
 class NotFoundSignal extends Error {}
@@ -96,6 +102,7 @@ function run(overrides?: Record<string, unknown>) {
     routineName: "Watcher",
     routinePrompt: "Summarise {{today}}.",
     routineKind: "prompt",
+    monitoredUrl: null,
     ...overrides,
   };
 }
@@ -528,5 +535,220 @@ describe("what the tab says", () => {
 
       expect(title).not.toMatch(/[0-9a-f]{8}/i);
     }
+  });
+});
+
+
+/**
+ * Getting from "something changed" to the thing that changed.
+ *
+ * **The result first, then the page it is about.** Somebody arriving from a
+ * notification has two questions in this order — what happened, and where —
+ * and the page used to answer both below a screenful of metadata and
+ * instructions.
+ *
+ * The fixtures are synthetic: an example hotel on `example.test`, with no
+ * real booking in them.
+ */
+
+/** Every anchor in the tree, with its address and its rel attribute. */
+function anchors(node: ReactNode): { href: string; rel?: string }[] {
+  const found: { href: string; rel?: string }[] = [];
+
+  const walk = (current: unknown): void => {
+    if (Array.isArray(current)) {
+      current.forEach(walk);
+      return;
+    }
+
+    if (!current || typeof current !== "object") {
+      return;
+    }
+
+    const element = current as {
+      type?: unknown;
+      props?: Record<string, unknown>;
+    };
+    const props = element.props;
+
+    if (!props) {
+      return;
+    }
+
+    if (typeof props.href === "string") {
+      found.push({
+        href: props.href,
+        rel: typeof props.rel === "string" ? props.rel : undefined,
+      });
+    }
+
+    // The action's anchor is handed to a button through `render`, so the tree
+    // has to be followed there as well as through children.
+    walk(props.render);
+    walk(props.children);
+  };
+
+  walk(node);
+  return found;
+}
+
+/** The order the sections appear in, by label, top to bottom. */
+function labelOrder(node: ReactNode): string[] {
+  const order: string[] = [];
+
+  const walk = (current: unknown): void => {
+    if (Array.isArray(current)) {
+      current.forEach(walk);
+      return;
+    }
+
+    if (!current || typeof current !== "object") {
+      return;
+    }
+
+    const props = (current as { props?: Record<string, unknown> }).props;
+    if (!props) {
+      return;
+    }
+
+    if (typeof props.label === "string") {
+      order.push(props.label);
+    }
+
+    walk(props.children);
+  };
+
+  walk(node);
+  return order;
+}
+
+const WATCHED = "https://hotel.example.test/rooms?checkin=2026-10-01";
+
+describe("run detail — the page a watcher watches", () => {
+  it("offers the watched page directly", async () => {
+    mocks.getRun.mockResolvedValue(
+      run({ routineKind: "website", monitoredUrl: WATCHED }),
+    );
+
+    const links = anchors(await render()).map((link) => link.href);
+
+    expect(links).toContain(WATCHED);
+  });
+
+  /** No detour through the worker's settings to recover the address. */
+  it("does not send anybody through the worker's settings for it", async () => {
+    mocks.getRun.mockResolvedValue(
+      run({ routineKind: "website", monitoredUrl: WATCHED }),
+    );
+
+    const links = anchors(await render()).map((link) => link.href);
+
+    expect(links.some((href) => href.includes("/edit"))).toBe(false);
+  });
+
+  /**
+   * **The destination has no business knowing which run sent somebody.**
+   * `noreferrer` alongside `noopener`.
+   */
+  it("opens it without handing the site a referrer", async () => {
+    mocks.getRun.mockResolvedValue(
+      run({ routineKind: "website", monitoredUrl: WATCHED }),
+    );
+
+    const external = anchors(await render()).find(
+      (link) => link.href === WATCHED,
+    );
+
+    expect(external?.rel).toContain("noopener");
+    expect(external?.rel).toContain("noreferrer");
+  });
+
+  it("names the action in both languages", async () => {
+    mocks.getRun.mockResolvedValue(
+      run({ routineKind: "website", monitoredUrl: WATCHED }),
+    );
+
+    expect(en["run.detail.openMonitored"]).toBeTruthy();
+    expect(ja["run.detail.openMonitored"]).toBeTruthy();
+    expect(en["run.detail.openMonitored"]).not.toBe(
+      ja["run.detail.openMonitored"],
+    );
+  });
+
+  /**
+   * **No empty action for a run that has no page.** A disabled or dead control
+   * tells somebody only that Koqentra showed them something that does not
+   * work.
+   */
+  it.each([
+    ["a prompt run", { routineKind: "prompt", monitoredUrl: null }],
+    [
+      "a watcher whose stored address did not pass",
+      { routineKind: "website", monitoredUrl: null },
+    ],
+  ])("shows no watched-page action for %s", async (_label, overrides) => {
+    mocks.getRun.mockResolvedValue(run(overrides));
+
+    const links = anchors(await render()).map((link) => link.href);
+
+    expect(links).toEqual(["/dashboard"]);
+  });
+});
+
+describe("run detail — what comes first", () => {
+  /**
+   * **The answer before the audit.** This is the assertion that would fail if
+   * the instruction section were ever moved back above the result.
+   */
+  it("puts the result above the instruction", async () => {
+    mocks.getRun.mockResolvedValue(
+      run({ routineKind: "website", monitoredUrl: WATCHED }),
+    );
+
+    const order = labelOrder(await render());
+
+    expect(order.indexOf("Output")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("Output")).toBeLessThan(
+      order.indexOf("Change instructions"),
+    );
+  });
+
+  it("puts a failure's reason above the instruction too", async () => {
+    mocks.getRun.mockResolvedValue(
+      run({
+        routineKind: "website",
+        status: "failed",
+        errorMessage: "The page could not be read.",
+        monitoredUrl: WATCHED,
+      }),
+    );
+
+    const order = labelOrder(await render());
+
+    expect(order.indexOf("Error")).toBeLessThan(
+      order.indexOf("Change instructions"),
+    );
+  });
+
+  /** Everything that was on the page is still on it. */
+  it("still shows the status and the execution metadata", async () => {
+    mocks.getRun.mockResolvedValue(
+      run({ routineKind: "website", monitoredUrl: WATCHED }),
+    );
+
+    const sections = labelled(await render());
+
+    expect(sections).toHaveProperty("Worker");
+    expect(sections).toHaveProperty("Status");
+    expect(sections).toHaveProperty("Execution Time");
+    expect(sections).toHaveProperty("Started At");
+    expect(sections).toHaveProperty("Finished At");
+    expect(sections).toHaveProperty("Change instructions");
+  });
+
+  it("still shows a prompt run's rendered prompt", async () => {
+    const sections = labelled(await render());
+
+    expect(sections["Rendered Prompt"]).toBe("Summarise 2026-08-13.");
   });
 });

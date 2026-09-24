@@ -280,6 +280,19 @@ export const NO_RUNS: RunSummary = {
 export type RunHistoryDetail = RunHistoryEntry & {
   routinePrompt: string;
   routineKind: RoutineKind | null;
+  /**
+   * The page the worker watches, for the kinds that watch one.
+   *
+   * **Read from the worker as it stands now**, like the kind above and for the
+   * same reason: a run stores no address of its own. An address that has since
+   * been edited therefore shows the page the worker watches today, which is
+   * the page somebody following this link wants — the run is why they are
+   * looking, not what they are going to open.
+   *
+   * Null for a worker with no watched page, and for one whose stored address
+   * no longer passes the watcher's parser.
+   */
+  monitoredUrl: string | null;
 };
 
 export function isRunStatus(value: string): value is RunStatus {
