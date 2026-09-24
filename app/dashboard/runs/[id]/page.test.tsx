@@ -752,3 +752,79 @@ describe("run detail — what comes first", () => {
     expect(sections["Rendered Prompt"]).toBe("Summarise 2026-08-13.");
   });
 });
+
+/**
+ * What the page does with a model's answer, and what it refuses to do with a
+ * failure's reason.
+ *
+ * **Two different kinds of text in the same column.** An answer was written to
+ * be read as a document; a diagnostic is a provider's sentence or a driver's,
+ * where an underscore is an underscore rather than emphasis.
+ */
+describe("run detail — how the two kinds of text are presented", () => {
+  /** Every component name appearing in the tree, for the ones not invoked. */
+  function componentNames(node: ReactNode): string[] {
+    const names: string[] = [];
+
+    const walk = (current: unknown): void => {
+      if (Array.isArray(current)) {
+        current.forEach(walk);
+        return;
+      }
+
+      if (!current || typeof current !== "object") {
+        return;
+      }
+
+      const element = current as {
+        type?: unknown;
+        props?: Record<string, unknown>;
+      };
+
+      if (typeof element.type === "function") {
+        names.push((element.type as { name?: string }).name ?? "");
+      }
+
+      if (element.props) {
+        walk(element.props.children);
+      }
+    };
+
+    walk(node);
+    return names;
+  }
+
+  it("sends a model's answer through the Markdown renderer", async () => {
+    mocks.getRun.mockResolvedValue(
+      run({ output: "# Hotel availability change\n\nTwo rooms opened." }),
+    );
+
+    expect(componentNames(await render())).toContain("OutputBlock");
+  });
+
+  /**
+   * **A failure's reason stays plain.** Rendering it as Markdown would let its
+   * own punctuation restructure a diagnostic somebody came here to read
+   * exactly as recorded.
+   */
+  it("leaves a failure's reason as plain text", async () => {
+    mocks.getRun.mockResolvedValue(
+      run({
+        status: "failed",
+        errorMessage: "fetch failed: connect ETIMEDOUT 10.0.0.1:443",
+      }),
+    );
+
+    const names = componentNames(await render());
+
+    expect(names).toContain("Block");
+    expect(names).not.toContain("OutputBlock");
+  });
+
+  it("still labels both in the reader's language", async () => {
+    expect(en["run.detail.output"]).toBeTruthy();
+    expect(ja["run.detail.output"]).toBeTruthy();
+    expect(en["run.detail.error"]).toBeTruthy();
+    expect(ja["run.detail.error"]).toBeTruthy();
+  });
+});

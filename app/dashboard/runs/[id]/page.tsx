@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ExternalLink, TriangleAlert } from "lucide-react";
 import { DashboardNav } from "@/components/dashboard-nav";
+import { RunOutputMarkdown } from "@/components/run-output-markdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDateTimeWithSeconds } from "@/lib/datetime";
@@ -103,6 +104,37 @@ function Block({
   );
 }
 
+/**
+ * What a model wrote, rendered rather than displayed as source.
+ *
+ * **Separate from `Block` because the two carry different things.** A stored
+ * diagnostic is shown exactly as it was recorded; a model's answer was written
+ * to be read, and showing its `##` and `|` as literal characters was the
+ * complaint this fixes.
+ *
+ * **Empty output keeps the dash.** A run that produced nothing is a run that
+ * produced nothing, and sending an empty string through a Markdown renderer
+ * would show an empty panel instead of saying so.
+ */
+function OutputBlock({
+  label,
+  value,
+  className,
+}: {
+  label: string;
+  value: string;
+  className?: string;
+}) {
+  return (
+    <section className={className ?? "mt-8"}>
+      <h2 className="text-sm font-medium tracking-tight">{label}</h2>
+      <div className="mt-2 rounded-xl bg-muted p-4">
+        {value ? <RunOutputMarkdown>{value}</RunOutputMarkdown> : <p className="text-sm">—</p>}
+      </div>
+    </section>
+  );
+}
+
 export default async function RunDetailPage({
   params,
 }: {
@@ -174,6 +206,11 @@ export default async function RunDetailPage({
             The metadata and the instructions used to come first and pushed the
             answer below the fold on a phone — they are still here, further
             down, where an audit looks for them. */}
+        {/* **A failure's reason stays plain text, and that is deliberate.** It
+            is a provider's sentence or a driver's — a diagnostic, not something
+            written to be read as a document — and putting it through a Markdown
+            renderer would let its own punctuation restructure it. An underscore
+            in a stack trace is not emphasis. */}
         {run.status === "failed" ? (
           <Block
             className="mt-6"
@@ -181,12 +218,13 @@ export default async function RunDetailPage({
             value={run.errorMessage ?? ""}
           />
         ) : (
-          <Block
+          <OutputBlock
             className="mt-6"
             label={t(language, "run.detail.output")}
             /* The same reading as the activity list makes: Koqentra' own two
                sentences are shown in the account's language, and a model's
-               answer is shown as it was written. */
+               answer is shown as it was written — now rendered rather than
+               displayed as source. */
             value={formatRunOutputForDisplay(
               run.output,
               run.routineKind,
