@@ -1376,6 +1376,7 @@ describe("updateRoutineAction — the trial", () => {
       trialStartedAt: null,
       trialEndsAt: null,
       trialConsumedAt: null,
+      trialForfeitedAt: null,
       expiresAt: new Date("2026-12-31T23:59:59.000Z"),
     });
 
@@ -1437,6 +1438,7 @@ describe("updateRoutineAction — the plan's active-worker limit", () => {
       trialStartedAt: null,
       trialEndsAt: null,
       trialConsumedAt: null,
+      trialForfeitedAt: null,
       currentPeriodStart: null,
       currentPeriodEnd: null,
       notificationWorkerId: null,

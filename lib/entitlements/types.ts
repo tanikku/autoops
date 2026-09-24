@@ -98,6 +98,14 @@ export type SubscriptionRecord = {
   readonly trialStartedAt: Date | null;
   readonly trialEndsAt: Date | null;
   readonly trialConsumedAt: Date | null;
+  /**
+   * When this account stopped being able to be offered a trial.
+   *
+   * **A different question from `trialConsumedAt`.** That one says the account
+   * took the offer up; this says the offer is no longer available to it. An
+   * account given the beta allowance has the second without the first.
+   */
+  readonly trialForfeitedAt: Date | null;
   readonly currentPeriodStart: Date | null;
   readonly currentPeriodEnd: Date | null;
   readonly notificationWorkerId: string | null;

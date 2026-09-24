@@ -27,6 +27,7 @@ function record(overrides: Partial<SubscriptionRecord> = {}): SubscriptionRecord
     trialStartedAt: null,
     trialEndsAt: null,
     trialConsumedAt: null,
+    trialForfeitedAt: null,
     currentPeriodStart: null,
     currentPeriodEnd: null,
     notificationWorkerId: null,
@@ -300,5 +301,159 @@ describe("what the exclusion deliberately does not cover", () => {
     ],
   ])("still answers %s the way it always did", (_label, held, expected) => {
     expect(isTrialEligible(held, NOW)).toBe(expected);
+  });
+});
+
+
+/**
+ * The offer, once taken away, stays taken away.
+ *
+ * **This is the column that survives what an account becomes.** Reading the
+ * grant works only while an account is still on it: buying a plan changes
+ * `plan` and `source` together, and `Subscription.userId` is unique, so the row
+ * that said "beta" is replaced rather than kept beside the new one. An account
+ * that went beta → paid → cancelled would otherwise come back round to
+ * eligible, owed a trial it was never owed.
+ */
+describe("an account whose trial offer has been taken away", () => {
+  const forfeited = (overrides: Partial<SubscriptionRecord> = {}) =>
+    record({
+      trialForfeitedAt: new Date("2026-09-22T10:05:58.000Z"),
+      ...overrides,
+    });
+
+  it("is refused while it is still on the granted beta allowance", () => {
+    expect(
+      isTrialEligible(
+        forfeited({
+          plan: "beta",
+          state: "active",
+          source: "admin",
+          expiresAt: new Date("2026-12-31T23:59:59.000Z"),
+        }),
+        NOW,
+      ),
+    ).toBe(false);
+  });
+
+  /**
+   * **The case the column exists for.** Nothing about this row says beta any
+   * more: the plan is one somebody bought, the source is a provider's, the
+   * entitlement has lapsed, and no trial was ever consumed. Every older rule
+   * would answer "eligible".
+   */
+  it("is refused after it has become a lapsed paid account", () => {
+    const formerBeta = forfeited({
+      plan: "standard",
+      state: "inactive",
+      source: "stripe",
+      trialConsumedAt: null,
+    });
+
+    expect(isAdminGrantedBeta(formerBeta)).toBe(false);
+    expect(formerBeta.trialConsumedAt).toBeNull();
+    expect(isTrialEligible(formerBeta, NOW)).toBe(false);
+  });
+
+  /**
+   * **What the same row would have answered without the column.** This is the
+   * risk stated as a test rather than as a comment: remove the forfeit date and
+   * the account becomes eligible again.
+   */
+  it("would have been eligible again without it", () => {
+    const withoutTheColumn = record({
+      plan: "standard",
+      state: "inactive",
+      source: "stripe",
+      trialConsumedAt: null,
+      trialForfeitedAt: null,
+    });
+
+    expect(isTrialEligible(withoutTheColumn, NOW)).toBe(true);
+  });
+
+  it.each([
+    ["a live paid plan", { plan: "pro", state: "active", source: "stripe" }],
+    ["one in grace", { plan: "lite", state: "grace", source: "stripe" }],
+    ["a cancellation still running", {
+      plan: "pro",
+      state: "canceled_active",
+      source: "stripe",
+      currentPeriodEnd: new Date("2027-01-01T00:00:00.000Z"),
+    }],
+    ["a grant that has expired", {
+      plan: "beta",
+      state: "active",
+      source: "stripe",
+      expiresAt: new Date("2026-01-01T00:00:00.000Z"),
+    }],
+  ])("is refused as %s", (_label, overrides) => {
+    expect(isTrialEligible(forfeited(overrides), NOW)).toBe(false);
+  });
+
+  /**
+   * **Asked before anything is computed**, so a row carrying a state this
+   * version cannot read still answers rather than throwing.
+   */
+  it("is refused even when the rest of the row cannot be read", () => {
+    expect(
+      isTrialEligible(
+        forfeited({ state: "something-later-versions-know" }),
+        NOW,
+      ),
+    ).toBe(false);
+  });
+});
+
+/**
+ * **The ordinary account is untouched.** Somebody who has never been given
+ * anything still gets the offer, and taking a trial still writes the column
+ * that means "consumed" rather than the one that means "forfeited".
+ */
+describe("what the new column does not change", () => {
+  it("still offers a trial to an account with no entitlement at all", () => {
+    expect(isTrialEligible(null, NOW)).toBe(true);
+  });
+
+  it("still offers one to an account that has simply not started", () => {
+    expect(
+      isTrialEligible(
+        record({ state: "inactive", trialConsumedAt: null, trialForfeitedAt: null }),
+        NOW,
+      ),
+    ).toBe(true);
+  });
+
+  /** A trial account carries the consumed date and not the forfeited one. */
+  it("leaves an ordinary trial's forfeit date empty", () => {
+    const trialing = record({
+      plan: "trial",
+      state: "trialing",
+      source: "trial",
+      trialStartedAt: new Date("2026-09-20T00:00:00.000Z"),
+      trialEndsAt: new Date("2026-10-04T00:00:00.000Z"),
+      trialConsumedAt: new Date("2026-09-20T00:00:00.000Z"),
+      trialForfeitedAt: null,
+    });
+
+    expect(trialing.trialForfeitedAt).toBeNull();
+    expect(isTrialEligible(trialing, NOW)).toBe(false);
+  });
+
+  /** The two columns answer different questions and are not interchangeable. */
+  it("keeps consumed and forfeited as separate facts", () => {
+    const consumedOnly = record({
+      trialConsumedAt: new Date("2026-05-01T00:00:00.000Z"),
+      trialForfeitedAt: null,
+    });
+    const forfeitedOnly = record({
+      trialConsumedAt: null,
+      trialForfeitedAt: new Date("2026-05-01T00:00:00.000Z"),
+    });
+
+    expect(isTrialEligible(consumedOnly, NOW)).toBe(false);
+    expect(isTrialEligible(forfeitedOnly, NOW)).toBe(false);
+    expect(consumedOnly.trialForfeitedAt).toBeNull();
+    expect(forfeitedOnly.trialConsumedAt).toBeNull();
   });
 });

@@ -42,6 +42,7 @@ function record(overrides: Partial<SubscriptionRecord> = {}): SubscriptionRecord
     trialStartedAt: null,
     trialEndsAt: null,
     trialConsumedAt: null,
+    trialForfeitedAt: null,
     currentPeriodStart: null,
     currentPeriodEnd: null,
     notificationWorkerId: null,

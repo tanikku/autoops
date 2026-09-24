@@ -77,6 +77,7 @@ model User {
   subscription        Subscription?
   usagePeriods        UsagePeriod[]
   providerUsageEvents ProviderUsageEvent[]
+  billingEvents       BillingEvent[]
 }
 
 model Routine {
@@ -758,6 +759,24 @@ model Subscription {
   /// once-only**: it stays set after the trial ends, and after a plan is
   /// bought, because what was consumed was the offer rather than the time.
   trialConsumedAt        DateTime?
+  /// When this account stopped being able to be offered a trial, and the fact
+  /// that it did.
+  ///
+  /// **Not the same as `trialConsumedAt`, and deliberately a second column.**
+  /// That one says the account took the offer up; this one says the offer is no
+  /// longer available to it. An account given the beta allowance never had a
+  /// trial — writing `trialConsumedAt` for it would be a lie about what it did —
+  /// but it is not owed one either, and that is what this records.
+  ///
+  /// **It exists because every other signal moves.** The rule used to be read
+  /// from `plan` and `source`, which is correct only while an account is still
+  /// on the granted beta allowance: buying a plan changes both, and
+  /// `Subscription.userId` is unique, so the row that said "beta" is gone
+  /// rather than kept. An account that went beta → paid → cancelled would
+  /// otherwise become eligible for a trial it was never owed.
+  ///
+  /// Null for the ordinary case: an account that may still be offered one.
+  trialForfeitedAt       DateTime?
   currentPeriodStart     DateTime?
   currentPeriodEnd       DateTime?
   /// The one worker allowed to email its owner on a plan that allows one.
@@ -893,4 +912,63 @@ model ProviderUsageEvent {
   @@index([userId, occurredAt])
   /// What the deployment spent, over a span. The question a cost guard asks.
   @@index([occurredAt])
+}
+
+/// One thing a billing provider said happened to a subscription.
+///
+/// **Evidence, and the thing that makes a repeated callback harmless.** A
+/// provider may deliver the same event twice, out of order, or long after it
+/// happened; none of those may open a second period or reset a counter that has
+/// already been spent against. `@@unique([provider, providerEventId])` is what
+/// makes the second delivery a constraint failure rather than a second effect —
+/// the same shape `UsagePeriod` already uses for two simultaneous first uses.
+///
+/// **Not `ProviderUsageEvent`, and deliberately a separate table.** That one
+/// records what a call to a *model* cost, in tokens, so that a price table can
+/// be applied to it later. This one records what a *billing provider* said about
+/// an entitlement. They share no question, no lifecycle and no reader; merging
+/// them would mean one table answering "what did this cost" and "why is this
+/// account inactive" at once.
+///
+/// **Nothing here decides what an account may do.** Capability is worked out
+/// from `Subscription` and the plan catalogue — see `computeEntitlement`, which
+/// cannot reach this table and must never need to. What is stored here is how
+/// the subscription came to say what it says.
+///
+/// **No provider's vocabulary appears in this table.** `kind` holds one of
+/// Koqentra's own event names; a provider's own wording is translated by its
+/// adapter and never stored. A column named after one provider's payload would
+/// be a column the next provider has to pretend to have.
+model BillingEvent {
+  id              String   @id @default(cuid())
+  /// Who said it: "stripe", "app-store", "play". A string for the same reason
+  /// `plan` and `state` are — adding a provider should be a line of code rather
+  /// than a migration.
+  provider        String
+  /// The provider's own id for this delivery. **Unique per provider, never
+  /// globally**: two providers may each number an event `1`, and neither has
+  /// any claim on the other's numbering.
+  providerEventId String
+  /// The account the event is about, resolved by the adapter from whatever the
+  /// provider used to identify the customer.
+  userId          String
+  /// What happened, in Koqentra's words. See the provider-neutral event names
+  /// in the billing design; a provider's own event type never appears here.
+  kind            String
+  /// When the provider says it happened. **Theirs, not ours** — it is what an
+  /// out-of-order delivery has to be judged against, and a local clock would
+  /// judge the order things arrived in instead.
+  occurredAt      DateTime
+  /// When Koqentra received it. Kept beside `occurredAt` precisely because they
+  /// can differ by a long way, and the gap is the first thing worth seeing when
+  /// something arrived late.
+  receivedAt      DateTime @default(now())
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// **The idempotency key, as a constraint rather than a convention.** A
+  /// second delivery of the same event cannot be written, so it cannot be
+  /// processed twice.
+  @@unique([provider, providerEventId])
+  /// One account's billing history, in order. The question support asks.
+  @@index([userId, occurredAt])
 }

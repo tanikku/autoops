@@ -62,6 +62,7 @@ function record(overrides: Record<string, unknown> = {}) {
     trialStartedAt: null,
     trialEndsAt: null,
     trialConsumedAt: null,
+    trialForfeitedAt: null,
     currentPeriodStart: null,
     currentPeriodEnd: null,
     notificationWorkerId: null,

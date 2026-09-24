@@ -59,8 +59,10 @@ export function isAdminGrantedBeta(record: SubscriptionRecord): boolean {
 /**
  * Whether this account may begin a trial.
  *
- * Three questions, asked in this order:
+ * Four questions, asked in this order:
  *
+ * - **Has the offer already been taken away?** `trialForfeitedAt` is the one
+ *   answer that survives everything an account can become — see below.
  * - **Has it ever been given the beta allowance?** If so, never — see below.
  * - **Has it used a trial?** `trialConsumedAt` stays set after the trial ends
  *   and after a plan is bought, because what was spent was the offer.
@@ -74,12 +76,16 @@ export function isAdminGrantedBeta(record: SubscriptionRecord): boolean {
  * people who have not tried Koqentra yet, and they have — so when their grant
  * ends they are being asked to decide, not offered another free run at it.
  *
- * **Why it is asked first, and from the grant rather than from a trial
- * column.** Every other signal moves: the grant expires, `entitled` turns
- * false, and the two conditions below would then both be true. Marking the
- * accounts as having consumed a trial would have made them lie — they never had
- * one — and would have meant rewriting five rows that are already correct. What
- * is durable is that the grant was made at all, and that is what this reads.
+**Why `trialForfeitedAt` exists as well.** Reading the grant works only while
+ * an account is still on it. Buying a plan changes `plan` and `source` together
+ * and keeps no copy of what they were, so an account that went beta → paid →
+ * cancelled would have come back round to eligible — owed a trial it was never
+ * owed. The column records the fact rather than one of its symptoms.
+ *
+ * **Why neither of them is `trialConsumedAt`.** That column means the account
+ * took the offer up. A granted beta account never did; writing it there would
+ * be a false statement about what somebody did, in the one field that decides
+ * whether they may do it again.
  */
 export function isTrialEligible(
   record: SubscriptionRecord | null,
@@ -89,6 +95,22 @@ export function isTrialEligible(
     return true;
   }
 
+  // **The durable answer, and it is asked first.** Every other signal moves:
+  // `plan` and `source` change the moment an account buys something, the
+  // entitlement lapses, and `Subscription.userId` is unique so the row that
+  // once said "beta" is not kept beside the new one. This column is written
+  // when the offer stops being available and is never cleared, so an account
+  // that went beta → paid → cancelled still answers the same way it did on the
+  // day it was granted.
+  if (record.trialForfeitedAt !== null) {
+    return false;
+  }
+
+  // **Kept, though the column above now covers every account it covers.** It
+  // costs nothing, it is true independently, and it is what still answers
+  // correctly for a row written before the column existed — including one this
+  // deployment has not yet migrated.
+  //
   // **Before the entitlement is computed**, so an expired grant — or one whose
   // state this version could not read — answers the same way a live one does.
   if (isAdminGrantedBeta(record)) {

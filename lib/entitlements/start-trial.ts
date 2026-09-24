@@ -71,6 +71,7 @@ const RECORD_FIELDS = {
   trialStartedAt: true,
   trialEndsAt: true,
   trialConsumedAt: true,
+  trialForfeitedAt: true,
   currentPeriodStart: true,
   currentPeriodEnd: true,
   notificationWorkerId: true,

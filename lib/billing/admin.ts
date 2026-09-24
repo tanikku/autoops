@@ -101,6 +101,7 @@ const EXISTING_SELECT = {
 export async function grantBetaSubscription(
   userId: string,
   expiresAt: Date,
+  now: Date = new Date(),
 ): Promise<BetaGrantResult> {
   if (Number.isNaN(expiresAt.getTime())) {
     throw new Error("A beta grant needs a usable expiry");
@@ -123,6 +124,12 @@ export async function grantBetaSubscription(
     select: EXISTING_SELECT,
   });
 
+  // **An identical grant is left exactly as it is.** Not the expiry, not the
+  // forfeit date, not `updatedAt`: re-running the command must be able to say
+  // "already done" without touching a row, or an operator checking their work
+  // would change the thing they were checking. Rows written before
+  // `trialForfeitedAt` existed are filled in by the migration that added it,
+  // which is the one place that backfill belongs.
   if (existing !== null) {
     return isIdenticalBetaGrant(existing, expiresAt)
       ? { granted: true, created: false }
@@ -131,7 +138,15 @@ export async function grantBetaSubscription(
 
   try {
     await prisma.subscription.create({
-      data: { userId, ...BETA_GRANT, expiresAt },
+      // **The grant and the forfeit are one act.** Giving somebody the beta
+      // allowance is also the moment they stop being owed a trial, so the two
+      // are written together rather than left for a later phase to remember.
+      //
+      // **`trialConsumedAt` stays null, and that is the point of the second
+      // column.** These accounts never took a trial up; recording that they did
+      // would be false about what they actually did. What is true is that the
+      // offer is no longer theirs.
+      data: { userId, ...BETA_GRANT, expiresAt, trialForfeitedAt: now },
     });
 
     return { granted: true, created: true };

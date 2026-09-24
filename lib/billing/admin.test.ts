@@ -20,12 +20,17 @@ const { findUser, findSubscription, create } = vi.hoisted(() => ({
   create: vi.fn(),
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    user: { findUnique: findUser },
-    subscription: { findUnique: findSubscription, create },
-  },
-}));
+/**
+ * **Two methods and no `update`.** The grant creates or answers; it never
+ * rewrites a row it found, and a client without the method is how that stays
+ * true rather than being remembered.
+ */
+const prismaStub = {
+  user: { findUnique: findUser },
+  subscription: { findUnique: findSubscription, create },
+};
+
+vi.mock("@/lib/prisma", () => ({ prisma: prismaStub }));
 
 const { grantBetaSubscription } = await import("@/lib/billing/admin");
 
@@ -52,9 +57,12 @@ beforeEach(() => {
   create.mockResolvedValue({});
 });
 
+/** The instant the grant is made, which is also the instant the trial is lost. */
+const GRANTED_AT = new Date("2026-09-24T08:00:00.000Z");
+
 describe("granting the beta allowance", () => {
   it("writes the grant when the account has no entitlement", async () => {
-    expect(await grantBetaSubscription(USER, EXPIRES)).toEqual({
+    expect(await grantBetaSubscription(USER, EXPIRES, GRANTED_AT)).toEqual({
       granted: true,
       created: true,
     });
@@ -65,7 +73,57 @@ describe("granting the beta allowance", () => {
       state: "active",
       source: "admin",
       expiresAt: EXPIRES,
+      // **The grant and the forfeit are one act.** Being given the beta
+      // allowance is the moment an account stops being owed a trial, so the
+      // two are written together rather than left for later to remember.
+      trialForfeitedAt: GRANTED_AT,
     });
+  });
+
+  /**
+   * **`trialConsumedAt` stays null, and that is why there are two columns.**
+   * These accounts never took a trial up; recording that they did would be
+   * false about what they actually did, in the one field that decides whether
+   * somebody may do it again.
+   */
+  it("records the forfeit without claiming a trial was consumed", async () => {
+    await grantBetaSubscription(USER, EXPIRES, GRANTED_AT);
+
+    const { data } = create.mock.calls[0][0];
+
+    expect(data.trialForfeitedAt).toEqual(GRANTED_AT);
+    expect(data).not.toHaveProperty("trialConsumedAt");
+    expect(data).not.toHaveProperty("trialStartedAt");
+    expect(data).not.toHaveProperty("trialEndsAt");
+  });
+
+  /**
+   * **An identical grant touches nothing.** Re-running the command must be
+   * able to answer "already done" without writing a row — otherwise an
+   * operator checking their work would change the thing they were checking.
+   * Rows written before the column existed are filled in by the migration that
+   * added it, which is the one place that backfill belongs.
+   */
+  it("does not refresh an existing grant's forfeit date", async () => {
+    const earlier = new Date("2026-09-22T10:05:58.000Z");
+
+    findSubscription.mockResolvedValue({
+      plan: "beta",
+      state: "active",
+      source: "admin",
+      expiresAt: EXPIRES,
+      trialForfeitedAt: earlier,
+    });
+
+    expect(await grantBetaSubscription(USER, EXPIRES, GRANTED_AT)).toEqual({
+      granted: true,
+      created: false,
+    });
+    expect(create).not.toHaveBeenCalled();
+    // **There is no `update` to call.** The client this module is given has
+    // only `findUnique` and `create`, so an implementation that refreshed a row
+    // would fail here rather than quietly churn `updatedAt`.
+    expect(prismaStub.subscription).not.toHaveProperty("update");
   });
 
   /**
