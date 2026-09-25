@@ -1118,3 +1118,42 @@ describe("an expired runner racing a takeover", () => {
     expect(problems).toEqual([]);
   });
 });
+
+/**
+ * A delivery that outlived the process that recorded it.
+ *
+ * **The reason the webhook writes before it answers.** Stripe stops retrying
+ * once it sees a `2xx`, so if the record did not survive the response there
+ * would be nothing left to ask again — and the subscription would simply never
+ * be reconciled. What this holds is the half that can be proven here: once the
+ * record is committed, a later sweep finds it without any help from the process
+ * that took the delivery.
+ */
+describe("work recorded by one process and finished by another", () => {
+  it("survives the recording process disappearing", async () => {
+    // All the webhook does: record the delivery, commit, answer.
+    const recorded = await recordProviderEventReceipt(receipt(), prisma);
+
+    expect(recorded.outcome).toBe("recorded");
+
+    // Nothing else of that request exists any more — no lease, no in-flight
+    // work, no scheduled promise. Only what the database kept.
+    expect((await queue()).pendingSince).not.toBeNull();
+    expect((await receipts())[0].resolvedAt).toBeNull();
+
+    // A sweep that knows nothing about it finds the work and finishes it.
+    const result = await run({
+      provider: PROVIDER,
+      providerSubscriptionId: SUB,
+      token: token(),
+      read: entitled(),
+    });
+
+    expect(result).toMatchObject({ outcome: "reconciled" });
+    expect((await receipts())[0].resolvedAt).not.toBeNull();
+    expect((await queue()).pendingSince).toBeNull();
+    expect(
+      await prisma.subscription.findUnique({ where: { userId: USER } }),
+    ).not.toBeNull();
+  });
+});
