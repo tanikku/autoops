@@ -9,10 +9,16 @@ import {
   requirePaidPlan,
   requirePeriod,
 } from "@/lib/billing/events";
-import { planLimitFor } from "@/lib/usage/period";
-import { usageKinds } from "@/lib/usage/types";
+import {
+  activatePaidSubscription,
+  changeSubscriptionPlan,
+  isUniqueViolation,
+  renewPaidSubscription,
+  setSubscriptionState,
+  type StoredSubscription,
+  SUBSCRIPTION_FIELDS,
+} from "@/lib/billing/subscription-writes";
 import { type DbClient, prisma } from "@/lib/prisma";
-import type { PlanId } from "@/lib/plans";
 
 /**
  * What a provider's event does to an account's entitlement.
@@ -62,18 +68,6 @@ export type BillingTransitionResult =
   /** The event could not be used. Nothing was written. */
   | { readonly outcome: "rejected"; readonly reason: BillingEventRejection };
 
-/** Prisma's code for a unique constraint that would have been broken. */
-const UNIQUE_VIOLATION = "P2002";
-
-function isUniqueViolation(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === UNIQUE_VIOLATION
-  );
-}
-
 /** Thrown to roll a transaction back with an answer rather than a failure. */
 class TransitionOutcome extends Error {
   readonly result: BillingTransitionResult;
@@ -84,29 +78,6 @@ class TransitionOutcome extends Error {
     this.result = result;
   }
 }
-
-/** The stored entitlement, as a transition needs to see it. */
-const SUBSCRIPTION_FIELDS = {
-  plan: true,
-  state: true,
-  source: true,
-  expiresAt: true,
-  currentPeriodStart: true,
-  currentPeriodEnd: true,
-  trialForfeitedAt: true,
-  providerUpdatedAt: true,
-} as const;
-
-type StoredSubscription = {
-  plan: string;
-  state: string;
-  source: string;
-  expiresAt: Date | null;
-  currentPeriodStart: Date | null;
-  currentPeriodEnd: Date | null;
-  trialForfeitedAt: Date | null;
-  providerUpdatedAt: Date | null;
-};
 
 /**
  * Applies one provider event, or says why it did not.
@@ -315,42 +286,17 @@ async function activate(
   const plan = requirePaidPlan(event.plan);
   const period = requirePeriod(event);
 
-  const paid = {
+  await activatePaidSubscription(tx, {
+    userId: event.userId,
     plan,
-    state: "active",
+    period,
     source: event.provider,
-    currentPeriodStart: period.start,
-    currentPeriodEnd: period.end,
-    // See above: a grant's expiry must not outlive the grant.
-    expiresAt: null,
     providerCustomerId: event.providerCustomerId,
     providerSubscriptionId: event.providerSubscriptionId,
-    providerUpdatedAt: event.occurredAt,
-  };
-
-  if (existing === null) {
-    await tx.subscription.create({
-      data: {
-        userId: event.userId,
-        ...paid,
-        // Nothing about a trial, because there was none — except that there
-        // will not be one now either.
-        trialForfeitedAt: event.occurredAt,
-      },
-    });
-  } else {
-    await tx.subscription.update({
-      where: { userId: event.userId },
-      data: {
-        ...paid,
-        ...(existing.trialForfeitedAt === null
-          ? { trialForfeitedAt: event.occurredAt }
-          : {}),
-      },
-    });
-  }
-
-  await openPaidPeriod(tx, event.userId, plan, period);
+    forfeitTrialAt: event.occurredAt,
+    existing,
+    stamp: { providerUpdatedAt: event.occurredAt },
+  });
 }
 
 /**
@@ -365,25 +311,15 @@ async function renew(
   existing: StoredSubscription,
 ): Promise<void> {
   const period = requirePeriod(event);
-  const plan = event.plan ?? existing.plan;
 
-  await tx.subscription.update({
-    where: { userId: event.userId },
-    data: {
-      state: "active",
-      currentPeriodStart: period.start,
-      currentPeriodEnd: period.end,
-      providerUpdatedAt: event.occurredAt,
-      ...(event.providerCustomerId === null
-        ? {}
-        : { providerCustomerId: event.providerCustomerId }),
-      ...(event.providerSubscriptionId === null
-        ? {}
-        : { providerSubscriptionId: event.providerSubscriptionId }),
-    },
+  await renewPaidSubscription(tx, {
+    userId: event.userId,
+    plan: event.plan ?? existing.plan,
+    period,
+    providerCustomerId: event.providerCustomerId,
+    providerSubscriptionId: event.providerSubscriptionId,
+    stamp: { providerUpdatedAt: event.occurredAt },
   });
-
-  await openPaidPeriod(tx, event.userId, plan, period);
 }
 
 /**
@@ -426,16 +362,12 @@ async function changePlan(
     );
   }
 
-  await tx.subscription.update({
-    where: { userId: event.userId },
-    data: { plan, providerUpdatedAt: event.occurredAt },
+  await changeSubscriptionPlan(tx, {
+    userId: event.userId,
+    plan,
+    periodStart: direction === "same" ? null : existing.currentPeriodStart,
+    stamp: { providerUpdatedAt: event.occurredAt },
   });
-
-  if (direction === "same") {
-    return;
-  }
-
-  await raiseCounterLimits(tx, event.userId, existing, plan);
 }
 
 /** A state change that touches nothing else. */
@@ -447,126 +379,9 @@ async function setState(
 ): Promise<void> {
   void existing;
 
-  await tx.subscription.update({
-    where: { userId: event.userId },
-    // **The plan, the period, the provider ids, the trial columns and every
-    // counter are left exactly as they are.** What changed is whether the
-    // entitlement is in force, and nothing about what it was.
-    data: { state, providerUpdatedAt: event.occurredAt },
+  await setSubscriptionState(tx, {
+    userId: event.userId,
+    state,
+    stamp: { providerUpdatedAt: event.occurredAt },
   });
-}
-
-/**
- * Opens the period a paid plan is measured over, or uses the one already there.
- *
- * **A period that exists is read, never reset.** A redelivered activation or a
- * renewal that raced with itself must not zero counters somebody has spent
- * against, so the existing row is used as it stands.
- *
- * **An existing row that disagrees is an error rather than a correction.** If
- * the same start carries a different end or a different opening plan, something
- * has written a period this event did not describe — and rewriting it would
- * destroy the record rather than repair it.
- *
- * **Trial and beta periods are untouched.** A paid period has its own start, so
- * it is its own row; nothing here reads or changes what came before.
- */
-async function openPaidPeriod(
-  tx: DbClient,
-  userId: string,
-  plan: string,
-  period: { start: Date; end: Date },
-): Promise<void> {
-  const existing = await tx.usagePeriod.findUnique({
-    where: { userId_periodStart: { userId, periodStart: period.start } },
-    select: { periodEnd: true, planAtStart: true },
-  });
-
-  if (existing !== null) {
-    const sameEnd = existing.periodEnd.getTime() === period.end.getTime();
-
-    if (!sameEnd || existing.planAtStart !== plan) {
-      throw new Error(
-        "A usage period already exists for that start and describes something else",
-      );
-    }
-
-    return;
-  }
-
-  try {
-    await tx.usagePeriod.create({
-      data: {
-        userId,
-        periodStart: period.start,
-        periodEnd: period.end,
-        planAtStart: plan,
-        // Stamped with the period's own start, so `partialPeriod` does not
-        // report a window it covers entirely as covering part of one.
-        createdAt: period.start,
-        counters: {
-          // Three, one per allowance. How many workers are active is live
-          // state that goes up and down; a period does not accumulate them.
-          create: usageKinds.map((kind) => ({
-            kind,
-            // **A paid period starts empty.** What a trial or a grant used
-            // belongs to the window it was used in; carrying it forward would
-            // spend part of a month somebody has paid for on a month they had
-            // not.
-            used: 0,
-            limit: planLimitFor(plan, kind),
-          })),
-        },
-      },
-    });
-  } catch (error) {
-    if (!isUniqueViolation(error)) {
-      throw error;
-    }
-
-    // Two deliveries reached the create together. The constraint refused the
-    // second, which wanted the period rather than the creating of it — and
-    // whatever the first wrote is what both of them meant.
-  }
-}
-
-/**
- * Raises what the current period allows, without touching what it has spent.
- *
- * **`used` is never written here.** An upgrade gives somebody more room; it
- * does not un-spend what they used getting to it.
- *
- * **Only the counters that exist are raised.** A period is opened with all
- * three at once, so a missing one means something else wrote the period —
- * reported by leaving it alone rather than repaired by inventing a row whose
- * limit nobody decided on, which is the same judgement `recordUsageObservation`
- * already makes.
- */
-async function raiseCounterLimits(
-  tx: DbClient,
-  userId: string,
-  existing: StoredSubscription,
-  plan: PlanId,
-): Promise<void> {
-  const periodStart = existing.currentPeriodStart;
-
-  if (periodStart === null) {
-    return;
-  }
-
-  const period = await tx.usagePeriod.findUnique({
-    where: { userId_periodStart: { userId, periodStart } },
-    select: { id: true },
-  });
-
-  if (period === null) {
-    return;
-  }
-
-  for (const kind of usageKinds) {
-    await tx.usageCounter.updateMany({
-      where: { periodId: period.id, kind },
-      data: { limit: planLimitFor(plan, kind) },
-    });
-  }
 }
