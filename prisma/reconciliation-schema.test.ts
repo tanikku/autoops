@@ -96,15 +96,11 @@ describe("what the old billing columns still are", () => {
   });
 
   /**
-   * **The final identity, deliberately not created yet.** `reconciliationRunId`
-   * is nullable in this phase and no writer sets it, so a unique constraint
-   * over it would be a constraint over nulls — true of every row and therefore
-   * saying nothing.
+   * **The expand migration did not create the final identity**; the bridge
+   * that followed it did, once both legacy columns could be left null. Kept as
+   * a statement about *this* migration rather than about the schema.
    */
-  it("BillingEvent does not yet carry the reconciliation identity", () => {
-    expect(model("BillingEvent")).not.toContain(
-      "@@unique([reconciliationRunId, kind])",
-    );
+  it("the expand migration does not create the reconciliation identity", () => {
     expect(sql).not.toMatch(/reconciliationRunId[^)]*kind/);
   });
 
@@ -258,4 +254,129 @@ describe("nothing reads the new columns yet", () => {
       expect(transition).not.toContain(column);
     },
   );
+});
+
+/**
+ * The bridge that lets both writers exist at once.
+ *
+ * **The blocker it removes.** `applyBillingEvent` writes a delivery id and the
+ * provider's own timestamp; reconciliation has neither — a run can answer
+ * several notifications, or none at all on a sweep, so naming one delivery as
+ * the cause would invent a causal claim, and inventing a value for a column
+ * inside a unique index would invent an idempotency identity with it. While
+ * those columns were `NOT NULL` there was no truthful row to write, so the
+ * reconciliation writer could not exist.
+ *
+ * **Nulls being distinct is what makes the two constraints coexist**, and that
+ * was measured against PostgreSQL 18 rather than assumed: legacy rows keep
+ * being refused a twin, reconciliation rows leave `providerEventId` null
+ * without colliding with each other, and a run is still stopped from writing
+ * the same kind twice.
+ */
+const BRIDGE =
+  "prisma/migrations/20260925180000_relax_billing_event_legacy_fields/migration.sql";
+
+const bridge = readFileSync(BRIDGE, "utf8");
+
+describe("the bridge migration", () => {
+  it.each([
+    ["DROP TABLE"],
+    ["DROP COLUMN"],
+    ["DROP INDEX"],
+    ["DROP CONSTRAINT"],
+    ["TRUNCATE"],
+  ])("contains no %s", (statement) => {
+    expect(bridge.toUpperCase()).not.toContain(statement);
+  });
+
+  it("rewrites no existing row", () => {
+    expect(bridge).not.toMatch(/^[\t ]*UPDATE\b/m);
+    expect(bridge).not.toMatch(/^[\t ]*DELETE\b/m);
+    expect(bridge).not.toMatch(/^[\t ]*INSERT\b/m);
+  });
+
+  it("relaxes exactly the two legacy columns", () => {
+    expect(bridge).toContain(
+      'ALTER TABLE "BillingEvent" ALTER COLUMN "providerEventId" DROP NOT NULL',
+    );
+    expect(bridge).toContain('ALTER COLUMN "occurredAt" DROP NOT NULL');
+    expect(bridge.match(/DROP NOT NULL/g)).toHaveLength(2);
+  });
+
+  it("creates the reconciliation identity and nothing else", () => {
+    expect(bridge).toContain(
+      'CREATE UNIQUE INDEX "BillingEvent_reconciliationRunId_kind_key" ON "BillingEvent"("reconciliationRunId", "kind")',
+    );
+    expect(bridge.match(/^CREATE UNIQUE INDEX/gm)).toHaveLength(1);
+    expect(bridge.match(/^CREATE INDEX/gm)).toBeNull();
+    expect(bridge.match(/^CREATE TABLE/gm)).toBeNull();
+  });
+
+  /** One table's worth of change, so nothing unrelated can ride along. */
+  it("touches only BillingEvent", () => {
+    const tables = new Set(
+      [...bridge.matchAll(/ALTER TABLE "(\w+)"/g)].map((m) => m[1]),
+    );
+
+    expect([...tables]).toEqual(["BillingEvent"]);
+  });
+});
+
+describe("what the bridge leaves the schema saying", () => {
+  it.each([
+    ["providerEventId", /providerEventId\s+String\?/],
+    ["occurredAt", /occurredAt\s+DateTime\?/],
+  ])("BillingEvent.%s is now optional", (_name, pattern) => {
+    expect(model("BillingEvent")).toMatch(pattern);
+  });
+
+  /** Neither column is dropped: the legacy writer still fills both. */
+  it.each(["providerEventId", "occurredAt"])("%s still exists", (column) => {
+    expect(model("BillingEvent")).toContain(column);
+  });
+
+  it("keeps the legacy delivery constraint", () => {
+    expect(model("BillingEvent")).toContain(
+      "@@unique([provider, providerEventId])",
+    );
+  });
+
+  it("adds the reconciliation identity", () => {
+    expect(model("BillingEvent")).toContain(
+      "@@unique([reconciliationRunId, kind])",
+    );
+  });
+
+  /** The columns the reconciliation writer fills stay as the expand left them. */
+  it.each([
+    ["observedAt", /observedAt\s+DateTime\?/],
+    ["reconciliationRunId", /reconciliationRunId\s+String\?/],
+  ])("%s is unchanged by the bridge", (_name, pattern) => {
+    expect(model("BillingEvent")).toMatch(pattern);
+  });
+
+  /** Untouched by this phase, and due to be removed in the contract one. */
+  it("leaves Subscription alone", () => {
+    expect(model("Subscription")).toMatch(/providerUpdatedAt\s+DateTime\?/);
+    expect(model("Subscription")).toMatch(/providerSyncedAt\s+DateTime\?/);
+    expect(bridge).not.toContain("Subscription");
+  });
+});
+
+describe("the legacy writer is untouched", () => {
+  const transition = readFileSync("lib/billing/transition.ts", "utf8");
+
+  /**
+   * **Nullable columns accept non-null values**, so relaxing them needed no
+   * change here — which is the whole reason the bridge is safe to deploy ahead
+   * of the new writer.
+   */
+  it.each(["providerEventId", "occurredAt"])("still writes %s", (column) => {
+    expect(transition).toContain(column);
+  });
+
+  it("still writes neither of the reconciliation columns", () => {
+    expect(transition).not.toContain("reconciliationRunId");
+    expect(transition).not.toContain("observedAt");
+  });
 });

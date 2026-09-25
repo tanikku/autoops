@@ -968,7 +968,14 @@ model BillingEvent {
   /// The provider's own id for this delivery. **Unique per provider, never
   /// globally**: two providers may each number an event `1`, and neither has
   /// any claim on the other's numbering.
-  providerEventId String
+  ///
+  /// **Null on a row that no single delivery caused.** Reconciliation looks at
+  /// the provider's current state and may answer several notifications — or
+  /// none at all, on a sweep — with one observation; naming any one delivery as
+  /// the cause would be inventing a causal claim, and inventing a value here
+  /// would invent an idempotency identity along with it. The column stays only
+  /// until the legacy writer is gone.
+  providerEventId String?
   /// The account the event is about, resolved by the adapter from whatever the
   /// provider used to identify the customer.
   userId          String
@@ -978,7 +985,12 @@ model BillingEvent {
   /// When the provider says it happened. **Theirs, not ours** — it is what an
   /// out-of-order delivery has to be judged against, and a local clock would
   /// judge the order things arrived in instead.
-  occurredAt      DateTime
+  ///
+  /// **Null on a reconciliation-origin row**, which has no such instant to
+  /// record: what it knows is when Koqentra looked, and that is `observedAt`.
+  /// Writing one into the other would be the false mapping this bridge exists
+  /// to avoid.
+  occurredAt      DateTime?
   /// When Koqentra received it. Kept beside `occurredAt` precisely because they
   /// can differ by a long way, and the gap is the first thing worth seeing when
   /// something arrived late.
@@ -1010,10 +1022,21 @@ model BillingEvent {
   reconciliationRunId String?
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  /// **The idempotency key, as a constraint rather than a convention.** A
-  /// second delivery of the same event cannot be written, so it cannot be
+  /// **The legacy idempotency key, as a constraint rather than a convention.**
+  /// A second delivery of the same event cannot be written, so it cannot be
   /// processed twice.
+  ///
+  /// **Still true of the rows it applies to, and silent about the rest.**
+  /// PostgreSQL treats nulls in a unique index as distinct from one another, so
+  /// any number of reconciliation-origin rows — which leave `providerEventId`
+  /// null — sit under this constraint without colliding, while every row the
+  /// legacy writer produces is still refused a twin.
   @@unique([provider, providerEventId])
+  /// **The identity of a reconciliation-origin transition.** A run derives at
+  /// most one transition of each kind, so this is what stops a coding error
+  /// writing the same one twice. Nulls being distinct is again what lets it
+  /// coexist with the legacy rows, which carry no run.
+  @@unique([reconciliationRunId, kind])
   /// One account's billing history, in order. The question support asks.
   @@index([userId, occurredAt])
 }
