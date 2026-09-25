@@ -379,7 +379,7 @@ describe("a runner that stopped without finishing", () => {
       providerSubscriptionId: SUB,
       token: alive,
       read: entitled(),
-      now: later,
+      clock: () => later,
     });
 
     const rows = await receipts();
@@ -422,7 +422,7 @@ describe("a runner that lost its lease while reading", () => {
       providerSubscriptionId: SUB,
       token: overrun,
       read: slowRead,
-      now,
+      clock: () => now,
     });
 
     // Long enough for the claim to have committed.
@@ -433,7 +433,7 @@ describe("a runner that lost its lease while reading", () => {
       providerSubscriptionId: SUB,
       token: takeover,
       read: entitled(),
-      now: later,
+      clock: () => later,
     });
 
     expect(takenOver.outcome).toBe("reconciled");
@@ -470,7 +470,7 @@ describe("a runner that lost its lease while reading", () => {
         await stalled;
         return (await entitled({}, "confirm-twice")()) as ObservationOutcome;
       },
-      now,
+      clock: () => now,
     });
 
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -479,7 +479,7 @@ describe("a runner that lost its lease while reading", () => {
       providerSubscriptionId: SUB,
       token: token(),
       read: entitled(),
-      now: later,
+      clock: () => later,
     });
 
     release();
@@ -900,6 +900,218 @@ describe("the same race, repeated", () => {
         problems.push(
           `iteration ${i}: periods=${periods.length} events=${events.length}`,
         );
+      }
+    }
+
+    expect(problems).toEqual([]);
+  });
+});
+
+/**
+ * A lease that ran out while nobody was waiting for it.
+ *
+ * **Distinct from being taken over, and the harder of the two.** When a
+ * competitor arrives it changes the token, and any check on the token catches
+ * the overrunning run. When nobody arrives, the token in the row is still the
+ * slow run's own — so treating "my token is still there" as ownership would let
+ * it apply a reading from minutes ago, and the expiry would only ever have
+ * meant anything in the presence of a competitor.
+ */
+describe("a lease that ran out before anyone took over", () => {
+  it("cannot apply what it read", async () => {
+    await recordProviderEventReceipt(receipt(), prisma);
+
+    const claimedAt = new Date("2026-10-15T00:00:00.000Z");
+    const afterExpiry = new Date("2026-10-15T00:02:00.000Z");
+    let reads = 0;
+
+    // Inside its lease when it claims; past the deadline by the time it writes.
+    const clock = () => (reads === 0 ? claimedAt : afterExpiry);
+
+    const result = await run({
+      provider: PROVIDER,
+      providerSubscriptionId: SUB,
+      token: token(),
+      read: async () => {
+        reads += 1;
+        return (await entitled()()) as ObservationOutcome;
+      },
+      clock,
+    });
+
+    expect(result).toEqual({ outcome: "fenced-out" });
+  });
+
+  it("leaves the account and its notification exactly as they were", async () => {
+    await recordProviderEventReceipt(receipt(), prisma);
+
+    const claimedAt = new Date("2026-10-15T00:00:00.000Z");
+    const afterExpiry = new Date("2026-10-15T00:02:00.000Z");
+    let reads = 0;
+
+    await run({
+      provider: PROVIDER,
+      providerSubscriptionId: SUB,
+      token: token(),
+      read: async () => {
+        reads += 1;
+        return (await entitled({}, "confirm-twice")()) as ObservationOutcome;
+      },
+      clock: () => (reads === 0 ? claimedAt : afterExpiry),
+    });
+
+    expect(
+      await prisma.subscription.findUnique({ where: { userId: USER } }),
+    ).toBeNull();
+    expect(await prisma.usagePeriod.count({ where: { userId: USER } })).toBe(0);
+    expect(await prisma.billingEvent.count({ where: { userId: USER } })).toBe(0);
+
+    const row = await queue();
+
+    expect(row.unpaidFirstSeenRunId).toBeNull();
+    expect(row.pendingSince).not.toBeNull();
+    expect((await receipts())[0].resolvedAt).toBeNull();
+  });
+
+  /** The work is still owing, so a later runner picks it up and finishes it. */
+  it("leaves the work for whoever comes next", async () => {
+    await recordProviderEventReceipt(receipt(), prisma);
+
+    const claimedAt = new Date("2026-10-15T00:00:00.000Z");
+    const afterExpiry = new Date("2026-10-15T00:02:00.000Z");
+    let reads = 0;
+
+    await run({
+      provider: PROVIDER,
+      providerSubscriptionId: SUB,
+      token: token(),
+      read: async () => {
+        reads += 1;
+        return (await entitled()()) as ObservationOutcome;
+      },
+      clock: () => (reads === 0 ? claimedAt : afterExpiry),
+    });
+
+    const result = await run({
+      provider: PROVIDER,
+      providerSubscriptionId: SUB,
+      token: token(),
+      read: entitled(),
+      clock: () => new Date("2026-10-15T00:03:00.000Z"),
+    });
+
+    expect(result).toMatchObject({ outcome: "reconciled" });
+    expect((await receipts())[0].resolvedAt).not.toBeNull();
+    expect((await queue()).pendingSince).toBeNull();
+  });
+
+  /** A run still inside its lease is not affected by the new condition. */
+  it("does not disturb a run that is still within its lease", async () => {
+    await recordProviderEventReceipt(receipt(), prisma);
+
+    const claimedAt = new Date("2026-10-15T00:00:00.000Z");
+    const stillValid = new Date("2026-10-15T00:00:30.000Z");
+    let reads = 0;
+
+    const result = await run({
+      provider: PROVIDER,
+      providerSubscriptionId: SUB,
+      token: token(),
+      read: async () => {
+        reads += 1;
+        return (await entitled()()) as ObservationOutcome;
+      },
+      clock: () => (reads === 0 ? claimedAt : stillValid),
+    });
+
+    expect(result).toMatchObject({ outcome: "reconciled" });
+  });
+});
+
+/**
+ * An expired runner and a fresh claimant, at the same moment.
+ *
+ * **Whichever order the two reach the row, the stale reading must not land.**
+ * Either the newcomer changes the token first and the old run fails on that, or
+ * the old run checks first and fails on its own deadline — and then the
+ * newcomer is free to take the row.
+ */
+describe("an expired runner racing a takeover", () => {
+  it("never lets the expired one apply, over ten attempts", async () => {
+    const problems: string[] = [];
+
+    for (let i = 0; i < 10; i += 1) {
+      await reset();
+      await recordProviderEventReceipt(receipt(), prisma);
+
+      const claimedAt = new Date("2026-10-15T00:00:00.000Z");
+      const afterExpiry = new Date("2026-10-15T00:02:00.000Z");
+      const stale = token();
+      let staleReads = 0;
+
+      let release!: () => void;
+      const stalled = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+
+      const overrunning = run({
+        provider: PROVIDER,
+        providerSubscriptionId: SUB,
+        token: stale,
+        read: async () => {
+          staleReads += 1;
+          await stalled;
+          return (await entitled()()) as ObservationOutcome;
+        },
+        clock: () => (staleReads === 0 ? claimedAt : afterExpiry),
+      });
+
+      // Long enough for the stale run's claim to have committed.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const fresh = token();
+
+      // Both reach the row at once: one releases the stalled run as the other
+      // tries to take over.
+      const [staleResult, freshResult] = await Promise.all([
+        (async () => {
+          release();
+          return overrunning;
+        })(),
+        run({
+          provider: PROVIDER,
+          providerSubscriptionId: SUB,
+          token: fresh,
+          read: entitled(),
+          clock: () => afterExpiry,
+        }),
+      ]);
+
+      if (staleResult.outcome !== "fenced-out") {
+        problems.push(`iteration ${i}: stale run returned ${staleResult.outcome}`);
+      }
+
+      const events = await prisma.billingEvent.findMany({
+        where: { userId: USER },
+      });
+
+      if (events.some((event) => event.reconciliationRunId === stale)) {
+        problems.push(`iteration ${i}: stale token wrote a billing event`);
+      }
+
+      if (events.length > 1) {
+        problems.push(`iteration ${i}: ${events.length} events`);
+      }
+
+      const periods = await prisma.usagePeriod.count({ where: { userId: USER } });
+
+      if (periods > 1) {
+        problems.push(`iteration ${i}: ${periods} periods`);
+      }
+
+      // Whoever was authoritative, the work must not be left half-done.
+      if (freshResult.outcome === "reconciled" && events.length !== 1) {
+        problems.push(`iteration ${i}: fresh run applied but ${events.length} events`);
       }
     }
 

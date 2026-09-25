@@ -103,10 +103,19 @@ export async function runReconciliation(input: {
   token: string;
   read: ProviderReader;
   client?: DbClient;
-  now?: Date;
+  /**
+   * Read afresh at each decision that turns on time.
+   *
+   * **A single timestamp for the whole run would make the lease's expiry a
+   * fiction.** The deadline is set from the moment the lease is taken, so
+   * comparing it against that same moment always says the lease is live — and
+   * the one decision that has to notice a run overrunning is exactly the one
+   * that would then never fire.
+   */
+  clock?: () => Date;
 }): Promise<ReconciliationRunResult> {
   const client = input.client ?? prisma;
-  const now = input.now ?? new Date();
+  const clock = input.clock ?? (() => new Date());
   const { provider, providerSubscriptionId, token } = input;
 
   const lease = await claimReconciliation(
@@ -114,7 +123,7 @@ export async function runReconciliation(input: {
     providerSubscriptionId,
     token,
     client,
-    now,
+    clock(),
   );
 
   if (lease === null) {
@@ -156,14 +165,14 @@ export async function runReconciliation(input: {
           providerSubscriptionId,
           token,
           reason: observation.reason,
-          now,
+          clock,
         })
       : reconcileUnderLease(tx, {
           provider,
           providerSubscriptionId,
           token,
           observation: observation.observation,
-          now,
+          clock,
         });
 
   return "$transaction" in client && typeof client.$transaction === "function"
@@ -183,11 +192,23 @@ async function holdLease(
   provider: string,
   providerSubscriptionId: string,
   token: string,
-  now: Date,
+  at: Date,
 ): Promise<boolean> {
   const { count } = await tx.billingReconciliation.updateMany({
-    where: { provider, providerSubscriptionId, leaseToken: token },
-    data: { lastRunAt: now },
+    where: {
+      provider,
+      providerSubscriptionId,
+      leaseToken: token,
+      // **Holding the token is not owning the lease.** A run whose lease ran
+      // out has lost its authority whether or not anybody has taken over yet;
+      // treating the stored token as ownership would mean the expiry only
+      // mattered once a competitor turned up, and a slow run could apply a
+      // reading from minutes ago. Read with a fresh clock — comparing against
+      // the instant the lease was taken would be comparing a deadline with the
+      // moment it was set, which is always in the run's favour.
+      leaseUntil: { gt: at },
+    },
+    data: { lastRunAt: at },
   });
 
   return count === 1;
@@ -202,14 +223,14 @@ async function finish(
     token: string;
     outcome: string;
     userId: string | null;
-    now: Date;
+    at: Date;
     terminationMarker?: string | null;
   },
 ): Promise<number> {
   const { count } = await tx.providerEventReceipt.updateMany({
     where: { reconciliationRunId: input.token, resolvedAt: null },
     data: {
-      resolvedAt: input.now,
+      resolvedAt: input.at,
       outcome: input.outcome,
       ...(input.userId === null ? {} : { userId: input.userId }),
     },
@@ -241,22 +262,24 @@ async function answerWithoutReconciling(
     providerSubscriptionId: string;
     token: string;
     reason: ObservationRefusal;
-    now: Date;
+    clock: () => Date;
   },
 ): Promise<ReconciliationRunResult> {
+  const at = input.clock();
+
   if (
     !(await holdLease(
       tx,
       input.provider,
       input.providerSubscriptionId,
       input.token,
-      input.now,
+      at,
     ))
   ) {
     return { outcome: "fenced-out" };
   }
 
-  await finish(tx, { ...input, outcome: input.reason, userId: null });
+  await finish(tx, { ...input, outcome: input.reason, userId: null, at });
 
   return { outcome: "refused", reason: input.reason };
 }
@@ -268,12 +291,13 @@ async function reconcileUnderLease(
     providerSubscriptionId: string;
     token: string;
     observation: ProviderObservation;
-    now: Date;
+    clock: () => Date;
   },
 ): Promise<ReconciliationRunResult> {
-  const { provider, providerSubscriptionId, token, observation, now } = input;
+  const { provider, providerSubscriptionId, token, observation } = input;
+  const at = input.clock();
 
-  if (!(await holdLease(tx, provider, providerSubscriptionId, token, now))) {
+  if (!(await holdLease(tx, provider, providerSubscriptionId, token, at))) {
     // **Somebody took over while we were reading.** Whatever we hold describes
     // a moment they have already moved past, so none of it may be written —
     // not the domain, not the receipts, and not the confirmation marker.
@@ -316,7 +340,7 @@ async function reconcileUnderLease(
     token,
     outcome: receiptOutcomeFor(result, await claimedCount(tx, token)),
     userId: confirmed.snapshot.userId,
-    now,
+    at,
     terminationMarker: confirmed.marker,
   });
 

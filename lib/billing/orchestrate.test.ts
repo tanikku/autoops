@@ -390,6 +390,62 @@ describe("confirming an ending", () => {
   });
 });
 
+/**
+ * Owning the lease, as opposed to merely holding the token that was written.
+ *
+ * **The token alone would make the expiry meaningless.** A slow run's token is
+ * still in the row until somebody else turns up, so checking only that would
+ * let it apply a reading from minutes ago whenever no competitor happened to
+ * arrive — and the deadline would matter only in the presence of one.
+ */
+describe("what counts as still owning the lease", () => {
+  it("requires the deadline as well as the token", async () => {
+    await go();
+
+    expect(reconciliationUpdateMany.mock.calls[0][0].where).toMatchObject({
+      provider: PROVIDER,
+      providerSubscriptionId: SUB,
+      leaseToken: TOKEN,
+      leaseUntil: { gt: expect.any(Date) },
+    });
+  });
+
+  /**
+   * **Read again, not remembered.** The deadline is set from the instant the
+   * lease was taken, so comparing it against that same instant always says the
+   * lease is live — the one check that has to notice a run overrunning would
+   * then never fire.
+   */
+  it("reads the clock again rather than reusing the moment it claimed", async () => {
+    const times = [
+      new Date("2026-10-15T00:00:00.000Z"),
+      new Date("2026-10-15T00:00:30.000Z"),
+    ];
+    let reads = 0;
+    const clock = () => times[Math.min(reads++, times.length - 1)];
+
+    await go({ clock });
+
+    const claimedAt = claim.mock.calls[0][4] as Date;
+    const validatedAt = reconciliationUpdateMany.mock.calls[0][0].where
+      .leaseUntil.gt as Date;
+
+    expect(claimedAt).toEqual(times[0]);
+    expect(validatedAt).toEqual(times[1]);
+    expect(validatedAt.getTime()).toBeGreaterThan(claimedAt.getTime());
+  });
+
+  it("writes nothing once the deadline has passed", async () => {
+    // The row no longer matches, which is what an expired lease looks like.
+    reconciliationUpdateMany.mockResolvedValue({ count: 0 });
+
+    expect(await go()).toEqual({ outcome: "fenced-out" });
+    expect(reconcile).not.toHaveBeenCalled();
+    expect(userUpdate).not.toHaveBeenCalled();
+    expect(receiptUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
 describe("provider neutrality", () => {
   it.each(["stripe", "app-store", "play", "some-future-provider"])(
     "behaves identically whoever %s is",
