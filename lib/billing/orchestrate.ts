@@ -57,7 +57,19 @@ export type ProviderObservation = {
 export type ObservationRefusal =
   | "unknown-user"
   | "unknown-plan"
-  | "malformed";
+  | "malformed"
+  /**
+   * The provider is in a state Koqentra does not model.
+   *
+   * **Distinct from malformed on purpose.** Malformed means the reading made no
+   * sense; this means it made sense and describes something Koqentra never
+   * creates and has no truthful answer for — a subscription part-way through a
+   * first payment, say, or one a provider paused by a mechanism this product
+   * does not use. Guessing an entitlement for it would either grant one nobody
+   * paid for or withdraw one that is still owed, and both are worse than
+   * standing still and saying which state it was.
+   */
+  | "unsupported-state";
 
 /** What reading provider state produced. */
 export type ObservationOutcome =
