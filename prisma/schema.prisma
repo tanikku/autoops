@@ -74,10 +74,12 @@ model User {
   ///
   /// Listed here for the same reason as the Creator side above — deleting an
   /// account takes them with it, and the cascade is declared on the far side.
-  subscription        Subscription?
-  usagePeriods        UsagePeriod[]
-  providerUsageEvents ProviderUsageEvent[]
-  billingEvents       BillingEvent[]
+  subscription           Subscription?
+  usagePeriods           UsagePeriod[]
+  providerUsageEvents    ProviderUsageEvent[]
+  billingEvents          BillingEvent[]
+  providerEventReceipts  ProviderEventReceipt[]
+  billingReconciliations BillingReconciliation[]
 }
 
 model Routine {
@@ -796,7 +798,25 @@ model Subscription {
   providerSubscriptionId String?
   /// The provider's own timestamp for the update these columns came from.
   /// What makes an out-of-order webhook discardable rather than applied.
+  ///
+  /// **Being replaced.** Judging a provider's updates by their own timestamps
+  /// turned out not to work for at least one provider, whose event timestamps
+  /// are whole seconds and whose delivery order is explicitly not guaranteed —
+  /// so two distinct changes can be indistinguishable. `providerSyncedAt` and
+  /// provider-current-state reconciliation replace it. Nothing new writes this.
   providerUpdatedAt      DateTime?
+  /// When Koqentra last successfully reconciled this account against the
+  /// provider's current state.
+  ///
+  /// **Observability only, and that restriction is the point.** It says when we
+  /// last looked, which answers "has this account fallen out of sync" — and
+  /// nothing else. It must never be compared to decide which of two
+  /// observations is newer, to judge whether an event is stale, or to stand in
+  /// for a provider-side version. Ordering is established by holding the
+  /// reconciliation lease while fetching, not by any timestamp; using this
+  /// column for it would quietly reintroduce the problem the lease exists to
+  /// solve.
+  providerSyncedAt       DateTime?
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
   user                   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -963,6 +983,31 @@ model BillingEvent {
   /// can differ by a long way, and the gap is the first thing worth seeing when
   /// something arrived late.
   receivedAt      DateTime @default(now())
+
+  /// When the reconciliation that applied this transition observed the
+  /// provider's state.
+  ///
+  /// **Replacing `occurredAt`**, which asked the provider when something
+  /// happened. What matters instead is when Koqentra looked and what it saw,
+  /// because that is what the decision was actually made from.
+  ///
+  /// Nullable only while both the old writer and the new one have to exist;
+  /// it becomes required once nothing writes `occurredAt`.
+  observedAt      DateTime?
+  /// The reconciliation run that applied this transition.
+  ///
+  /// **The truthful identity of a transition, once several provider
+  /// notifications can be answered by a single look at provider state.** Three
+  /// deliveries about one subscription are collapsed into one fetch; naming any
+  /// one of them as the cause of what that fetch found would be inventing a
+  /// causal claim. What caused it was the run.
+  ///
+  /// It also exists for runs no notification triggered — a sweep, or an
+  /// operator asking for a resync — which is why it, rather than a receipt,
+  /// is the identity.
+  ///
+  /// Nullable for the same reason as `observedAt`.
+  reconciliationRunId String?
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   /// **The idempotency key, as a constraint rather than a convention.** A
@@ -971,4 +1016,158 @@ model BillingEvent {
   @@unique([provider, providerEventId])
   /// One account's billing history, in order. The question support asks.
   @@index([userId, occurredAt])
+}
+
+/// One notification from a billing provider, recorded on arrival.
+///
+/// **Receiving a notification and applying a change are different facts, and
+/// this table holds the first one.** `BillingEvent` means a domain transition
+/// was applied; a row can only mean that, which is what makes it readable.
+/// Notifications that changed nothing — a redelivery, a state already
+/// converged, an event about a subscription this account has since replaced —
+/// would make that table ambiguous in the one direction that matters, so they
+/// are recorded here instead.
+///
+/// **Nothing here decides anything.** A row is evidence that a provider said
+/// something and what was eventually made of it. What an account may do is
+/// still worked out from `Subscription` and the plan catalogue.
+///
+/// **No payload, ever.** The provider's own object is not stored: it carries
+/// customer names, card details and amounts that no question here needs, and a
+/// column that existed would eventually be read by something that should not
+/// know any of it. What is kept is identifiers and an outcome.
+model ProviderEventReceipt {
+  id                     String    @id @default(cuid())
+  /// Who sent it: "stripe", "app-store", "play".
+  provider               String
+  /// The provider's own id for this delivery. Used for one thing only —
+  /// recognising that the same delivery arrived twice. It says nothing about
+  /// order, and nothing may read it as though it did.
+  providerEventId        String
+  /// The provider's own name for the kind of notification, kept as it was
+  /// given. **Recorded, never branched on**: what to do is decided by fetching
+  /// the provider's current state, not by which notification woke us up.
+  providerEventType      String
+  /// Which subscription at the provider this is about. **The unit of
+  /// serialisation**, and the only field the reconciliation actually needs
+  /// from a notification.
+  providerSubscriptionId String
+  providerCustomerId     String?
+  /// When the provider says it happened.
+  ///
+  /// **Observability only.** At least one provider records this in whole
+  /// seconds and states plainly that it must not be used to order events or to
+  /// decide whether one was already handled. It is here so that a delivery gap
+  /// can be seen, and for no other purpose.
+  providerOccurredAt     DateTime?
+  /// The provider API version the payload was rendered under. Kept so that a
+  /// silent change in what a field means can be noticed rather than inferred
+  /// from the damage.
+  providerApiVersion     String?
+  /// The account, once it could be resolved.
+  ///
+  /// **Nullable on purpose.** A notification whose account cannot be worked out
+  /// is exactly the one somebody will need to look at, and a required column
+  /// would leave nowhere to record it.
+  userId                 String?
+  receivedAt             DateTime  @default(now())
+  /// The reconciliation run that took this receipt into its observation.
+  ///
+  /// **Written before the provider is fetched, not after.** It marks the set of
+  /// notifications a run is answering for: anything arriving later has not been
+  /// looked at yet and must not be treated as covered. A wall clock could not
+  /// draw that line, because when a row was written and when it became visible
+  /// are not the same instant.
+  reconciliationRunId    String?
+  /// Null until a run has answered for this receipt. Once set, it means a
+  /// reconciliation that began after this receipt was durably recorded has
+  /// completed.
+  resolvedAt             DateTime?
+  /// What became of it — applied, already converged, coalesced with others,
+  /// superseded, or one of the refusals. See the billing design for the closed
+  /// set.
+  outcome                String?
+  user                   User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  /// **Delivery idempotency, as a constraint rather than a convention.** A
+  /// provider may send the same notification many times; the second insert
+  /// fails, so it cannot be answered twice.
+  @@unique([provider, providerEventId])
+  /// Claiming a run's receipts, and finding what is still outstanding for one
+  /// subscription.
+  @@index([provider, providerSubscriptionId, resolvedAt])
+  /// The sweeper's question: what is unanswered, oldest first.
+  @@index([resolvedAt, receivedAt])
+  /// One account's notifications, for whoever is looking into it.
+  @@index([userId, receivedAt])
+}
+
+/// The serialisation point for reconciling one provider subscription.
+///
+/// **It exists because fetching provider state has to be serialised, not just
+/// writing it.** Two handlers that each fetch and then queue for a row lock can
+/// still apply their results in the wrong order: the lock makes the writes
+/// orderly but says nothing about which fetch saw the newer world. Holding this
+/// lease across the fetch is what makes a later run's observation no older than
+/// an earlier one's.
+///
+/// **A lease rather than a database lock**, because the fetch is a network call
+/// and no transaction should be open across one. It is an ordinary row with an
+/// expiry, so a handler that dies releases it by running out of time rather
+/// than by holding a connection hostage.
+///
+/// **`leaseToken` is a fence.** A run whose lease expired mid-fetch may still
+/// be alive and about to write; it checks the token before applying and
+/// discards its work if another run has taken over.
+model BillingReconciliation {
+  id                     String    @id @default(cuid())
+  provider               String
+  /// Together with `provider`, the thing being serialised. Not the account:
+  /// one account can have an old subscription and a new one, and those are
+  /// separate pieces of work.
+  providerSubscriptionId String
+  /// The account, once known. Null until a subscription has been bound.
+  userId                 String?
+  /// The oldest unanswered notification for this subscription, or null when
+  /// there are none.
+  ///
+  /// **Derived rather than flagged.** A boolean marker can be left set or
+  /// cleared wrongly and nothing shows it; this value is recomputed from the
+  /// receipts themselves whenever they change, so it cannot drift, and it
+  /// answers "how far behind are we" rather than only "is there work".
+  pendingSince           DateTime?
+  /// Who holds the lease. Also the identity of the run, and what
+  /// `BillingEvent.reconciliationRunId` and `ProviderEventReceipt` carry.
+  leaseToken             String?
+  /// When the lease lapses and another run may take over.
+  leaseUntil             DateTime?
+  /// How many times a run has been started for this subscription.
+  ///
+  /// **Retry state belongs here rather than on a receipt.** What is retried is
+  /// the reconciliation, not any one notification: several receipts are
+  /// answered by a single run, so counting attempts per receipt would count the
+  /// same work repeatedly.
+  attempts               Int       @default(0)
+  lastRunAt              DateTime?
+  /// Short reason for the most recent failure, for whoever is looking at a
+  /// subscription that has stopped converging. A sentence, never a payload.
+  lastFailureReason      String?
+  /// The run that first saw the provider report this subscription unpaid.
+  ///
+  /// **Why one observation is not enough.** Unpaid can go back to active at the
+  /// provider, and no provider documents that two successive reads return
+  /// states in order — so a single late read could revoke a subscription that
+  /// has in fact been paid. Requiring two serialised runs to agree costs one
+  /// sweep of delay against days already spent in grace, and that trade is
+  /// worth making. Cleared as soon as any other state is observed.
+  unpaidFirstSeenRunId   String?
+  user                   User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  /// One row per provider subscription: the lease has nothing to serialise
+  /// against otherwise.
+  @@unique([provider, providerSubscriptionId])
+  /// The sweeper's queue, oldest work first.
+  @@index([pendingSince])
+  /// Finding leases that have lapsed, so a dead run's work can be taken over.
+  @@index([leaseUntil])
 }
