@@ -67,6 +67,7 @@ describe("reading the configuration", () => {
       "STRIPE_PRICE_LITE",
       "STRIPE_PRICE_STANDARD",
       "STRIPE_PRICE_PRO",
+      "STRIPE_EXPECTED_LIVEMODE",
     ]);
   });
 
@@ -75,6 +76,73 @@ describe("reading the configuration", () => {
     const refused = JSON.stringify(readStripeRuntime({} as unknown as NodeJS.ProcessEnv));
 
     expect(refused).not.toContain("sk_");
+  });
+});
+
+/**
+ * Which Stripe world this deployment belongs to.
+ *
+ * **The guard the adapter always had and the environment could not reach.** A
+ * sandbox key paired with sandbox prices had nothing stopping it reconciling a
+ * live subscription that happened to arrive — the check existed, but no
+ * deployment could ask for it.
+ */
+describe("saying which Stripe world the configuration is for", () => {
+  it.each([
+    ["false", false],
+    ["true", true],
+    ["  false  ", false],
+  ])("reads %s", (raw, expected) => {
+    const runtime = readStripeRuntime({
+      ...configured,
+      [STRIPE_ENV.expectedLivemode]: raw,
+    } as unknown as NodeJS.ProcessEnv);
+
+    expect(runtime.ok).toBe(true);
+    expect(
+      (runtime as { config: { expectedLivemode?: boolean } }).config
+        .expectedLivemode,
+    ).toBe(expected);
+  });
+
+  /**
+   * **Unset means no check, deliberately.** Defaulting either way would decide
+   * something the deployment must state: one would refuse every live
+   * subscription the day this points at real money, the other would accept one
+   * against sandbox prices.
+   */
+  it.each([undefined, ""])("checks nothing when it is %s", (raw) => {
+    const runtime = readStripeRuntime({
+      ...configured,
+      ...(raw === undefined ? {} : { [STRIPE_ENV.expectedLivemode]: raw }),
+    } as unknown as NodeJS.ProcessEnv);
+
+    expect(runtime.ok).toBe(true);
+    expect(
+      (runtime as { config: Record<string, unknown> }).config,
+    ).not.toHaveProperty("expectedLivemode");
+  });
+
+  /** A typo must not read as silence. */
+  it.each(["no", "0", "FALSE", "sandbox", "off"])(
+    "refuses the configuration when it says %s",
+    (raw) => {
+      expect(
+        readStripeRuntime({
+          ...configured,
+          [STRIPE_ENV.expectedLivemode]: raw,
+        } as unknown as NodeJS.ProcessEnv),
+      ).toEqual({ ok: false, reason: "bad-livemode-flag" });
+    },
+  );
+
+  it("fails Stripe closed rather than reading it without a world", () => {
+    expect(
+      resolveProviderReader({
+        ...configured,
+        [STRIPE_ENV.expectedLivemode]: "maybe",
+      } as unknown as NodeJS.ProcessEnv)("stripe"),
+    ).toEqual({ unavailable: "bad-livemode-flag" });
   });
 });
 

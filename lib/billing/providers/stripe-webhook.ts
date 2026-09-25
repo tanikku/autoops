@@ -27,12 +27,19 @@ import { STRIPE_PROVIDER } from "@/lib/billing/providers/stripe";
 /**
  * The deliveries worth waking a reconciliation for.
  *
- * **Only the subscription's own lifecycle.** Every one of these carries the
- * subscription as `data.object`, so the id can be read without guessing.
- * Invoice and payment events are deliberately absent: they identify a
- * subscription only indirectly, and each of them is accompanied by a
- * subscription event that says the same thing — "this subscription may have
- * moved" — without the indirection.
+ * **Wake-up signals, not a record of what happened.** Koqentra reconciles the
+ * subscription's *current* state, so what a delivery is for is telling us which
+ * subscription to go and look at. These three are chosen because each carries
+ * the subscription itself as `data.object`, so the id can be read without
+ * guessing — and because changes to the subscription resource are what these
+ * events report.
+ *
+ * **Invoice and payment events are left out because they identify a
+ * subscription only indirectly**, not because Stripe promises a matching
+ * subscription event for each of them. Stripe makes no such guarantee, and
+ * nothing here depends on one: current-state retrieval is the source of truth,
+ * so a subscription that is looked at for any reason is reconciled against
+ * everything that has happened to it, whichever delivery prompted the look.
  */
 export const WOKEN_BY = [
   "customer.subscription.created",

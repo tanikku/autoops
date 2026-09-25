@@ -30,12 +30,54 @@ export const STRIPE_ENV = {
   priceLite: "STRIPE_PRICE_LITE",
   priceStandard: "STRIPE_PRICE_STANDARD",
   pricePro: "STRIPE_PRICE_PRO",
+  expectedLivemode: "STRIPE_EXPECTED_LIVEMODE",
 } as const;
 
 /** Stripe's configuration, or why there isn't any. */
 export type StripeRuntime =
   | { readonly ok: true; readonly secretKey: string; readonly config: StripeAdapterConfig }
-  | { readonly ok: false; readonly reason: "no-secret-key" | "no-price-catalogue" };
+  | {
+      readonly ok: false;
+      readonly reason:
+        | "no-secret-key"
+        | "no-price-catalogue"
+        | "bad-livemode-flag";
+    };
+
+/**
+ * Which Stripe world this deployment's keys and prices belong to.
+ *
+ * **Set it, and a subscription from the other world is refused.** The adapter
+ * can already check this; what was missing was any way to say so from the
+ * environment — so a sandbox key paired with sandbox prices had nothing
+ * stopping it from reconciling a live subscription that happened to reach it.
+ *
+ * **Unset means no check, and that is deliberate.** Making absence mean
+ * "expect test mode" would refuse every live subscription the day this is
+ * pointed at real money, and making it mean "expect live" would do the reverse;
+ * either would be this file deciding something the deployment must state. What
+ * it will not accept is a value that is neither — a typo must not read as
+ * silence.
+ */
+function readExpectedLivemode(
+  raw: string | undefined,
+): { ok: true; value: boolean | undefined } | { ok: false } {
+  const trimmed = raw?.trim();
+
+  if (trimmed === undefined || trimmed === "") {
+    return { ok: true, value: undefined };
+  }
+
+  if (trimmed === "true") {
+    return { ok: true, value: true };
+  }
+
+  if (trimmed === "false") {
+    return { ok: true, value: false };
+  }
+
+  return { ok: false };
+}
 
 /**
  * Reads Stripe's configuration from the environment it is given.
@@ -64,7 +106,20 @@ export function readStripeRuntime(
     return { ok: false, reason: "no-price-catalogue" };
   }
 
-  return { ok: true, secretKey, config: { prices } };
+  const livemode = readExpectedLivemode(env[STRIPE_ENV.expectedLivemode]);
+
+  if (!livemode.ok) {
+    return { ok: false, reason: "bad-livemode-flag" };
+  }
+
+  return {
+    ok: true,
+    secretKey,
+    config: {
+      prices,
+      ...(livemode.value === undefined ? {} : { expectedLivemode: livemode.value }),
+    },
+  };
 }
 
 /**
