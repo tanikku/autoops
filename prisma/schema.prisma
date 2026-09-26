@@ -80,6 +80,9 @@ model User {
   billingEvents          BillingEvent[]
   providerEventReceipts  ProviderEventReceipt[]
   billingReconciliations BillingReconciliation[]
+  /// **At most one, and that is the point** — see `CheckoutAttempt`, where the
+  /// uniqueness is what stops one account starting two checkouts at once.
+  checkoutAttempt        CheckoutAttempt?
 }
 
 model Routine {
@@ -1193,4 +1196,74 @@ model BillingReconciliation {
   @@index([pendingSince])
   /// Finding leases that have lapsed, so a dead run's work can be taken over.
   @@index([leaseUntil])
+}
+
+/// Who is already partway through starting a subscription, so a second attempt
+/// does not start another one.
+///
+/// **Coordination, and nothing else.** This is not what an account is entitled
+/// to — that is `Subscription`, and only reconciliation writes it. It is not a
+/// record that a provider said something — that is `ProviderEventReceipt`. It
+/// is not the queue that reconciles against the provider's current state —
+/// that is `BillingReconciliation`. What lives here is the answer to one
+/// question: is this account already in the middle of starting a checkout?
+///
+/// **It exists because the provider cannot be asked yet.** A first-time buyer
+/// has no customer on the provider's side, so there is nothing to look up and
+/// no way to tell an account that has not bought anything apart from one that
+/// bought ninety seconds ago and whose webhook is still waiting to be
+/// reconciled. Between the payment and the sweep that follows it there is a
+/// window — minutes wide, because reconciliation runs on a schedule — in which
+/// a second checkout would create a second subscription and the account would
+/// be charged twice. A row taken *before* the provider is called is what
+/// closes that window.
+///
+/// **Nothing here entitles anybody.** A completed checkout changes what this
+/// says and changes nothing about what the account may do; that follows later,
+/// from the provider's own state, through the same path every other billing
+/// change takes.
+model CheckoutAttempt {
+  id     String @id @default(cuid())
+  /// The account. **Unique, and that uniqueness is the whole mechanism**: two
+  /// requests racing to start a checkout cannot both create this row, so one
+  /// of them finds the other's and joins it rather than starting a second
+  /// checkout of its own.
+  userId String @unique
+  /// Which plan is being bought — one of the plans that has a price. Narrowed
+  /// by the application, not by the database, the same way `Subscription.plan`
+  /// is.
+  plan   String
+  /// How far this attempt has got: "starting", "open" or "closed".
+  ///
+  /// **Three states, and they are about coordination rather than about the
+  /// provider.** A checkout that was paid for and one that expired are both
+  /// "closed" here, because what this column decides is whether the account
+  /// may start another one — and for that question they are the same answer.
+  /// What actually happened to the money is the provider's to say.
+  state  String
+  /// The provider's checkout session, once there is one.
+  ///
+  /// **Null is an ordinary state and not an error.** The row is written before
+  /// the provider is called, so between those two moments there is an attempt
+  /// with no session — which is exactly the window this table exists to hold.
+  /// A crash there leaves this null, and the retry recognises the attempt by
+  /// its own id rather than by a session it may never have learned.
+  providerCheckoutSessionId String?
+  /// When this attempt stops holding the account's slot.
+  ///
+  /// **Longer than the provider's own session expiry, deliberately.** If the
+  /// slot were freed while the session could still be paid for, a second
+  /// checkout could begin against a first one that is still live — which is
+  /// the thing being prevented. Shorter than the window in which the provider
+  /// will replay an identical request, so a retry inside the slot's lifetime
+  /// still resolves to the same session rather than a new one.
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Finding attempts whose slot has lapsed. **There is no job that deletes
+  /// them**: an account holds at most one row, a lapsed one is replaced by the
+  /// next attempt, and deleting the account takes it along.
+  @@index([expiresAt])
 }
