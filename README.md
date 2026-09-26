@@ -1000,26 +1000,41 @@ the next one, so a changed setting would appear to do nothing.
 
 ### Billing and entitlements
 
-**Nothing is enforced, and nothing is charged.** Koqentra holds a
-provider-neutral description of what a plan allows and what an account is
-entitled to, and no code that runs a worker reads any of it. What an account may
-do today is decided by exactly what decided it before: the worker limits in
-`lib/worker-quota.ts`, the hourly allowances in `lib/rate-limit.ts`, and the
-locks around execution.
+**One allowance is enforced, and nobody has been charged for one.** Koqentra
+holds a provider-neutral description of what a plan allows and what an account is
+entitled to. **No code that runs a worker reads any of it** — the scheduler, the
+dispatcher and execution itself are as free of this as they ever were, and the
+hourly allowances in `lib/rate-limit.ts` and the locks around execution read no
+plan either.
+
+**What is enforced is how many workers may be active at once.**
+`lib/worker-quota.ts` used to apply one number to everybody; it now asks
+`resolveActiveWorkerLimit`, which reads the account's `Subscription` and answers
+with its plan's own figure — three on a trial, two on `lite`, ten on the granted
+beta allowance. Creating a worker that would be active, or making an existing one
+active, is refused at that figure. **Nothing else in the entitlement refuses
+anything**: the counted allowances below stop nothing, and a `state` that entitles
+nothing takes no capacity away — the limits are reported whatever the state says.
+
+**No purchase has been charged in production.** The plans carry no prices and no
+provider price ids, there is no checkout, and no balance or payment state refuses
+an account anything. The one subscription that has existed on the provider's side
+was a **sandbox** one, created to prove the reconciliation path end to end — see
+[Billing, end to end against Production](#billing-end-to-end-against-production).
 
 What exists:
 
 | Piece | Where | State |
 | --- | --- | --- |
 | Plan catalogue | `lib/plans.ts` | Five plans, with their allowances. No prices and no provider price ids |
-| Effective entitlement | `lib/entitlements/` | Works out what an account may do from a stored row and an instant. **Imported by nothing that runs** |
+| Effective entitlement | `lib/entitlements/` | Works out what an account may do from a stored row and an instant. **One number of it is enforced** — `resolveActiveWorkerLimit` reads the account's `Subscription` inside the transaction that creates or activates a worker, and `lib/worker-quota.ts` refuses at the plan's figure. **Nothing on the execution path reads it**, and the rest of what it works out is read to be shown |
 | Trial arithmetic | `lib/entitlements/trial.ts` | How long a trial is, and who may start one |
 | Trial start | `lib/entitlements/start-trial.ts` | Starts a trial on an account's first successful worker activation. **Live — and enforced by nothing** |
 | Usage period and counters | `lib/usage/period.ts`, `lib/usage/consume.ts` | How an allowance would be **enforced**. `consumeUsage` refuses past its limit; **nothing calls it** |
 | Usage observation | `lib/usage/observe.ts`, `lib/usage/snapshot.ts` | How usage is **counted without being enforced**. Live — see below |
 | Provider usage recording | `lib/usage/record.ts` | How a call to a model is written down. **Live for all six features** |
-| Beta grant | `lib/billing/admin.ts` | Gives a carried-over account the beta allowance. No route, no action, no UI, and it has not been run |
-| Beta grant runner | `scripts/grant-beta.ts` | The command an operator runs to grant the cohort. **Dry-run by default**, and it has not been run against Production — see below |
+| Beta grant | `lib/billing/admin.ts` | Gives a carried-over account the beta allowance. No route, no action, no UI — the only way to run it is to mean to. **Run against Production once**, for the internal account M1E-8B needed |
+| Beta grant runner | `scripts/grant-beta.ts` | The command an operator runs to grant the cohort. **Dry-run by default**. Run against Production once, dry run first — see below |
 
 **Usage is counted, and counting stops nothing.** Three product counters move
 as accounts work: `aiProcessing` on every real call to a model, `manualRun` on
@@ -1085,6 +1100,18 @@ beta entitlement. It is an operational command, not an admin screen: there is no
 route, no page and no button, and it does nothing unless an operator runs it on
 purpose.
 
+**It has been run against Production, once.** Everything below was written
+before that and describes the command rather than the run, so it reads the same
+either way; what the run added is evidence that it behaves as described. It was
+needed for the internal account in [Billing, end to end against
+Production](#billing-end-to-end-against-production): the cohort had grown from
+five accounts to six, `--expected-users=6` was the guard, a dry run reported
+`ELIGIBLE FOR CREATE: 1 / IDENTICAL GRANTS PRESENT: 5 / CONFLICTS: 0`, and the
+same command with `--execute` created that one row. **The five accounts already
+holding the grant were classified `identical` and left untouched** — not their
+expiry, not `trialForfeitedAt`, not `updatedAt` — which is the property the
+paragraphs below claim and this is the occasion that tested it.
+
 ```
 railway ssh --service autoops --   "node /app/dist/ops/grant-beta.mjs --expected-users=5 --expires-at=2026-12-31T23:59:59Z"
 ```
@@ -1147,8 +1174,13 @@ not move, and there is no code path that could reset a counter or backfill a
 month. Granting an entitlement is not a reason to reinterpret a month that has
 already been counted.
 
-**Hard enforcement stays off.** The grant establishes a durable `Subscription`
-and nothing else: no scheduler, dispatcher, run, draft or Creator path reads it.
+**Most enforcement stays off, and one thing does not.** The grant establishes a
+durable `Subscription`, and no scheduler, dispatcher, run, draft or Creator path
+reads it. What it does change is the account's **active-worker capacity**: the
+beta plan allows ten where an account with no entitlement is judged by the
+trial's three, and that figure is what worker creation and activation are refused
+at. The counted allowances are untouched — see [Billing and
+entitlements](#billing-and-entitlements).
 
 **An admin-granted beta account is never offered the trial**, including after
 the grant expires. `isAdminGrantedBeta` reads the two columns that do not move —
@@ -1386,9 +1418,9 @@ User ──┬── Routine ──── RunHistory
 | **Routine** | A worker | Four columns define the schedule; `nextRunAt` is what it resolves to |
 | **RunHistory** | One execution | `userId` denormalised from the routine |
 | **RateLimitBucket** | How much of a rate-limited action an account has used | One row per account and scope, rewritten in place — see [AI drafting is bounded](#ai-drafting-is-bounded) |
-| **Subscription** | What an account is entitled to, and where that came from | One row per account, and **its absence is an ordinary state**. Nothing reads it yet — see [Billing and entitlements](#billing-and-entitlements) |
-| **UsagePeriod** | One billing cycle's worth of allowance | `planAtStart` records what the period was opened under, which cannot be recovered afterwards. Nothing creates one yet |
-| **UsageCounter** | How much of one allowance a period has spent | `used` counts product units, not provider requests. Nothing spends yet |
+| **Subscription** | What an account is entitled to, and where that came from | One row per account, and **its absence is an ordinary state**. Read and written by billing reconciliation, which is what moves `plan`, `state` and `source`; **nothing that runs a worker reads it** — see [Billing and entitlements](#billing-and-entitlements) |
+| **UsagePeriod** | One billing cycle's worth of allowance | `planAtStart` records what the period was opened under, which cannot be recovered afterwards. Opened by a trial starting and by a paid activation, which take the period's dates from the provider; **an entitlement ending opens none and closes none** |
+| **UsageCounter** | How much of one allowance a period has spent | `used` counts product units, not provider requests. Three are created with each period, one per allowance, all at `used = 0`; **nothing spends them yet** |
 | **ProviderUsageEvent** | What one call to a model used | Raw token counts and nothing else. Null means unknown, zero means the provider said zero. Written by all six paths that call a model; `runId` is null for the three that write no run |
 
 `Routine.emailNotificationsEnabled` is a `Boolean` defaulting to `false`, and it
@@ -1519,7 +1551,7 @@ cp .env.example .env
 | `AUTH_SECRET` | Yes | Signs the session JWT |
 | `AUTH_GOOGLE_ID` | Yes | Google OAuth client id |
 | `AUTH_GOOGLE_SECRET` | Yes | Google OAuth client secret |
-| `CRON_SECRET` | Yes | Bearer token for `POST /api/cron/run`. Unset means every request is rejected |
+| `CRON_SECRET` | Yes | Bearer token for `POST /api/cron/run` and `POST /api/cron/billing` — **one secret, both routes**, because one cron service calls both. Unset means every request to either is rejected |
 | `BETA_ALLOWED_EMAILS` | Yes | Comma-separated addresses allowed to sign in. **Unset means nobody can** — see below |
 | `AUTH_URL` | **In production** | The deployed origin, e.g. `https://koqentra.example.com`. Leave it unset locally — see below |
 | `ANTHROPIC_API_KEY` | No | Real AI execution. Without it, a stand-in provider answers |
@@ -1832,6 +1864,71 @@ Failure (`500`) — the cause is written to the server log only:
 { "success": false, "error": "Internal Server Error" }
 ```
 
+#### Reconciling billing on the same tick
+
+`POST /api/cron/billing` is the second entry point the cron service calls. It
+asks the sweeper to read the provider's current state for every subscription
+that owes a look, and reports how many it examined and what each one came to.
+
+**The same doorway, and nothing else shared.** It is matched against the same
+`CRON_SECRET` as `/api/cron/run` — one cron service calls both, and a second
+secret would be a second thing to rotate and a second way to get it wrong. Past
+the doorway they have nothing in common: this route reads no `Routine`, takes no
+execution lease, and does not know that workers exist. Putting billing inside
+the worker tick would have tied two unrelated schedules together and let one
+slow provider delay everybody's workers.
+
+- **`POST` only**, and `Authorization: Bearer <CRON_SECRET>` is required. With
+  `CRON_SECRET` unset every request is refused, the same way the worker tick
+  fails closed.
+
+Success (`200`) — `examined` is how many subscriptions the sweep took,
+`outcomes` how many came to each result:
+
+```json
+{ "success": true, "examined": 0, "outcomes": {} }
+```
+
+```json
+{ "success": true, "examined": 2, "outcomes": { "applied": 1, "not-claimed": 1 } }
+```
+
+**Bounded, always.** One sweep takes at most **ten** subscriptions and stops.
+Each one is a provider call and a short transaction, and the whole sweep sits
+inside a request the platform will cut off; anything left owing is still owing
+when the next sweep runs, which is the property that makes a small batch safe.
+The oldest wait goes first — `pendingSince` ascending, by Koqentra's own clock
+rather than by any timestamp the provider chose.
+
+**Nothing pending costs one query.** No provider reader is resolved and no
+provider client is built, so a deployment with no billing work — or none
+configured — sweeps for the price of a single `SELECT`.
+
+⚠️ **A failure inside the sweep still answers `200`.** One subscription's
+trouble is its own: an unreachable provider, a missing configuration, a reading
+that makes no sense — each is counted under its own key in `outcomes` and the
+sweep carries on with the rest. A batch that aborted on the first problem would
+let one broken account stop every other account from ever being reconciled. So
+the status code says the tick ran, and `outcomes` says what it managed:
+
+```json
+{ "success": true, "examined": 3, "outcomes": { "applied": 1, "failed": 1, "no-secret-key": 1 } }
+```
+
+| Question | Where to look |
+| --- | --- |
+| Did the sweep run at all? | HTTP status. Anything but `200` |
+| Could every subscription be reconciled? | `outcomes` in this response |
+| Which account, and why not? | **Not here.** The server log, then the account's own rows |
+
+`500` is reserved for a sweep that could not run at all. Every completed sweep
+writes one line — counts and categories, never a subscription id or an account:
+
+```
+[billing] sweep finished — examined=0
+[billing] sweep finished — examined=2 applied=1 not-claimed=1
+```
+
 #### How long a tick took
 
 Every completed tick writes one line to the server log:
@@ -1864,6 +1961,15 @@ it, or change what runs — it chooses `warn` over `log` and nothing else, the
 same standing the fifteen minutes in [Worker Health](#worker-health) has.
 Deciding what to do about a slow tick is a decision for whoever reads the line.
 
+**The billing sweep runs on the same tick, after this one has answered.** It is
+a second request rather than more work inside this one, so the duration above
+still measures the dispatcher and only the dispatcher. What the sweep adds to
+the five minutes is bounded the same way its batch is: nothing pending costs a
+single query, and the most it will ever do is **ten** reconciliations — see
+[Reconciling billing on the same tick](#reconciling-billing-on-the-same-tick).
+The threshold is not restated for it; a sweep that ran long would show up as a
+tick that overlapped the next one, which is what the interval already says.
+
 #### Knowing the tick happened at all
 
 A tick that fails says so: the HTTP status carries it. **A tick that never runs
@@ -1879,25 +1985,43 @@ twenty minutes after the last tick that worked.
 The cron service sends it, and only once Koqentra has answered:
 
 ```
-A && (B || true)
+A && B && (C || true)
 ```
 
-`A` is the call to `/api/cron/run`, `B` is the ping, and two properties follow
-from that shape rather than from anything being checked:
+`A` is the call to `/api/cron/run`, `B` the call to `/api/cron/billing`, `C` the
+ping, and three properties follow from that shape rather than from anything
+being checked:
 
 - **A tick that failed sends no heartbeat.** `--fail-with-body` turns a `4xx`
   or `5xx` into a curl failure, so `&&` stops there and the check falls silent.
   Without the flag curl exits `0` on an HTTP error and the ping would go out
   anyway, which is the failure mode this exists to avoid.
+- **A sweep that failed sends no heartbeat either**, and it does not run at all
+  if the worker tick did not answer first. The two calls are chained rather than
+  independent, so the check watches both and the alert cannot say which — the
+  log can, one line each.
 - **A heartbeat that failed is not a tick that failed.** `|| true` absorbs it,
   and the ping carries `--max-time 10` of its own so a hanging monitor cannot
   hold the container open. **Watching something must not change what it does**
   — the same rule the [duration threshold](#how-long-a-tick-took) follows.
 
+**`B` was added after the shape was.** The switch used to be `A && (C || true)`
+and watched the worker tick alone; billing was reconciled by hand until the
+sweep had been run against Production and proven. Extending the chain rather
+than adding a second check is what keeps one heartbeat, one interval and one
+credential — at the cost named below.
+
 **It watches for silence, not for failure.** A tick that hands off nothing
 pings exactly like a busy one, and so does a tick whose worker then failed —
 the tick did its job. Noticing a failing *execution* needs a different signal,
 and there is not one; see the [Backlog](#backlog).
+
+**The same gap is open on the billing side, for the same reason.** A sweep that
+examined three subscriptions and could not reconcile one of them answers `200`
+and pings, because the tick did its job — the trouble is recorded per
+subscription in `outcomes` and in the log, and the heartbeat never sees it. So
+the switch establishes that reconciliation is *running*, and nothing yet
+establishes that it is *succeeding*.
 
 The ping URL is a credential — it is all anyone needs to tell the check that
 everything is fine — so it lives in a Railway variable and appears in no file
@@ -2184,6 +2308,63 @@ For production, add the same path on your deployed origin.
 | Sprint 44 | A delete that the database refused stops escaping the action, and every tick says when execution last failed | Completed |
 | Sprint 45 | Sign-in limited to an invited list, and a privacy notice describing what Koqentra actually keeps | Completed |
 | Email Notification MVP | A worker can email its owner when a watched page changes, when a run finishes, or when one fails | Completed |
+| Billing M1E-8B | Stripe Sandbox end to end against Production, activation and cancellation both, then the sweep put on the cron tick | Completed |
+
+### Billing, end to end against Production
+
+Sprint 28's cron service called one route for years of ticks. It now calls two,
+and what closed the gap between them is one Stripe subscription in a sandbox,
+followed from the webhook to the entitlement and back out again.
+
+**A dedicated internal account, and none of the five.** The Closed Beta's
+accounts are real people; the test was run on a sixth, invited the same way
+(`BETA_ALLOWED_EMAILS`, one entry appended) and granted the same allowance by
+the same runner (`scripts/grant-beta.ts`, dry run first, `--expected-users=6`).
+Its `trialForfeitedAt` was written with the grant, so it never was and never
+will be owed a trial.
+
+Both directions were verified, each as its own delivery and its own sweep:
+
+| | Activation | Cancellation |
+| --- | --- | --- |
+| Delivery | `customer.subscription.created` | `customer.subscription.deleted` |
+| Signature | Verified from the raw body, no API key | Verified the same way |
+| Receipt | Recorded, unresolved, `userId` still null | Recorded, unresolved |
+| Queue | `pendingSince` set from the receipt's arrival | The **same row** made pending again |
+| Sweep | Provider read, `livemode` checked, metadata read | Read again, `status: canceled` |
+| Entitlement | `beta`/`admin` → `lite`/`stripe`, period opened | `active` → `inactive`, period left alone |
+| Event | `subscription.activated` | `subscription.ended` |
+
+Three things this established that could not be established any other way:
+
+- **Provider-current-state reconciliation works without an ordering
+  guarantee.** Neither delivery decided anything; both only said which
+  subscription to go and look at, and what was read decided the entitlement.
+- **`STRIPE_EXPECTED_LIVEMODE` is reachable from the environment** and was
+  actually exercised — a sandbox subscription against a sandbox key passed the
+  check that a live one would have failed.
+- **A cancelled Stripe subscription is still retrievable and still carries its
+  metadata**, which the adapter had assumed and nothing had confirmed.
+
+**The audit trail was left where it fell.** Both receipts, both billing events,
+the paid `UsagePeriod` and its three counters, and the account's
+`providerCustomerId`, `providerSubscriptionId` and `providerSyncedAt` are all
+still there on an account that is now `inactive`. Deleting them by hand would
+have been tidier and would have destroyed the only record that any of this
+happened. `plan` still reads `lite` for the same reason: what an account may do
+is decided by `state`, and `inactive` means `entitled: false` whatever the plan
+column remembers.
+
+**Nothing new was added to run it.** No second cron service, no second secret,
+no second heartbeat check — one line appended to a start command that already
+existed. The first automatic sweep answered
+`{"success":true,"examined":0,"outcomes":{}}`, which is what nothing owing looks
+like.
+
+**What is still not watched:** a sweep that runs and fails part way answers
+`200` and pings, so the heartbeat cannot tell a healthy sweep from one that
+could not reconcile an account. See [Knowing the tick happened at
+all](#knowing-the-tick-happened-at-all).
 
 ## Backlog
 
@@ -2384,7 +2565,7 @@ Known and deliberately deferred — none of these are bugs waiting on a fix.
   | Applying migrations | The Web Service's start command is `prisma migrate deploy && next start`, exactly as anticipated. `package.json` was left unchanged |
   | `CRON_SECRET` | Set on both the Web Service and the Cron Service as separate environment variables with the same value |
   | Database hosting | Railway's managed PostgreSQL plugin |
-  | Cron execution | A Railway Cron Service, on a 5-minute schedule (Railway's minimum interval — the 1-minute interval originally planned is not available), calling `POST /api/cron/run` |
+  | Cron execution | A Railway Cron Service, on a 5-minute schedule (Railway's minimum interval — the 1-minute interval originally planned is not available), calling `POST /api/cron/run`, then `POST /api/cron/billing`, then the heartbeat. The billing call was added once the sweep had been proven against Production; the schedule, the service and the secret were not changed to accommodate it |
 
 - **The production origin is `https://app.koqentra.com`, and the
   Railway-issued domain still answers.** Both are custom and generated domains
