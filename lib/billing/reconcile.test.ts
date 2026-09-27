@@ -62,6 +62,8 @@ const { reconcileProviderSubscription } = await import(
 const { getPlanDefinition } = await import("@/lib/plans");
 
 const cleanupLogs: string[] = [];
+/** Lines written by the cleanup observation, and only those. */
+const outcomeLogs: string[] = [];
 
 const USER = "google-sub-1";
 const SUB = "provider-sub-1";
@@ -156,6 +158,10 @@ beforeEach(() => {
   cleanupLogs.length = 0;
   vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
     cleanupLogs.push(args.map(String).join(" "));
+  });
+  outcomeLogs.length = 0;
+  vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+    outcomeLogs.push(args.map(String).join(" "));
   });
   subscriptionFindUnique.mockReset().mockResolvedValue(null);
   subscriptionCreate.mockReset().mockResolvedValue({ id: "s1" });
@@ -1149,5 +1155,135 @@ describe("the checkout slot a purchase was holding", () => {
     expect(logged).not.toContain(SUB);
     expect(logged).not.toContain("cus-1");
     expect(logged).not.toContain("connection to");
+  });
+});
+
+/**
+ * What the cleanup came to, said in one line.
+ *
+ * **Observation only.** The line exists so a purchase releasing its slot can be
+ * seen without reading the row; it carries the outcome and nothing that names
+ * the account, the plan or the provider's objects.
+ */
+describe("the line that says what the cleanup came to", () => {
+  const PREFIX = "[billing] checkout slot after activation — outcome=";
+
+  it.each([
+    "closed",
+    "no-attempt",
+    "already-closed",
+    "plan-mismatch",
+    "newer-attempt",
+    "not-a-bought-plan",
+  ])("says %s once, and nothing else", async (outcome) => {
+    subscriptionFindUnique.mockResolvedValue(null);
+    closeSettledCheckoutAttempt.mockResolvedValue({ outcome });
+
+    await reconcile(snapshot());
+
+    expect(outcomeLogs).toEqual([`${PREFIX}${outcome}`]);
+  });
+
+  it("names no account, plan, subscription or customer", async () => {
+    subscriptionFindUnique.mockResolvedValue(null);
+
+    await reconcile(snapshot());
+
+    const logged = outcomeLogs.join("\n");
+
+    for (const forbidden of [USER, SUB, "cus-1", "standard", RUN]) {
+      expect(logged, `names ${forbidden}`).not.toContain(forbidden);
+    }
+  });
+
+  /** A failure is not an outcome, and none is invented for it. */
+  it("says nothing but the existing error when the cleanup throws", async () => {
+    subscriptionFindUnique.mockResolvedValue(null);
+    closeSettledCheckoutAttempt.mockRejectedValue(new Error("boom"));
+
+    const result = await reconcile(snapshot());
+
+    expect(outcomeLogs).toEqual([]);
+    expect(cleanupLogs).toEqual([
+      "[billing] could not release the settled checkout slot — Error",
+    ]);
+    expect(result).toEqual({
+      outcome: "applied",
+      kinds: ["subscription.activated"],
+    });
+  });
+
+  it("does not change what the reconciliation answers", async () => {
+    subscriptionFindUnique.mockResolvedValue(null);
+    closeSettledCheckoutAttempt.mockResolvedValue({ outcome: "plan-mismatch" });
+
+    expect(await reconcile(snapshot())).toEqual({
+      outcome: "applied",
+      kinds: ["subscription.activated"],
+    });
+    expect(writtenKinds()).toEqual(["subscription.activated"]);
+  });
+
+  it("is not written by a renewal", async () => {
+    subscriptionFindUnique.mockResolvedValue(stored());
+
+    await reconcile(snapshot({ periodStart: P2.start, periodEnd: P2.end }));
+
+    expect(writtenKinds()).toContain("subscription.renewed");
+    expect(outcomeLogs).toEqual([]);
+  });
+
+  it("is not written by a cancellation", async () => {
+    subscriptionFindUnique.mockResolvedValue(stored());
+
+    await reconcile(snapshot({ entitlement: "not-entitled" }));
+
+    expect(outcomeLogs).toEqual([]);
+  });
+
+  it("is not written by a scheduled cancellation or a reactivation", async () => {
+    subscriptionFindUnique.mockResolvedValue(stored());
+
+    await reconcile(snapshot({ cancelAtPeriodEnd: true }));
+
+    expect(writtenKinds()).toContain("subscription.canceled");
+
+    subscriptionFindUnique.mockResolvedValue(stored({ state: "canceled_active" }));
+    billingCreate.mockClear();
+
+    await reconcile(snapshot());
+
+    expect(writtenKinds()).toContain("subscription.reactivated");
+    expect(outcomeLogs).toEqual([]);
+  });
+
+  it("is not written by a plan change", async () => {
+    subscriptionFindUnique.mockResolvedValue(stored({ plan: "lite" }));
+
+    await reconcile(snapshot({ plan: "standard" }));
+
+    expect(outcomeLogs).toEqual([]);
+  });
+
+  it("is not written by a refusal", async () => {
+    subscriptionFindUnique.mockResolvedValue(stored({ plan: "pro" }));
+
+    expect((await reconcile(snapshot({ plan: "lite" }))).outcome).toBe(
+      "provider-domain-mismatch",
+    );
+    expect(outcomeLogs).toEqual([]);
+  });
+
+  it("is not written when nothing changed", async () => {
+    subscriptionFindUnique.mockResolvedValue(stored());
+
+    expect((await reconcile(snapshot())).outcome).toBe("already-converged");
+    expect(outcomeLogs).toEqual([]);
+  });
+
+  it("is not written for a malformed snapshot", async () => {
+    await reconcile(snapshot({ userId: "" }));
+
+    expect(outcomeLogs).toEqual([]);
   });
 });

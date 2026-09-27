@@ -137,12 +137,20 @@ async function releaseSettledCheckout(
   }
 
   try {
-    await closeSettledCheckoutAttempt({
+    const released = await closeSettledCheckoutAttempt({
       userId: snapshot.userId,
       plan: snapshot.plan,
       subscriptionStartedAt: period.start,
       client,
     });
+
+    // **Observation only, and only the outcome.** Without this line the one way
+    // to see whether a purchase released its slot was to read the row itself.
+    // Nothing here decides anything, and nothing that identifies the account,
+    // the plan or the provider's objects is written.
+    console.log(
+      `[billing] checkout slot after activation — outcome=${released.outcome}`,
+    );
   } catch (error) {
     // **The category, never the cause, and never an identifier.** The
     // entitlement is applied; this is a slot that will now lapse instead of
