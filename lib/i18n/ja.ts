@@ -800,6 +800,13 @@ export const ja: Record<TranslationKey, string> = {
   "pricing.managed.heading": "契約の管理",
   "pricing.managed.description":
     "お支払い中のプランの変更・解約は、まだ画面からは行えません。サポートへご連絡いただければ対応します。",
+  "pricing.managed.portalDescription":
+    "お支払い方法や契約内容は、安全な Stripe の画面で管理できます。",
+  "pricing.portal.manage": "契約を管理",
+  "pricing.portal.pending": "開いています...",
+  "pricing.portal.message.notEligible": "ここで管理できる契約はありません。",
+  "pricing.portal.message.unavailable":
+    "現在、契約の管理画面を開けません。設定は変更されていません。",
   "pricing.plan.trial": "Trial",
   "pricing.plan.lite": "Lite",
   "pricing.plan.standard": "Standard",

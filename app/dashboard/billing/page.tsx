@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
+import { BillingPortalButton } from "@/components/billing-portal-button";
 import { DashboardNav } from "@/components/dashboard-nav";
 import { PlanCards } from "@/components/plan-cards";
 import { isSandboxCheckoutEnabledForUser } from "@/lib/billing/checkout-sandbox-server";
 import { planNameKey } from "@/lib/billing/plan-labels";
+import { mayOpenBillingPortal } from "@/lib/billing/portal";
 import {
   type CurrentPlanView,
   mayOfferPurchase,
@@ -137,6 +139,12 @@ export default async function BillingPage() {
   // into the browser from this is one boolean; the list it was decided from stays
   // in the environment of the server that read it.
   const checkoutEnabled = isSandboxCheckoutEnabledForUser(userId);
+  // **The same rollout switch opens the portal.** The accounts that have bought
+  // anything while checkout is proved are the accounts on that list; everybody
+  // else who has something to manage keeps the sentence they had, with the
+  // button beside it disabled the way an unopened checkout button is.
+  const portalOffered = mayOpenBillingPortal(view.current);
+  const portalEnabled = portalOffered && checkoutEnabled;
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -187,16 +195,38 @@ export default async function BillingPage() {
           />
         ) : (
           /* **Somebody already paying is not shown a plan to buy.** Offering one
-             would be offering them a second subscription; what they need is a way
-             to change or cancel the one they have, and that is not built yet — so
-             the page says so rather than implying a control exists. */
+             would be offering them a second subscription; what they need is the
+             provider's own page for the one they have. Where that is not open to
+             them yet, the page says so rather than implying a control exists.
+             **The portal sentence names no operation.** What can be done there
+             is the provider's configuration, and a sentence promising a plan
+             change or a cancellation would be a claim this page cannot check. */
           <section className="mt-10 border-t border-border pt-8">
             <h2 className="text-lg font-medium tracking-tight">
               {t(language, "pricing.managed.heading")}
             </h2>
             <p className="mt-3 max-w-2xl text-sm text-muted-foreground">
-              {t(language, "pricing.managed.description")}
+              {t(
+                language,
+                portalEnabled
+                  ? "pricing.managed.portalDescription"
+                  : "pricing.managed.description",
+              )}
             </p>
+            {portalOffered ? (
+              <BillingPortalButton
+                enabled={portalEnabled}
+                labels={{
+                  manage: t(language, "pricing.portal.manage"),
+                  unavailable: t(language, "pricing.cta.comingSoon"),
+                  pending: t(language, "pricing.portal.pending"),
+                  messages: {
+                    notEligible: t(language, "pricing.portal.message.notEligible"),
+                    unavailable: t(language, "pricing.portal.message.unavailable"),
+                  },
+                }}
+              />
+            ) : null}
           </section>
         )}
       </main>

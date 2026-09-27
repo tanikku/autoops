@@ -53,6 +53,19 @@ vi.mock("@/components/checkout-plan-button", () => ({
 
 const buttonProps: Record<string, unknown>[] = [];
 
+// **Stood in for for the same reason**: it calls the portal action. What this
+// file checks is whether it is rendered and what it is handed; its own
+// behaviour is `components/billing-portal-button.test.tsx`.
+vi.mock("@/components/billing-portal-button", () => ({
+  BillingPortalButton: (props: Record<string, unknown>) => {
+    portalProps.push(props);
+
+    return null;
+  },
+}));
+
+const portalProps: Record<string, unknown>[] = [];
+
 const { default: BillingPage, generateMetadata } = await import(
   "@/app/dashboard/billing/page"
 );
@@ -128,6 +141,7 @@ async function render(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   buttonProps.length = 0;
+  portalProps.length = 0;
   mocks.isSandboxCheckoutEnabledForUser.mockReset().mockReturnValue(false);
   mocks.requireUserId.mockReset().mockResolvedValue(USER);
   mocks.getUserLanguage.mockReset().mockResolvedValue("en");
@@ -603,6 +617,133 @@ describe("who is not offered a plan", () => {
 });
 
 /**
+ * The billing portal, offered to somebody paying and nobody else.
+ *
+ * **Behind the checkout's rollout switch.** An account with something to manage
+ * but outside the list keeps the sentence it had, and the button beside it is
+ * disabled the way an unopened checkout button is.
+ */
+describe("the billing portal", () => {
+  const paid = (state: string) => ({
+    current: { kind: "on-plan", plan: "lite", state, purchased: true, entitled: true },
+  });
+
+  beforeEach(() => {
+    mocks.mayOfferPurchase.mockReturnValue(false);
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(true);
+  });
+
+  it.each(["active", "grace", "canceled_active"])(
+    "is offered to a paid account in %s",
+    async (state) => {
+      const html = await render(paid(state));
+
+      expect(portalProps).toHaveLength(1);
+      expect(portalProps[0].enabled).toBe(true);
+      expect(html).toContain("secure billing portal");
+      expect(html).not.toContain("not available yet");
+    },
+  );
+
+  it.each([
+    ["no plan", { current: { kind: "none" } }],
+    ["the beta allowance", onPlan("beta", "active", false)],
+    ["a trial", onPlan("trial", "trialing", false)],
+    ["an expired trial", onPlan("trial", "trial_expired", false, false)],
+    ["an ended subscription", onPlan("lite", "inactive", true, false)],
+    ["an expired grant", onPlan("beta", "expired", false, false)],
+  ])("is not offered for %s", async (_label, overrides) => {
+    mocks.mayOfferPurchase.mockReturnValue(true);
+
+    const html = await render(overrides);
+
+    expect(portalProps).toHaveLength(0);
+    expect(html).not.toContain("billing portal");
+  });
+
+  /** Unreadable keeps the safe sentence it had, and gets no button. */
+  it("is not offered for a row the page cannot read", async () => {
+    const html = await render({ current: { kind: "unreadable" } });
+
+    expect(portalProps).toHaveLength(0);
+    expect(html).toContain("not available yet");
+  });
+
+  it("is disabled, with the old sentence, outside the rollout", async () => {
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(false);
+
+    const html = await render(paid("active"));
+
+    expect(portalProps).toHaveLength(1);
+    expect(portalProps[0].enabled).toBe(false);
+    expect(html).toContain("not available yet");
+    expect(html).not.toContain("billing portal");
+  });
+
+  it("hands over sentences and a boolean, nothing that identifies anybody", async () => {
+    await render(paid("active"));
+
+    expect(Object.keys(portalProps[0]).sort()).toEqual(["enabled", "labels"]);
+    expect(portalProps[0].labels).toEqual({
+      manage: "Manage subscription",
+      unavailable: "Not available yet",
+      pending: "Opening...",
+      messages: {
+        notEligible: "There is no subscription to manage here.",
+        unavailable:
+          "The billing portal cannot be opened right now. Nothing has changed.",
+      },
+    });
+
+    const handed = JSON.stringify(portalProps[0]);
+
+    for (const forbidden of ["cus_", "sub_", "sk_", USER, "@", "http"]) {
+      expect(handed, `hands over ${forbidden}`).not.toContain(forbidden);
+    }
+  });
+
+  /** Neither language promises what only the provider's settings decide. */
+  it.each(["en", "ja"])("claims no plan change or cancellation in %s", async (language) => {
+    mocks.getUserLanguage.mockResolvedValue(language);
+
+    const html = await render(paid("active"));
+    const said = [html, JSON.stringify(portalProps[0].labels)].join("\n");
+
+    for (const forbidden of [
+      "change your plan",
+      "switch",
+      "upgrade",
+      "downgrade",
+      "cancel",
+      "immediately",
+      "refund",
+      "プラン変更",
+      "プランを変更",
+      "解約",
+      "即時",
+      "返金",
+    ]) {
+      expect(said.toLowerCase(), `says ${forbidden}`).not.toContain(forbidden);
+    }
+  });
+
+  it("says it in Japanese", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+
+    const html = await render(paid("active"));
+
+    expect(html).toContain("お支払い方法や契約内容は、安全な Stripe の画面で管理できます。");
+    expect((portalProps[0].labels as { manage: string }).manage).toBe("契約を管理");
+  });
+
+  it("offers no purchase beside it", async () => {
+    await render(paid("active"));
+
+    expect(buttonProps).toHaveLength(0);
+  });
+});
+
+/**
  * Who is offered a purchase, and how the answer travels.
  *
  * **One boolean crosses, and it is the server's.** The list it was decided from
@@ -773,10 +914,12 @@ describe("what the page does not do", () => {
 
     expect(imports).toEqual([
       "next",
+      "@/components/billing-portal-button",
       "@/components/dashboard-nav",
       "@/components/plan-cards",
       "@/lib/billing/checkout-sandbox-server",
       "@/lib/billing/plan-labels",
+      "@/lib/billing/portal",
       "@/lib/billing/pricing",
       "@/lib/entitlements/types",
       "@/lib/i18n",
@@ -793,6 +936,9 @@ describe("what the page does not do", () => {
 
     expect(source).not.toContain("billing/actions");
     expect(source).not.toContain("startCheckoutAction");
+    // Nor the portal's: the button reaches for it, the page does not.
+    expect(source).not.toContain("portal-actions");
+    expect(source).not.toContain("openBillingPortalAction");
   });
 
   it("reaches no provider and starts no checkout", async () => {

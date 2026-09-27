@@ -1480,6 +1480,14 @@ Notes for the report:
   "pricing.managed.heading": "Managing your subscription",
   "pricing.managed.description":
     "Changing or cancelling a plan you pay for is not available yet. Email support and somebody will do it for you.",
+  "pricing.managed.portalDescription":
+    "Manage your payment method and subscription in Stripe's secure billing portal.",
+  "pricing.portal.manage": "Manage subscription",
+  "pricing.portal.pending": "Opening...",
+  "pricing.portal.message.notEligible":
+    "There is no subscription to manage here.",
+  "pricing.portal.message.unavailable":
+    "The billing portal cannot be opened right now. Nothing has changed.",
   "pricing.plan.trial": "Trial",
   "pricing.plan.lite": "Lite",
   "pricing.plan.standard": "Standard",
