@@ -388,6 +388,8 @@ export async function createRoutineAction(
     return quotaRejection(rejection, language, input);
   }
 
+  // The list gains a card and Home's active count may change with it.
+  revalidatePath("/dashboard/workers");
   revalidatePath("/dashboard");
   // The caller raises the toast and then navigates, so the outcome never has
   // to survive in the URL.

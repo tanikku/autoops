@@ -691,7 +691,9 @@ describe("run detail — the page a watcher watches", () => {
 
     const links = anchors(await render()).map((link) => link.href);
 
-    expect(links).toEqual(["/dashboard"]);
+    // The one link back, which is the workers list — `/dashboard` is the home
+    // screen now.
+    expect(links).toEqual(["/dashboard/workers"]);
   });
 });
 

@@ -170,7 +170,9 @@ export function RoutineForm({
   // does the jump to the field they pointed at.
   const visibleErrors = injected ? undefined : state?.errors;
 
-  useActionResult(state, { redirectTo: "/dashboard" });
+  // Saving a worker returns to the list of them, which moved to its own route
+  // when `/dashboard` became the home screen.
+  useActionResult(state, { redirectTo: "/dashboard/workers" });
   useScrollToFirstError(visibleErrors);
 
   /**
@@ -483,7 +485,7 @@ export function RoutineForm({
           <Button
             variant="outline"
             nativeButton={false}
-            render={<Link href="/dashboard" />}
+            render={<Link href="/dashboard/workers" />}
           >
             {t(language, "common.cancel")}
           </Button>

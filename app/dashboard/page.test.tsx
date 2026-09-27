@@ -1,290 +1,572 @@
+import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { t } from "@/lib/i18n";
 
 /**
- * What the dashboard reads, and how much of it.
+ * The screen signing in lands on.
  *
- * **The page used to make one read of run history and use it for three
- * things**: the activity list, the overview card, and every worker's health.
- * That worked while the read was unbounded, and only while it was — the list
- * wants the newest few rows, and the other two want figures counted over every
- * run there has ever been. One query cannot be both.
+ * **What is fixed here is mostly what it is not.** `/dashboard` used to be the
+ * workers list, and the product opened on Creator — so somebody arrived mid-task
+ * on a screen full of controls. This page lists no worker, edits nothing, sells
+ * nothing and starts nothing; several tests below assert those absences, which is
+ * the point of the separation.
  *
- * These fix the split: two reads, each bounded in its own way, and neither
- * multiplying by the number of workers on screen.
+ * **The plan it names has to be a plan the account has.** An ended subscription
+ * leaves its plan in the row, and naming that would be the defect the plans page
+ * was fixed for — twice over here, because this is the first screen somebody sees.
  */
 
 const mocks = vi.hoisted(() => ({
   requireUserId: vi.fn(),
-  listRoutines: vi.fn(),
+  getUsageSnapshot: vi.fn(),
+  readPricingView: vi.fn(),
   listRecentRuns: vi.fn(),
-  summarizeRunsByWorker: vi.fn(),
   getUserTimezone: vi.fn(),
   getUserLanguage: vi.fn(),
-  getTrialUsageView: vi.fn(),
+  getDocumentLanguage: vi.fn(),
 }));
 
 vi.mock("@/auth", () => ({ auth: vi.fn(), signIn: vi.fn(), signOut: vi.fn() }));
-const metadataMocks = vi.hoisted(() => ({ getDocumentLanguage: vi.fn() }));
-
-vi.mock("@/lib/i18n/server", () => ({
-  getDocumentLanguage: metadataMocks.getDocumentLanguage,
-}));
-
 vi.mock("@/lib/session", () => ({ requireUserId: mocks.requireUserId }));
-vi.mock("@/lib/routines", () => ({ listRoutines: mocks.listRoutines }));
-vi.mock("@/lib/runs", () => ({
-  listRecentRuns: mocks.listRecentRuns,
-  summarizeRunsByWorker: mocks.summarizeRunsByWorker,
+vi.mock("@/lib/usage/snapshot", () => ({
+  getUsageSnapshot: mocks.getUsageSnapshot,
 }));
+vi.mock("@/lib/billing/pricing", () => ({
+  readPricingView: mocks.readPricingView,
+}));
+vi.mock("@/lib/runs", () => ({ listRecentRuns: mocks.listRecentRuns }));
 vi.mock("@/lib/users", () => ({
   getUserTimezone: mocks.getUserTimezone,
   getUserLanguage: mocks.getUserLanguage,
 }));
-// The trial card reads through one domain function; the page hands it the
-// same instant it judges everything else against.
-vi.mock("@/lib/usage/trial-view", () => ({
-  getTrialUsageView: mocks.getTrialUsageView,
+vi.mock("@/lib/i18n/server", () => ({
+  getDocumentLanguage: mocks.getDocumentLanguage,
 }));
+vi.mock("@/components/dashboard-nav", () => ({ DashboardNav: () => null }));
 
-const DashboardPage = (await import("@/app/dashboard/page")).default;
+const HomePage = (await import("@/app/dashboard/page")).default;
 const { generateMetadata } = await import("@/app/dashboard/page");
 
-const NOW = new Date("2026-08-10T12:00:00.000Z");
+const USER = "116614511017733764020";
+const EMAIL = "someone@example.invalid";
 
-function worker(id: string) {
+/** What the usage snapshot says about an account that has done a little. */
+function snapshot(overrides: Record<string, unknown> = {}) {
   return {
-    id,
-    userId: "user-1",
-    name: `Worker ${id}`,
-    description: "",
-    prompt: "hello",
-    kind: "prompt" as const,
-    status: "active" as const,
-    frequency: "daily" as const,
-    runAtMinutes: null,
-    runAtWeekday: null,
-    runAtDay: null,
-    nextRunAt: NOW,
-    createdAt: NOW,
-    updatedAt: NOW,
+    periodStart: new Date("2026-09-01T00:00:00.000Z"),
+    periodEnd: new Date("2026-10-01T00:00:00.000Z"),
+    planBaseline: "lite",
+    partialPeriod: false,
+    counters: [
+      { kind: "aiProcessing", used: 12, limit: 30, percent: 40, status: "normal" },
+      { kind: "manualRun", used: 3, limit: 20, percent: 15, status: "normal" },
+    ],
+    activeWorkers: 1,
+    activeWorkerLimit: 2,
+    ...overrides,
   };
 }
 
+/** What the pricing read model says about a bought plan in force. */
+function current(overrides: Record<string, unknown> = {}) {
+  return {
+    kind: "on-plan",
+    plan: "lite",
+    state: "active",
+    purchased: true,
+    entitled: true,
+    ...overrides,
+  };
+}
+
+function run(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "run-1",
+    status: "success",
+    startedAt: new Date("2026-09-27T06:00:00.000Z"),
+    output: "",
+    routineName: "Morning digest",
+    routineKind: "prompt",
+    ...overrides,
+  };
+}
+
+const render = async () => renderToStaticMarkup(await HomePage());
+
 beforeEach(() => {
-  mocks.requireUserId.mockReset().mockResolvedValue("user-1");
-  mocks.listRoutines.mockReset().mockResolvedValue([]);
+  mocks.requireUserId.mockReset().mockResolvedValue(USER);
+  mocks.getUsageSnapshot.mockReset().mockResolvedValue(snapshot());
+  mocks.readPricingView
+    .mockReset()
+    .mockResolvedValue({ current: current(), activeWorkers: 1, plans: [] });
   mocks.listRecentRuns.mockReset().mockResolvedValue([]);
-  mocks.summarizeRunsByWorker.mockReset().mockResolvedValue(new Map());
-  mocks.getUserTimezone.mockReset().mockResolvedValue("UTC");
+  mocks.getUserTimezone.mockReset().mockResolvedValue("Asia/Tokyo");
   mocks.getUserLanguage.mockReset().mockResolvedValue("en");
-  // Not a trial account, which is what an account with no entitlement and the
-  // granted beta cohort both look like from here: no trial wording at all.
-  mocks.getTrialUsageView.mockReset().mockResolvedValue({ kind: "hidden" });
+  mocks.getDocumentLanguage.mockReset().mockResolvedValue("en");
 });
 
-describe("what the dashboard reads", () => {
-  it("reads the activity list and the summaries separately", async () => {
-    await DashboardPage();
+describe("what the home screen is", () => {
+  it("greets the reader and says what the screen is for", async () => {
+    const html = await render();
 
-    expect(mocks.listRecentRuns).toHaveBeenCalledWith("user-1");
-    expect(mocks.summarizeRunsByWorker).toHaveBeenCalledWith("user-1");
+    expect(html).toContain(t("en", "dashboard.home.welcome"));
+    expect(html).toContain(t("en", "dashboard.home.subtitle"));
+  });
+
+  it("is titled as the home screen", async () => {
+    expect((await generateMetadata()).title).toBe("Home — Koqentra");
+  });
+
+  it("is titled in the language the page is in", async () => {
+    mocks.getDocumentLanguage.mockResolvedValue("ja");
+
+    expect((await generateMetadata()).title).toBe("ホーム — Koqentra");
+  });
+
+  it("speaks the account's language", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+
+    const html = await render();
+
+    expect(html).toContain(t("ja", "dashboard.home.welcome"));
+    expect(html).toContain(t("ja", "dashboard.home.subtitle"));
+  });
+
+  it("authenticates without provisioning a row", async () => {
+    await render();
+
+    expect(mocks.requireUserId).toHaveBeenCalledTimes(1);
+  });
+
+  /** A server component: there is no selection to hold and no form to submit. */
+  it("is not a client component", async () => {
+    const { readFileSync } = await import("node:fs");
+
+    expect(readFileSync("app/dashboard/page.tsx", "utf8")).not.toContain(
+      '"use client"',
+    );
+  });
+});
+
+/**
+ * **It is not the workers list any more.** That screen moved to its own route;
+ * leaving any of it here would be two places showing the same thing.
+ */
+describe("what the home screen is not", () => {
+  it("lists no worker", async () => {
+    const html = await render();
+
+    expect(html).not.toContain(t("en", "dashboard.workers"));
+    expect(html).not.toContain(t("en", "dashboard.hireFirstWorker"));
+    expect(html).not.toContain("Morning digest");
+  });
+
+  it("offers no worker controls", async () => {
+    const html = await render();
+
+    for (const forbidden of ["Run", "Pause", "Delete", "Edit"]) {
+      expect(html, `offers ${forbidden}`).not.toContain(`>${forbidden}<`);
+    }
+  });
+
+  it("holds no Creator editor and no analysis form", async () => {
+    const html = await render();
+
+    expect(html).not.toContain("<form");
+    expect(html).not.toContain("<textarea");
+    expect(html).not.toContain('type="checkbox"');
+  });
+
+  it("sells nothing", async () => {
+    const html = await render();
+
+    expect(html).not.toContain("780");
+    expect(html).not.toContain("Choose Lite");
+    expect(html).not.toContain(t("en", "pricing.cta.comingSoon"));
+  });
+
+  it("imports nothing that could write", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("app/dashboard/page.tsx", "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/[^\n]*/g, "");
+
+    for (const forbidden of [
+      "prisma",
+      "requireProvisionedUserId",
+      "startCheckout",
+      "openOrGetUsagePeriod",
+      "consumeUsage",
+      "recordAIExecution",
+      "new Stripe",
+      "fetch(",
+      "revalidatePath",
+      "redirect(",
+    ]) {
+      expect(source, `uses ${forbidden}`).not.toContain(forbidden);
+    }
+  });
+});
+
+describe("the two things it offers to do", () => {
+  it("opens Creator", async () => {
+    const html = await render();
+
+    expect(html).toContain('href="/creator"');
+    expect(html).toContain(t("en", "dashboard.home.openCreator"));
+  });
+
+  it("creates a Worker through the existing route", async () => {
+    const html = await render();
+
+    expect(html).toContain('href="/dashboard/new"');
+    expect(html).toContain(t("en", "dashboard.home.createWorker"));
+  });
+
+  it("offers nothing else", async () => {
+    const html = await render();
+    const hrefs = [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
+
+    expect(hrefs).toEqual(["/creator", "/dashboard/new"]);
+  });
+
+  it("says both in Japanese", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+
+    const html = await render();
+
+    expect(html).toContain(t("ja", "dashboard.home.openCreator"));
+    expect(html).toContain(t("ja", "dashboard.home.createWorker"));
+  });
+});
+
+describe("the three numbers", () => {
+  it("counts the account's active workers against its allowance", async () => {
+    const html = await render();
+
+    expect(html).toContain(t("en", "dashboard.home.activeWorkers"));
+    expect(html).toContain("1 / 2");
+  });
+
+  it("reads them from the usage snapshot for this account", async () => {
+    await render();
+
+    expect(mocks.getUsageSnapshot).toHaveBeenCalledWith(USER, expect.any(Date));
+  });
+
+  it("shows the AI runs counter against its limit", async () => {
+    const html = await render();
+
+    expect(html).toContain(t("en", "dashboard.home.aiRuns"));
+    expect(html).toContain("12 / 30");
   });
 
   /**
-   * **The invariant this page exists to keep.** However many workers an account
-   * has, history is read exactly twice — once bounded for the list, once
-   * counted for the numbers.
+   * **Zero, not nothing.** A month with no counters is an account that has done
+   * nothing observable, not an account with no allowance — so the limit comes
+   * from the plan the snapshot was compared against.
    */
-  it.each([1, 10, 100])(
-    "reads history twice for an account with %i workers",
-    async (count) => {
-      mocks.listRoutines.mockResolvedValue(
-        Array.from({ length: count }, (_, index) => worker(`worker-${index}`)),
-      );
+  it("shows zero against the plan's allowance when nothing was counted", async () => {
+    mocks.getUsageSnapshot.mockResolvedValue(
+      snapshot({ counters: null, planBaseline: "lite" }),
+    );
 
-      await DashboardPage();
+    expect(await render()).toContain("0 / 30");
+  });
 
-      expect(mocks.listRecentRuns).toHaveBeenCalledTimes(1);
-      expect(mocks.summarizeRunsByWorker).toHaveBeenCalledTimes(1);
+  it("uses the baseline plan's allowance, whichever it is", async () => {
+    mocks.getUsageSnapshot.mockResolvedValue(
+      snapshot({ counters: null, planBaseline: "standard" }),
+    );
+
+    expect(await render()).toContain("0 / 150");
+  });
+
+  /**
+   * **It never says "this month".** The counters cover the account's current
+   * usage period, which begins when the account first used something in it — so a
+   * number presented as a monthly total would be wrong for every account whose
+   * period started late. The caption says what it is measured over.
+   */
+  it.each([true, false])(
+    "says what the number is measured over (partial: %s)",
+    async (partialPeriod) => {
+      mocks.getUsageSnapshot.mockResolvedValue(snapshot({ partialPeriod }));
+
+      const html = await render();
+
+      expect(html).toContain(t("en", "dashboard.home.currentUsagePeriod"));
+      expect(html).not.toContain("this month");
     },
   );
 
-  it("asks for both as the signed-in account", async () => {
-    await DashboardPage();
+  it("says the caption in Japanese too", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
 
-    expect(mocks.listRecentRuns.mock.calls[0][0]).toBe("user-1");
-    expect(mocks.summarizeRunsByWorker.mock.calls[0][0]).toBe("user-1");
-  });
-
-  /**
-   * The activity list is handed whatever the bounded read returned — the page
-   * does not slice it, because slicing after the fact would mean the rows had
-   * already been fetched.
-   */
-  it("does not trim the activity list itself", async () => {
-    const runs = Array.from({ length: 20 }, (_, index) => ({
-      id: `run-${index}`,
-      status: "completed" as const,
-      startedAt: NOW,
-      output: "",
-      routineName: "Worker",
-    }));
-    mocks.listRecentRuns.mockResolvedValue(runs);
-
-    const passed = passedProp(await DashboardPage(), "runs");
-
-    expect(passed).toBe(runs);
-  });
-
-  /**
-   * **The overview's "last execution" means ever, so it comes from the counted
-   * summaries** rather than from the head of the bounded list — which would be
-   * right by accident and wrong the moment the limit changed.
-   */
-  it("takes the last execution from the summaries", async () => {
-    const older = new Date("2026-08-01T00:00:00.000Z");
-    const newer = new Date("2026-08-09T00:00:00.000Z");
-    mocks.summarizeRunsByWorker.mockResolvedValue(
-      new Map([
-        [
-          "worker-1",
-          {
-            totalRuns: 1,
-            totalFailures: 0,
-            lastResult: "completed" as const,
-            lastRunAt: older,
-          },
-        ],
-        [
-          "worker-2",
-          {
-            totalRuns: 1,
-            totalFailures: 0,
-            lastResult: "completed" as const,
-            lastRunAt: newer,
-          },
-        ],
-      ]),
+    expect(await render()).toContain(
+      t("ja", "dashboard.home.currentUsagePeriod"),
     );
-    // The activity list is deliberately empty: if the figure came from there,
-    // it would be null.
-    mocks.listRecentRuns.mockResolvedValue([]);
-
-    const overview = passedProp(await DashboardPage(), "overview") as {
-      lastExecution: Date | null;
-    };
-
-    expect(overview.lastExecution).toEqual(newer);
-  });
-
-  /**
-   * A worker's card shows what its whole history adds up to, and the activity
-   * list beside it shows twenty rows. The two numbers are allowed to disagree —
-   * that is what makes the counts honest.
-   */
-  it("gives a worker's card the counted totals, not the visible rows", async () => {
-    mocks.listRoutines.mockResolvedValue([worker("worker-1")]);
-    mocks.summarizeRunsByWorker.mockResolvedValue(
-      new Map([
-        [
-          "worker-1",
-          {
-            totalRuns: 100,
-            totalFailures: 7,
-            lastResult: "completed" as const,
-            lastRunAt: NOW,
-          },
-        ],
-      ]),
-    );
-    mocks.listRecentRuns.mockResolvedValue([]);
-
-    const health = passedProp(await DashboardPage(), "health") as {
-      totalRuns: number;
-      totalFailures: number;
-    };
-
-    expect(health.totalRuns).toBe(100);
-    expect(health.totalFailures).toBe(7);
   });
 });
 
-/** The first value handed to any component under a given prop name. */
-function passedProp(node: unknown, name: string): unknown {
-  let found: unknown;
+/**
+ * The plan.
+ *
+ * **Entitlement decides, not history.** This is the first screen somebody sees,
+ * and telling them they are on a plan whose subscription has ended is the defect
+ * the plans page was fixed for.
+ */
+describe("the plan it names", () => {
+  it("reads it for this account", async () => {
+    await render();
 
-  const walk = (current: unknown): void => {
-    if (found !== undefined) {
-      return;
-    }
+    expect(mocks.readPricingView).toHaveBeenCalledWith(USER);
+  });
 
-    if (Array.isArray(current)) {
-      current.forEach(walk);
-      return;
-    }
+  it.each([
+    ["lite", "Lite"],
+    ["standard", "Standard"],
+    ["pro", "Pro"],
+  ])("names a bought %s as %s", async (plan, label) => {
+    mocks.readPricingView.mockResolvedValue({
+      current: current({ plan }),
+      activeWorkers: 1,
+      plans: [],
+    });
 
-    if (!current || typeof current !== "object") {
-      return;
-    }
+    const html = await render();
 
-    const props = (current as { props?: Record<string, unknown> }).props;
-    if (!props) {
-      return;
-    }
+    expect(html).toContain(t("en", "dashboard.home.currentPlan"));
+    expect(html).toContain(label);
+  });
 
-    if (name in props) {
-      found = props[name];
-      return;
-    }
+  it("names the granted Closed Beta allowance", async () => {
+    mocks.readPricingView.mockResolvedValue({
+      current: current({ plan: "beta", purchased: false }),
+      activeWorkers: 1,
+      plans: [],
+    });
 
-    for (const value of Object.values(props)) {
-      walk(value);
-    }
-  };
+    expect(await render()).toContain("Beta");
+  });
 
-  walk(node);
-  return found;
-}
+  it("names a running trial", async () => {
+    mocks.readPricingView.mockResolvedValue({
+      current: current({ plan: "trial", state: "trialing", purchased: false }),
+      activeWorkers: 1,
+      plans: [],
+    });
+
+    expect(await render()).toContain("Trial");
+  });
+
+  /** The defect this guards: a plan that entitles nothing is not a plan. */
+  it.each(["inactive", "expired", "trial_expired"])(
+    "says no plan for a historical plan in %s",
+    async (state) => {
+      mocks.readPricingView.mockResolvedValue({
+        current: current({ state, entitled: false }),
+        activeWorkers: 1,
+        plans: [],
+      });
+
+      const html = await render();
+
+      expect(html).toContain(t("en", "dashboard.home.noPlan"));
+      expect(html).not.toContain("Lite");
+    },
+  );
+
+  it("says no plan when there is none", async () => {
+    mocks.readPricingView.mockResolvedValue({
+      current: { kind: "none" },
+      activeWorkers: 0,
+      plans: [],
+    });
+
+    expect(await render()).toContain(t("en", "dashboard.home.noPlan"));
+  });
+
+  it("says no plan for a row it cannot read", async () => {
+    mocks.readPricingView.mockResolvedValue({
+      current: { kind: "unreadable" },
+      activeWorkers: 0,
+      plans: [],
+    });
+
+    expect(await render()).toContain(t("en", "dashboard.home.noPlan"));
+  });
+
+  /** A stored id a newer version wrote is not a label to read off. */
+  it("says no plan for a plan this build does not know", async () => {
+    mocks.readPricingView.mockResolvedValue({
+      current: current({ plan: "enterprise" }),
+      activeWorkers: 1,
+      plans: [],
+    });
+
+    const html = await render();
+
+    expect(html).toContain(t("en", "dashboard.home.noPlan"));
+    expect(html).not.toContain("enterprise");
+  });
+
+  it("never shows a stored plan id", async () => {
+    const html = await render();
+
+    expect(html).not.toMatch(/>lite</);
+    expect(html).not.toMatch(/>beta</);
+  });
+
+  it("says no plan in Japanese", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+    mocks.readPricingView.mockResolvedValue({
+      current: { kind: "none" },
+      activeWorkers: 0,
+      plans: [],
+    });
+
+    expect(await render()).toContain(t("ja", "dashboard.home.noPlan"));
+  });
+});
+
+describe("the last few runs", () => {
+  it("asks for three and no more", async () => {
+    await render();
+
+    expect(mocks.listRecentRuns).toHaveBeenCalledWith(USER, 3);
+  });
+
+  it("shows what it was given, newest first", async () => {
+    mocks.listRecentRuns.mockResolvedValue([
+      run({ id: "run-3", routineName: "Newest" }),
+      run({ id: "run-2", routineName: "Middle" }),
+      run({ id: "run-1", routineName: "Oldest" }),
+    ]);
+
+    const html = await render();
+
+    expect(html.indexOf("Newest")).toBeLessThan(html.indexOf("Middle"));
+    expect(html.indexOf("Middle")).toBeLessThan(html.indexOf("Oldest"));
+  });
+
+  it("says so when there are none", async () => {
+    const html = await render();
+
+    expect(html).toContain(t("en", "dashboard.home.noRuns"));
+  });
+
+  it("says so in Japanese", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+
+    expect(await render()).toContain(t("ja", "dashboard.home.noRuns"));
+  });
+
+  /** The empty line is this page's: "use Run on a worker" is advice elsewhere. */
+  it("does not borrow the workers screen's empty line", async () => {
+    expect(await render()).not.toContain(t("en", "dashboard.activityEmpty"));
+  });
+
+  it("does not list a whole history", async () => {
+    mocks.listRecentRuns.mockResolvedValue([
+      run({ id: "run-1", routineName: "One" }),
+      run({ id: "run-2", routineName: "Two" }),
+      run({ id: "run-3", routineName: "Three" }),
+    ]);
+
+    const html = await render();
+
+    expect(html.match(/href="\/dashboard\/runs\//g) ?? []).toHaveLength(3);
+  });
+});
 
 /**
- * What a browser tab and a search result say this screen is.
+ * A new account.
  *
- * **The document declares a language and the title has to be in it.** The root
- * layout writes the account's language onto `<html>`; a title left in English
- * under `lang="ja"` is the one part of the page contradicting the attribute a
- * screen reader chooses its voice from.
- *
- * **The resolver is replaced, not re-tested.** Which language a request is in
- * is settled in `lib/i18n/server.test.ts`. What is checked here is the mapping
- * from a language to two strings — including that the English wording is
- * exactly what it has always been, because a correctness fix must not quietly
- * reword the product.
+ * Nothing bought, nothing run, no worker made: the page still has to read as a
+ * home rather than as a broken one.
  */
-describe("what the tab says", () => {
-  it("keeps the English title and description exactly as they were", async () => {
-    metadataMocks.getDocumentLanguage.mockResolvedValue("en");
-
-    await expect(generateMetadata()).resolves.toMatchObject({
-      title: "Dashboard — Koqentra",
-      description: "Manage and monitor your AI workers.",
+describe("an account that has done nothing yet", () => {
+  beforeEach(() => {
+    // A trial's own allowances, as the catalogue states them.
+    mocks.getUsageSnapshot.mockResolvedValue(
+      snapshot({
+        counters: null,
+        activeWorkers: 0,
+        activeWorkerLimit: 3,
+        planBaseline: "trial",
+      }),
+    );
+    mocks.readPricingView.mockResolvedValue({
+      current: { kind: "none" },
+      activeWorkers: 0,
+      plans: [],
     });
+    mocks.listRecentRuns.mockResolvedValue([]);
   });
 
-  it("says the same thing in Japanese when the account reads Japanese", async () => {
-    metadataMocks.getDocumentLanguage.mockResolvedValue("ja");
+  it("still renders every block", async () => {
+    const html = await render();
 
-    await expect(generateMetadata()).resolves.toMatchObject({
-      title: "ダッシュボード — Koqentra",
-      description: "AI Worker を管理し、状況を確認します。",
-    });
+    expect(html).toContain(t("en", "dashboard.home.welcome"));
+    expect(html).toContain(t("en", "dashboard.home.overview"));
+    expect(html).toContain(t("en", "dashboard.home.recentActivity"));
+    expect(html).toContain(t("en", "dashboard.home.noRuns"));
+    expect(html).toContain(t("en", "dashboard.home.noPlan"));
   });
 
-  /** The product name is a name in both languages. */
-  it("leaves the name untranslated in either language", async () => {
-    for (const language of ["en", "ja"] as const) {
-      metadataMocks.getDocumentLanguage.mockResolvedValue(language);
+  it("shows zero workers against the trial's allowance", async () => {
+    const html = await render();
 
-      expect((await generateMetadata()).title).toContain("Koqentra");
+    expect(html).toContain("0 / 3");
+    // The trial's AI allowance, taken from the baseline the snapshot names.
+    expect(html).toContain("0 / 50");
+  });
+
+  it("leads with the two things there are to do", async () => {
+    const html = await render();
+
+    expect(html).toContain('href="/creator"');
+    expect(html).toContain('href="/dashboard/new"');
+  });
+});
+
+describe("what never reaches the page", () => {
+  it("renders no account details", async () => {
+    mocks.listRecentRuns.mockResolvedValue([run()]);
+
+    const html = await render();
+
+    expect(html).not.toContain(USER);
+    expect(html).not.toContain(EMAIL);
+    expect(html).not.toContain("@");
+  });
+
+  it("renders no provider or billing identifier", async () => {
+    const html = (await render()).toLowerCase();
+
+    for (const forbidden of [
+      "price_",
+      "cus_",
+      "sub_",
+      "cs_test",
+      "sk_",
+      "stripe",
+      "attempt",
+      "reconciliation",
+      "checkout_sandbox_user_ids",
+    ]) {
+      expect(html, `renders ${forbidden}`).not.toContain(forbidden);
     }
+  });
+
+  /** A run's own id is a link target, not something written out as text. */
+  it("writes no internal identifier as text", async () => {
+    mocks.listRecentRuns.mockResolvedValue([run()]);
+
+    const text = (await render()).replace(/<[^>]*>/g, " ");
+
+    expect(text).not.toContain("run-1");
+    expect(text).not.toContain(USER);
   });
 });

@@ -123,6 +123,18 @@ describe("runRoutineAction", () => {
     });
   });
 
+  /**
+   * **A run changes what both screens say.** The list shows each worker's health
+   * and Home shows the newest runs, so revalidating only one of them leaves the
+   * other reporting a run that has already happened — or missing one that has.
+   */
+  it("revalidates the workers list and the home screen", async () => {
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard/workers");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
+  });
+
   it("reports a run that failed", async () => {
     mocks.enqueueRoutine.mockResolvedValue({ status: "failed" });
 
@@ -232,9 +244,15 @@ describe("deleteWorkerAction", () => {
     expect(mocks.deleteRoutine).toHaveBeenCalledWith("worker-1", "user-1");
   });
 
-  it("revalidates the dashboard once the row is gone", async () => {
+  /**
+   * **Both screens read the worker that is gone.** The list is on
+   * `/dashboard/workers`; Home counts the active ones and shows the newest runs,
+   * so leaving it cached would have it reporting a worker nobody can open.
+   */
+  it("revalidates both screens once the row is gone", async () => {
     await deleteWorkerAction("worker-1", null);
 
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard/workers");
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
   });
 

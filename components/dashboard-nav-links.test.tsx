@@ -70,7 +70,9 @@ function claim(html: string, href: string): string | null {
 }
 
 const CREATOR = "/creator";
-const WORKERS = "/dashboard";
+const WORKERS = "/dashboard/workers";
+/** The home screen, which no feature link claims. */
+const HOME = "/dashboard";
 const PLANS = "/dashboard/billing";
 const SETTINGS = "/dashboard/settings";
 
@@ -101,6 +103,13 @@ describe("standing somewhere inside a section", () => {
     expect(claim(render(pathname), CREATOR)).toBe("location");
   });
 
+  /**
+   * **Two of these do not live under the Workers root, and are still Workers.**
+   * Hiring a worker is `/dashboard/new` and a run's detail is `/dashboard/runs/…`;
+   * both are places the workers list sends people, so a reader who followed one
+   * has not left the section. They are named rather than matched by prefix,
+   * because `/dashboard/…` now also covers Home, Plans and Settings.
+   */
   it.each([
     "/dashboard/new",
     "/dashboard/runs/run-1",
@@ -123,7 +132,7 @@ describe("standing somewhere inside a section", () => {
  * a shallower test would mark two — and a screen reader would be told the reader
  * is in two places.
  */
-describe("the sections that live inside another", () => {
+describe("the sections that share a prefix", () => {
   it("gives Settings the claim and leaves Workers silent", () => {
     const html = render(SETTINGS);
 
@@ -143,6 +152,41 @@ describe("the sections that live inside another", () => {
 
     expect(claim(html, PLANS)).toBe("page");
     expect(claim(html, WORKERS)).toBeNull();
+  });
+
+  /** The return address a payment page sends people to is still Plans. */
+  it("gives Plans the claim on the billing return route", () => {
+    const html = render("/dashboard/billing/return");
+
+    expect(claim(html, PLANS)).toBe("location");
+    expect(claim(html, WORKERS)).toBeNull();
+  });
+});
+
+/**
+ * Standing on the home screen.
+ *
+ * **No feature link is current, and that is the claim.** `/dashboard` used to be
+ * the workers list, so a check that still fell through to Workers would tell a
+ * screen reader the reader was in a section they have left. Home is not in the
+ * bar — the logo goes there — so the honest answer is that none of the four is
+ * where they are.
+ */
+describe("standing on the home screen", () => {
+  it("marks no link at all", () => {
+    expect(render(HOME)).not.toContain("aria-current");
+  });
+
+  it.each([CREATOR, WORKERS, PLANS, SETTINGS])(
+    "leaves %s silent",
+    (root) => {
+      expect(claim(render(HOME), root)).toBeNull();
+    },
+  );
+
+  /** It is not in the bar, so there is nothing pointing at it to mark. */
+  it("offers no link of its own", () => {
+    expect(render(HOME)).not.toContain(`href="${HOME}"`);
   });
 });
 
@@ -199,13 +243,21 @@ describe("never two at once", () => {
     "/creator/new",
     WORKERS,
     "/dashboard/new",
+    "/dashboard/runs/run-1",
+    "/dashboard/workers/worker-1",
     SETTINGS,
     "/dashboard/settings/anything",
     PLANS,
+    "/dashboard/billing/return",
   ])("marks exactly one link on %s", (pathname) => {
     const html = render(pathname);
 
     expect(html.match(/aria-current=/g) ?? []).toHaveLength(1);
+  });
+
+  /** And exactly none on the screen that is not a section. */
+  it("marks none on the home screen", () => {
+    expect(render(HOME).match(/aria-current=/g) ?? []).toHaveLength(0);
   });
 });
 

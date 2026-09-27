@@ -29,9 +29,30 @@ import { Button } from "@/components/ui/button";
 
 /** Where each link goes, and the section it stands for. */
 const CREATOR_ROOT = "/creator";
-const WORKERS_ROOT = "/dashboard";
+const WORKERS_ROOT = "/dashboard/workers";
 const PLANS_ROOT = "/dashboard/billing";
 const SETTINGS_ROOT = "/dashboard/settings";
+
+/**
+ * Where the bar's own brand link goes, and the one route no link claims.
+ *
+ * **Home is not in the bar.** It is what the logo goes to and what signing in
+ * lands on, so a fifth link would be a second way to the place somebody is
+ * already standing. Standing on it, therefore, no feature link is current — and
+ * that is a claim worth making rather than a gap: the reader is not in Creator,
+ * or Workers, or Plans, or Settings.
+ */
+const HOME = "/dashboard";
+
+/**
+ * Two routes belong to Workers without living under its root.
+ *
+ * Hiring a worker is `/dashboard/new` and a run's detail is `/dashboard/runs/…`;
+ * both are places the Workers screen sends people, and a reader who followed one
+ * is still in Workers. They are listed rather than matched loosely, because
+ * `/dashboard/…` now also covers Home, Plans and Settings.
+ */
+const WORKERS_ALSO = ["/dashboard/new", "/dashboard/runs"] as const;
 
 type NavSection = "creator" | "workers" | "plans" | "settings";
 
@@ -50,12 +71,20 @@ function isWithin(pathname: string, root: string): boolean {
 /**
  * Which section a path belongs to, or none.
  *
- * **The two that live inside Workers are asked first.** Settings is
- * `/dashboard/settings` and Plans is `/dashboard/billing`, so a shallower test
- * would answer Workers for either and two links would claim to be current at
- * once. Order is what keeps the answer single.
+ * **Home is asked first and answers nothing.** `/dashboard` is its own screen
+ * now; it used to be the workers list, and a test that still fell through to
+ * Workers would mark a link for a page the reader has left.
+ *
+ * **Then the roots, each exact enough to be single.** Settings, Plans and
+ * Workers all sit under `/dashboard`, so they are compared against their own
+ * roots rather than against a shared prefix — which is what keeps exactly one
+ * link current.
  */
 function currentSection(pathname: string): NavSection | null {
+  if (pathname === HOME) {
+    return null;
+  }
+
   if (isWithin(pathname, SETTINGS_ROOT)) {
     return "settings";
   }
@@ -64,7 +93,10 @@ function currentSection(pathname: string): NavSection | null {
     return "plans";
   }
 
-  if (isWithin(pathname, WORKERS_ROOT)) {
+  if (
+    isWithin(pathname, WORKERS_ROOT) ||
+    WORKERS_ALSO.some((root) => isWithin(pathname, root))
+  ) {
     return "workers";
   }
 
@@ -73,7 +105,7 @@ function currentSection(pathname: string): NavSection | null {
   }
 
   // A route the bar does not cover — the landing page, the privacy notice, or
-  // something added later. None of these three is where the reader is.
+  // something added later. None of these four is where the reader is.
   return null;
 }
 
@@ -118,7 +150,8 @@ export function DashboardNavLinks({
 
   // **Plans sits after the two the product is about and before Settings.** It is
   // something a reader goes to once and then rarely; putting it ahead of Workers
-  // would make the bar lead with money.
+  // would make the bar lead with money. Home is not among them: the logo goes
+  // there, and a link beside these four would be a second way to the same place.
   const links = [
     { section: "creator", root: CREATOR_ROOT, label: creatorLabel },
     { section: "workers", root: WORKERS_ROOT, label: workersLabel },

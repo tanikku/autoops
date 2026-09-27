@@ -64,14 +64,19 @@ describe("what an install dialog is told", () => {
     expect(built.id).not.toBe(built.start_url);
   });
 
-  it("opens on Creator", () => {
-    expect(built.start_url).toBe("/creator");
+  /**
+   * **Home, not a feature screen.** Launching the installed app used to drop
+   * somebody into Creator, which is a place to do one thing rather than a place
+   * to arrive; `/dashboard` is where they can see what is going on and choose.
+   */
+  it("opens on the home screen", () => {
+    expect(built.start_url).toBe("/dashboard");
   });
 
   /**
-   * Settings, Workers and the privacy notice are all outside `/creator`. A
-   * scope narrower than the site would eject somebody to a browser tab the
-   * first time they opened one of them.
+   * Creator and the privacy notice are both outside `/dashboard`. A scope
+   * narrower than the site would eject somebody to a browser tab the first time
+   * they opened one of them.
    */
   it("covers the whole product, not just the screen it opens on", () => {
     expect(built.scope).toBe("/");

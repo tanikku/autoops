@@ -67,6 +67,10 @@ export async function deleteWorkerAction(
     return { status: "error", message: t(language, "worker.action.notFound") };
   }
 
+  // **Both screens read this worker.** The list is on `/dashboard/workers`;
+  // Home counts the active ones and shows the last few runs, so leaving it
+  // cached would have it reporting a worker that is gone.
+  revalidatePath("/dashboard/workers");
   revalidatePath("/dashboard");
   return { status: "success", message: t(language, "worker.action.deleted") };
 }
@@ -273,6 +277,9 @@ export async function runRoutineAction(
     await releaseManualRunSlot(userId, slot.slotNumber, slot.token);
   }
 
+  // A run changes what both screens say: the list shows each worker's health,
+  // and Home shows the newest runs.
+  revalidatePath("/dashboard/workers");
   revalidatePath("/dashboard");
 
   // A failed run is recorded rather than thrown, so the absence of an

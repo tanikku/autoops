@@ -241,6 +241,18 @@ describe("createRoutineAction", () => {
   });
 
   /**
+   * **Both screens gain something from a hire.** The list gains a card and
+   * Home's active count moves with it, so leaving either cached would show an
+   * account that does not have the worker it has just made.
+   */
+  it("revalidates the workers list and the home screen", async () => {
+    await createRoutineAction(null, form());
+
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard/workers");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
+  });
+
+  /**
    * **Off unless the box was ticked**, which is what a checkbox that submits
    * nothing looks like from here — and what keeps a worker hired before
    * notifications existed behaving as it did.

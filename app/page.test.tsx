@@ -165,7 +165,7 @@ describe("what it must not promise", () => {
  * still in the nav.
  */
 describe("signing in", () => {
-  it("sends somebody to Creator", async () => {
+  it("sends somebody to the home screen", async () => {
     mocks.signIn.mockClear();
 
     const form = findForm(await tree());
@@ -177,17 +177,28 @@ describe("signing in", () => {
 
     expect(mocks.signIn).toHaveBeenCalledTimes(1);
     expect(mocks.signIn).toHaveBeenCalledWith("google", {
-      redirectTo: "/creator",
+      redirectTo: "/dashboard",
     });
   });
 
-  it("does not send them to the Worker dashboard", async () => {
+  /**
+   * **Not into a feature screen.** The product used to open on Creator and the
+   * workers list used to be `/dashboard`; landing on either meant arriving
+   * mid-task. Home is neither, and this is the assertion that keeps it that way.
+   */
+  it("does not send them into a feature screen", async () => {
     mocks.signIn.mockClear();
 
     const form = findForm(await tree());
     await (form?.props as { action?: () => Promise<void> })?.action?.();
 
-    expect(JSON.stringify(mocks.signIn.mock.calls)).not.toContain("/dashboard");
+    const calls = JSON.stringify(mocks.signIn.mock.calls);
+
+    expect(calls).not.toContain("/creator");
+    expect(calls).not.toContain("/dashboard/workers");
+    expect(calls).not.toContain("/dashboard/new");
+    expect(calls).not.toContain("/dashboard/billing");
+    expect(calls).not.toContain("/dashboard/settings");
   });
 
   it("offers Google as the way in", async () => {
@@ -276,11 +287,11 @@ describe("who the landing page is for", () => {
     expect(mocks.redirect).not.toHaveBeenCalled();
   });
 
-  it("sends a signed-in reader to the screen the product opens on", async () => {
+  it("sends a signed-in reader to the home screen", async () => {
     mocks.auth.mockResolvedValue({ user: { id: "test-user" } });
 
     await expect(tree()).rejects.toBeInstanceOf(RedirectSignal);
-    expect(mocks.redirect).toHaveBeenCalledWith("/creator");
+    expect(mocks.redirect).toHaveBeenCalledWith("/dashboard");
   });
 
   /**
@@ -294,7 +305,7 @@ describe("who the landing page is for", () => {
     const thrown = await tree().catch((error: unknown) => error);
 
     expect(thrown).toBeInstanceOf(RedirectSignal);
-    expect((thrown as RedirectSignal).to).toBe("/creator");
+    expect((thrown as RedirectSignal).to).toBe("/dashboard");
   });
 
   /**

@@ -55,7 +55,7 @@ describe("where it can go", () => {
     const html = await render();
 
     const creator = html.indexOf('href="/creator"');
-    const workers = html.indexOf('href="/dashboard"');
+    const workers = html.indexOf('href="/dashboard/workers"');
     const plans = html.indexOf('href="/dashboard/billing"');
     const settings = html.indexOf('href="/dashboard/settings"');
 
@@ -73,8 +73,26 @@ describe("where it can go", () => {
     const html = await render();
 
     expect(html).toContain('href="/creator"');
-    expect(html).toContain('href="/dashboard"');
+    expect(html).toContain('href="/dashboard/workers"');
     expect(html).toContain('href="/dashboard/settings"');
+  });
+
+  /**
+   * **The brand goes home.** For a signed-in reader the landing page is a
+   * redirect straight back into the product, so a logo pointing at it was a way
+   * out and back in again. There is no separate Home link: this is it.
+   */
+  it("sends the brand link to the home screen", async () => {
+    const html = await render();
+
+    expect(html).toContain('href="/dashboard"');
+    expect(html).toContain("Koqentra");
+  });
+
+  it("adds no fifth link for the home screen", async () => {
+    const html = await render();
+
+    expect(html.match(/href="\/dashboard"/g) ?? []).toHaveLength(1);
   });
 
   /**
@@ -208,12 +226,28 @@ describe("which page it claims to be on", () => {
 
   /** Never two at once, whichever section is current. */
   it("claims at most one", async () => {
-    for (const pathname of ["/creator", "/dashboard", "/dashboard/settings"]) {
+    for (const pathname of [
+      "/creator",
+      "/dashboard/workers",
+      "/dashboard/billing",
+      "/dashboard/settings",
+    ]) {
       mocks.usePathname.mockReturnValue(pathname);
 
       const html = await render();
 
       expect(html.match(/aria-current=/g) ?? []).toHaveLength(1);
     }
+  });
+
+  /**
+   * **And none on the home screen.** `/dashboard` used to be the workers list;
+   * marking Workers there would tell a screen reader the reader is in a section
+   * they have left.
+   */
+  it("claims nothing on the home screen", async () => {
+    mocks.usePathname.mockReturnValue("/dashboard");
+
+    expect(await render()).not.toContain("aria-current");
   });
 });

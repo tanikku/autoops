@@ -48,6 +48,38 @@ export const en = {
   /** Stands in for a name the provider did not give us. */
   "nav.signedIn": "Signed in",
 
+  /**
+   * The screen signing in lands on.
+   *
+   * **It greets and it does not claim.** Every number on it is a reading of
+   * something with a screen of its own, so the words say what they are rather
+   * than summarising a state the page is not the authority on.
+   *
+   * **"AI runs", never "AI runs this month".** The counters behind it cover the
+   * account's current usage period, which begins when the account first used
+   * something in it — so a monthly total is exactly what the number is not for
+   * an account whose period started late. `currentUsagePeriod` says what it is
+   * measured over instead of guessing at a calendar.
+   */
+  "dashboard.home.title": "Home",
+  "dashboard.home.welcome": "Welcome back",
+  "dashboard.home.subtitle":
+    "Start or check your Koqentra work from here.",
+  "dashboard.home.openCreator": "Open Creator",
+  "dashboard.home.createWorker": "Create a Worker",
+  "dashboard.home.overview": "Overview",
+  "dashboard.home.activeWorkers": "Active Workers",
+  "dashboard.home.aiRuns": "AI runs",
+  "dashboard.home.currentUsagePeriod": "Current usage period",
+  "dashboard.home.currentPlan": "Current plan",
+  /**
+   * **Said for an ended subscription as well as for none at all.** A plan that
+   * entitles nothing is not a plan somebody is on, and naming it would be the
+   * defect the plans page was fixed for.
+   */
+  "dashboard.home.noPlan": "No plan",
+  "dashboard.home.recentActivity": "Recent activity",
+  "dashboard.home.noRuns": "No runs yet.",
   "dashboard.title": "My AI Team",
   "dashboard.description": "Manage and monitor your AI workers.",
   "dashboard.hireWorker": "Hire Worker",
@@ -999,7 +1031,7 @@ Notes for the report:
   "run.detail.title": "Execution",
   "run.detail.metadataDescription":
     "Details of a single worker execution.",
-  "run.detail.back": "Back to Dashboard",
+  "run.detail.back": "Back to Workers",
   /** The product's own noun, and the one word here that is the same in both. */
   "run.detail.worker": "Worker",
   "run.detail.executionTime": "Execution Time",

@@ -191,7 +191,7 @@ export default async function RunDetailPage({
           variant="ghost"
           size="sm"
           nativeButton={false}
-          render={<Link href="/dashboard" />}
+          render={<Link href="/dashboard/workers" />}
           className="-ml-2.5"
         >
           ← {t(language, "run.detail.back")}

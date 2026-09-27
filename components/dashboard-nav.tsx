@@ -38,7 +38,14 @@ export async function DashboardNav() {
           undone from `sm` up, so the desktop bar is the single row it has
           always been. Nothing is removed — sign out least of all. */}
       <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 sm:flex-nowrap sm:px-10 sm:py-4">
-        <Link href="/" className="text-lg font-semibold tracking-tight">
+        {/* **The brand goes home, not to the landing page.** For a signed-in
+            reader the marketing page is a redirect back into the product, so the
+            logo pointing at it was a way out and straight back in. Home is what
+            it means. */}
+        <Link
+          href="/dashboard"
+          className="text-lg font-semibold tracking-tight"
+        >
           Koqentra
         </Link>
 

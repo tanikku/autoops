@@ -36,7 +36,10 @@ export default async function Home({
   const session = await auth();
 
   if (session?.user?.id) {
-    redirect("/creator");
+    // **Home, not the screen the product used to open on.** Sending a signed-in
+    // visitor to Creator meant the marketing page dropped them mid-task; Home is
+    // where they can see what is going on and choose.
+    redirect("/dashboard");
   }
 
   const { error } = await searchParams;
@@ -98,7 +101,11 @@ export default async function Home({
               // **Creator is where somebody lands.** The Worker dashboard is
               // still there under `/dashboard` and reachable from the nav; what
               // changed is which of the two the product opens on.
-              await signIn("google", { redirectTo: "/creator" });
+              // **Only where a normal sign-in lands.** A visitor who was sent
+              // here from a protected route arrives with a `callbackUrl`, and
+              // Auth.js prefers that over this — which is what keeps a deep link
+              // returning to where it was asked for.
+              await signIn("google", { redirectTo: "/dashboard" });
             }}
             className="w-full sm:w-auto"
           >

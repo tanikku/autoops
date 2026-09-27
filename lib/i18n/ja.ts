@@ -27,6 +27,20 @@ export const ja: Record<TranslationKey, string> = {
   "nav.signOut": "サインアウト",
   "nav.signedIn": "サインイン中",
 
+  "dashboard.home.title": "ホーム",
+  "dashboard.home.welcome": "おかえりなさい",
+  "dashboard.home.subtitle":
+    "Koqentra の作業をここから始めたり、状況を確認できます。",
+  "dashboard.home.openCreator": "Creator を開く",
+  "dashboard.home.createWorker": "Worker を作成",
+  "dashboard.home.overview": "概要",
+  "dashboard.home.activeWorkers": "Active Workers",
+  "dashboard.home.aiRuns": "AI 実行",
+  "dashboard.home.currentUsagePeriod": "現在の利用期間",
+  "dashboard.home.currentPlan": "現在のプラン",
+  "dashboard.home.noPlan": "プランなし",
+  "dashboard.home.recentActivity": "最近の動き",
+  "dashboard.home.noRuns": "まだ実行履歴はありません。",
   "dashboard.title": "私の AI チーム",
   "dashboard.description": "AI Worker を管理し、状況を確認します。",
   "dashboard.hireWorker": "Worker を作成",
@@ -592,7 +606,7 @@ export const ja: Record<TranslationKey, string> = {
 
   "run.detail.title": "実行の詳細",
   "run.detail.metadataDescription": "1 回の Worker 実行の詳細です。",
-  "run.detail.back": "ダッシュボードに戻る",
+  "run.detail.back": "ワーカーへ戻る",
   /** 製品固有の語なので、日本語でもそのまま。 */
   "run.detail.worker": "Worker",
   "run.detail.executionTime": "実行時間",

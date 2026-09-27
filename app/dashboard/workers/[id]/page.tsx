@@ -218,7 +218,7 @@ export default async function WorkerDetailPage({
       <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-10 sm:px-10">
         <div className="max-w-2xl">
           <Link
-            href="/dashboard"
+            href="/dashboard/workers"
             className="text-sm text-muted-foreground underline-offset-4 hover:underline"
           >
             ← {t(language, "dashboard.title")}
@@ -465,12 +465,12 @@ export default async function WorkerDetailPage({
               {t(language, "worker.detail.deleteWarning")}
             </p>
             <div className="mt-4">
-              {/* Leaving for the dashboard is part of the delete here: this
+              {/* Leaving for the workers list is part of the delete here: this
                   page cannot render a worker that no longer exists. */}
               <DeleteWorkerButton
                 workerId={worker.id}
                 workerName={worker.name}
-                redirectTo="/dashboard"
+                redirectTo="/dashboard/workers"
                 language={language}
               />
             </div>

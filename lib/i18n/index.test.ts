@@ -67,6 +67,10 @@ describe("the dictionaries", () => {
         "pricing.plan.standard",
         "pricing.plan.pro",
         "pricing.plan.beta",
+        // The product's own term for a worker that is running, as the workers
+        // list and the usage screens already write it. A Japanese reader looking
+        // at their Active Workers is looking for "Active".
+        "dashboard.home.activeWorkers",
       ].sort(),
     );
   });

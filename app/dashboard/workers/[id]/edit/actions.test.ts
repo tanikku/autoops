@@ -638,6 +638,9 @@ describe("updateRoutineAction — a write that matched no row", () => {
 
     expect(result?.status).toBe("success");
     expect(result?.message).toBe('Worker "Daily digest" saved.');
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard/workers");
+    // Home too: its active count moves with a worker's status, and its activity
+    // rows carry the worker's name.
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
     expect(mocks.revalidatePath).toHaveBeenCalledWith(
       "/dashboard/workers/worker-1",

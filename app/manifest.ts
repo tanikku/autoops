@@ -48,7 +48,7 @@ export default function manifest(): MetadataRoute.Manifest {
      * marketing page in front of a signed-in person every single launch,
      * because that page deliberately does not read the session.
      */
-    start_url: "/creator",
+    start_url: "/dashboard",
     /**
      * **The whole site, or the installed window is a trap.** Settings, Workers
      * and the privacy notice all live outside `/creator`; a narrower scope

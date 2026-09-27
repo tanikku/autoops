@@ -410,6 +410,10 @@ export async function updateRoutineAction(
   // the dashboard leaves them serving pre-save values. Navigating back to the
   // edit form would then repopulate it from the stale cache, and saving again
   // would write those old values over the new ones.
+  revalidatePath("/dashboard/workers");
+  // **Home too, because a save can change what it shows.** Its active count
+  // moves when a worker's status does, and its activity rows carry the worker's
+  // name — a rename would otherwise leave the old one on screen.
   revalidatePath("/dashboard");
   revalidatePath(`/dashboard/workers/${id}`);
   revalidatePath(`/dashboard/workers/${id}/edit`);
