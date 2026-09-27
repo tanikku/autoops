@@ -35,6 +35,15 @@ export const en = {
    * Creator opens first that expectation is now wrong.
    */
   "nav.workers": "Workers",
+  /**
+   * The plans page, named for what it holds rather than for buying.
+   *
+   * Everybody may read it — what a plan allows and what a smaller allowance
+   * would mean is worth knowing before anybody is asked for money — so the label
+   * says Plans rather than Upgrade, which would be a link that lied to whoever
+   * cannot buy yet.
+   */
+  "nav.plans": "Plans",
   "nav.signOut": "Sign out",
   /** Stands in for a name the provider did not give us. */
   "nav.signedIn": "Signed in",
@@ -1462,6 +1471,50 @@ Notes for the report:
    * cannot do until you free a slot; then how to free one. A reader who stops
    * after the first line has the answer that matters most.
    */
+  /**
+   * The button that starts a purchase, and the words for every way it can end.
+   *
+   * **"Choose" rather than "Buy" or "Subscribe".** Pressing it opens the
+   * provider's page, where the money is actually agreed to; a label promising a
+   * purchase would be describing the step after this one.
+   *
+   * **Nothing here names the provider.** Which company takes the payment is
+   * visible on the page that takes it, and putting it on a button would make the
+   * product's own screen advertise somebody else's.
+   */
+  "pricing.cta.choose": "Choose {plan}",
+  "checkout.pending": "Opening checkout...",
+  /**
+   * The over-limit confirmation, shown only when the server asks for it.
+   *
+   * **The sentences are the card's own.** What happens to workers already
+   * running is the same fact whether it is being previewed or agreed to, and a
+   * second wording of it would be a second thing to keep true. What is added
+   * here is the asking.
+   */
+  "checkout.confirm.heading": "Before you continue",
+  "checkout.confirm.accept": "I understand — continue",
+  "checkout.confirm.cancel": "Cancel",
+  /**
+   * What each refusal says, and what none of them says.
+   *
+   * **No cause, no identifier, no provider text.** A session id, an attempt id
+   * or the provider's own message would each be this screen describing the
+   * inside of a payment system to whoever pressed a button. Each sentence says
+   * what happened and what to do, and stops there.
+   */
+  "checkout.message.planSwitch":
+    "A checkout for a different plan is already open. Finish or leave it, and this page will let you choose again shortly.",
+  "checkout.message.billingManagement":
+    "Your subscription needs managing rather than replacing, and that is not available from this screen yet.",
+  "checkout.message.paymentProcessing":
+    "A payment is still being confirmed. Nothing new was started — please check back in a few minutes.",
+  "checkout.message.providerUnavailable":
+    "Your subscription could not be checked just now. Nothing was charged and nothing was started. Please try again.",
+  "checkout.message.unavailable":
+    "Checkout is not available right now. Nothing was charged and nothing has changed.",
+  "checkout.message.invalidRequest":
+    "That request could not be read. Nothing was charged and nothing has changed.",
   "pricing.guardrail.atLimit.title": "You would be at this plan's limit",
   "pricing.guardrail.atLimit.body":
     "{active} of your Workers are active and this plan allows {limit}. They keep running. To make another Worker active — including one that is paused — you would first have to pause one.",

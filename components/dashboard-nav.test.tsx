@@ -51,16 +51,18 @@ describe("where it can go", () => {
    * and none is marked as current, so which one comes first is what says what
    * Koqentra is about — and it is the screen sign-in now opens on.
    */
-  it("offers Creator, Workers and settings, in that order", async () => {
+  it("offers Creator, Workers, Plans and settings, in that order", async () => {
     const html = await render();
 
     const creator = html.indexOf('href="/creator"');
     const workers = html.indexOf('href="/dashboard"');
+    const plans = html.indexOf('href="/dashboard/billing"');
     const settings = html.indexOf('href="/dashboard/settings"');
 
     expect(creator).toBeGreaterThan(-1);
     expect(workers).toBeGreaterThan(creator);
-    expect(settings).toBeGreaterThan(workers);
+    expect(plans).toBeGreaterThan(workers);
+    expect(settings).toBeGreaterThan(plans);
   });
 
   /**
@@ -73,6 +75,21 @@ describe("where it can go", () => {
     expect(html).toContain('href="/creator"');
     expect(html).toContain('href="/dashboard"');
     expect(html).toContain('href="/dashboard/settings"');
+  });
+
+  /**
+   * **Shown to everybody.** What a plan allows is worth reading whether or not
+   * the purchase path is open to this account; which accounts may start a
+   * checkout is decided on that page and again in the action, never in the bar.
+   */
+  it("offers the plans page to every signed-in reader", async () => {
+    expect(await render()).toContain('href="/dashboard/billing"');
+  });
+
+  it.each(["en", "ja"] as const)("names Plans in %s", async (language) => {
+    mocks.getUserLanguage.mockResolvedValue(language);
+
+    expect(await render()).toContain(t(language, "nav.plans"));
   });
 
   it("names Creator in the account's language", async () => {
@@ -101,7 +118,7 @@ describe("where it can go", () => {
   });
 });
 
-describe("what a third link must not cost", () => {
+describe("what a fourth link must not cost", () => {
   it("keeps sign out", async () => {
     expect(await render()).toContain(t("en", "nav.signOut"));
   });
@@ -135,12 +152,17 @@ describe("what a third link must not cost", () => {
  * happens on this side and the resolved words are what cross.
  */
 describe("where the words are looked up", () => {
-  it.each(["en", "ja"] as const)("names all three links in %s", async (language) => {
+  it.each(["en", "ja"] as const)("names all four links in %s", async (language) => {
     mocks.getUserLanguage.mockResolvedValue(language);
 
     const html = await render();
 
-    for (const key of ["nav.creator", "nav.workers", "nav.settings"] as const) {
+    for (const key of [
+      "nav.creator",
+      "nav.workers",
+      "nav.plans",
+      "nav.settings",
+    ] as const) {
       expect(html).toContain(t(language, key));
     }
   });
@@ -154,6 +176,7 @@ describe("where the words are looked up", () => {
 
     expect(html).not.toContain("nav.creator");
     expect(html).not.toContain("nav.workers");
+    expect(html).not.toContain("nav.plans");
     expect(html).not.toContain("nav.settings");
   });
 });

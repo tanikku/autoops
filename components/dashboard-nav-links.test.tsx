@@ -34,6 +34,7 @@ const { DashboardNavLinks } = await import("@/components/dashboard-nav-links");
 const LABELS = {
   creatorLabel: "CREATOR-LABEL",
   workersLabel: "WORKERS-LABEL",
+  plansLabel: "PLANS-LABEL",
   settingsLabel: "SETTINGS-LABEL",
 } as const;
 
@@ -47,6 +48,7 @@ const render = (
     <DashboardNavLinks
       creatorLabel={labels.creatorLabel}
       workersLabel={labels.workersLabel}
+      plansLabel={labels.plansLabel}
       settingsLabel={labels.settingsLabel}
     />,
   );
@@ -69,6 +71,7 @@ function claim(html: string, href: string): string | null {
 
 const CREATOR = "/creator";
 const WORKERS = "/dashboard";
+const PLANS = "/dashboard/billing";
 const SETTINGS = "/dashboard/settings";
 
 beforeEach(() => {
@@ -79,6 +82,7 @@ describe("standing on a section's own page", () => {
   it.each([
     ["Creator", CREATOR],
     ["Workers", WORKERS],
+    ["Plans", PLANS],
     ["Settings", SETTINGS],
   ])("says %s is the current page", (_name, root) => {
     expect(claim(render(root), root)).toBe("page");
@@ -114,11 +118,12 @@ describe("standing somewhere inside a section", () => {
 });
 
 /**
- * **Settings lives inside Workers, and only one of them may claim the reader.**
- * `/dashboard/settings` starts with `/dashboard`, so a shallower test would
- * mark both — and a screen reader would be told the reader is in two places.
+ * **Two sections live inside Workers, and only one link may claim the reader.**
+ * `/dashboard/settings` and `/dashboard/billing` both start with `/dashboard`, so
+ * a shallower test would mark two — and a screen reader would be told the reader
+ * is in two places.
  */
-describe("the section that lives inside another", () => {
+describe("the sections that live inside another", () => {
   it("gives Settings the claim and leaves Workers silent", () => {
     const html = render(SETTINGS);
 
@@ -130,6 +135,13 @@ describe("the section that lives inside another", () => {
     const html = render("/dashboard/settings/anything");
 
     expect(claim(html, SETTINGS)).toBe("location");
+    expect(claim(html, WORKERS)).toBeNull();
+  });
+
+  it("gives Plans the claim and leaves Workers silent", () => {
+    const html = render(PLANS);
+
+    expect(claim(html, PLANS)).toBe("page");
     expect(claim(html, WORKERS)).toBeNull();
   });
 });
@@ -189,6 +201,7 @@ describe("never two at once", () => {
     "/dashboard/new",
     SETTINGS,
     "/dashboard/settings/anything",
+    PLANS,
   ])("marks exactly one link on %s", (pathname) => {
     const html = render(pathname);
 
@@ -201,16 +214,18 @@ describe("never two at once", () => {
  * they go did not change.
  */
 describe("what the links still are", () => {
-  it("keeps the three destinations in order", () => {
+  it("keeps the four destinations in order", () => {
     const html = render(CREATOR);
 
     const creator = html.indexOf(`href="${CREATOR}"`);
     const workers = html.indexOf(`href="${WORKERS}"`);
+    const plans = html.indexOf(`href="${PLANS}"`);
     const settings = html.indexOf(`href="${SETTINGS}"`);
 
     expect(creator).toBeGreaterThan(-1);
     expect(workers).toBeGreaterThan(creator);
-    expect(settings).toBeGreaterThan(workers);
+    expect(plans).toBeGreaterThan(workers);
+    expect(settings).toBeGreaterThan(plans);
   });
 
   /**
@@ -224,6 +239,7 @@ describe("what the links still are", () => {
 
     expect(html).toContain("CREATOR-LABEL");
     expect(html).toContain("WORKERS-LABEL");
+    expect(html).toContain("PLANS-LABEL");
     expect(html).toContain("SETTINGS-LABEL");
   });
 
@@ -234,6 +250,9 @@ describe("what the links still are", () => {
       html.indexOf("WORKERS-LABEL"),
     );
     expect(html.indexOf("WORKERS-LABEL")).toBeLessThan(
+      html.indexOf("PLANS-LABEL"),
+    );
+    expect(html.indexOf("PLANS-LABEL")).toBeLessThan(
       html.indexOf("SETTINGS-LABEL"),
     );
   });

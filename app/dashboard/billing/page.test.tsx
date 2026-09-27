@@ -2,13 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 /**
- * The plans page, which sells nothing yet.
+ * The plans page, which offers a purchase to one account and nobody else.
  *
- * **What is fixed here is that it cannot.** The checkout action exists on the
- * server and this page does not import it; the buttons are disabled; no provider
- * is reached and nothing is written. Several tests below assert an absence, which
- * is the point — a page that could start a purchase before the confirmation flow
- * exists would be a page that charged somebody without explaining what changes.
+ * **What is fixed here is who sees a live button.** The checkout is being proved
+ * against a sandbox, so the page asks the server whether this account is in the
+ * rollout and hands the answer down as a boolean; every other reader gets the
+ * button they had before, disabled and saying so. This page still does not import
+ * the action — the button does — and the gate here is not what enforces anything:
+ * `actions.test.ts` covers the request that arrives anyway.
  *
  * **The guardrail wording is tested as wording.** An account running more
  * workers than a plan allows can still buy it, so what matters is that the page
@@ -21,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   readPricingView: vi.fn(),
   mayOfferPurchase: vi.fn(),
   getDocumentLanguage: vi.fn(),
+  isSandboxCheckoutEnabledForUser: vi.fn(),
 }));
 
 vi.mock("@/auth", () => ({ auth: vi.fn(), signIn: vi.fn(), signOut: vi.fn() }));
@@ -33,7 +35,23 @@ vi.mock("@/lib/billing/pricing", () => ({
   readPricingView: mocks.readPricingView,
   mayOfferPurchase: mocks.mayOfferPurchase,
 }));
+vi.mock("@/lib/billing/checkout-sandbox-server", () => ({
+  isSandboxCheckoutEnabledForUser: mocks.isSandboxCheckoutEnabledForUser,
+}));
 vi.mock("@/components/dashboard-nav", () => ({ DashboardNav: () => null }));
+// **Stood in for, because it is a client component that calls the action.**
+// Importing the real one would pull the action into this test's module graph; what
+// this file is about is which props it is handed, which is what the stand-in
+// records. Its own behaviour is `components/checkout-plan-button.test.tsx`.
+vi.mock("@/components/checkout-plan-button", () => ({
+  CheckoutPlanButton: (props: Record<string, unknown>) => {
+    buttonProps.push(props);
+
+    return null;
+  },
+}));
+
+const buttonProps: Record<string, unknown>[] = [];
 
 const { default: BillingPage, generateMetadata } = await import(
   "@/app/dashboard/billing/page"
@@ -108,6 +126,8 @@ async function render(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
+  buttonProps.length = 0;
+  mocks.isSandboxCheckoutEnabledForUser.mockReset().mockReturnValue(false);
   mocks.requireUserId.mockReset().mockResolvedValue(USER);
   mocks.getUserLanguage.mockReset().mockResolvedValue("en");
   mocks.getDocumentLanguage.mockReset().mockResolvedValue("en");
@@ -469,7 +489,7 @@ describe("who is not offered a plan", () => {
     expect(html).toContain("Managing your subscription");
     expect(html).toContain("not available yet");
     // No plan cards at all: nothing that could look like a second subscription.
-    expect(html).not.toContain("Not available yet");
+    expect(buttonProps).toHaveLength(0);
     expect(html).not.toContain("780");
   });
 
@@ -494,16 +514,136 @@ describe("who is not offered a plan", () => {
   );
 });
 
+/**
+ * Who is offered a purchase, and how the answer travels.
+ *
+ * **One boolean crosses, and it is the server's.** The list it was decided from
+ * lives in a variable on the deployment; what reaches a card is whether this
+ * account is on it.
+ */
 describe("the buttons", () => {
-  /** Disabled, and the label says why. Nothing is wired to a purchase. */
-  it("are disabled and say they are not ready", async () => {
-    const html = await render();
+  it("asks the server about the authenticated account", async () => {
+    await render();
 
-    expect(html).toContain("disabled");
-    expect(html).toContain("Not available yet");
+    expect(mocks.isSandboxCheckoutEnabledForUser).toHaveBeenCalledWith(USER);
   });
 
-  it("offer no acknowledgement to tick", async () => {
+  it("offers no purchase to an account outside the rollout", async () => {
+    await render();
+
+    expect(buttonProps).toHaveLength(3);
+    for (const props of buttonProps) {
+      expect(props.enabled).toBe(false);
+    }
+  });
+
+  it("offers one to the account inside it", async () => {
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(true);
+
+    await render();
+
+    expect(buttonProps).toHaveLength(3);
+    for (const props of buttonProps) {
+      expect(props.enabled).toBe(true);
+    }
+  });
+
+  /** An unset variable is what every account sees until one is set. */
+  it("offers none when nothing decided otherwise", async () => {
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(false);
+
+    await render();
+
+    expect(buttonProps.map((props) => props.enabled)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+  });
+
+  it.each([
+    [0, "lite"],
+    [1, "standard"],
+    [2, "pro"],
+  ])("gives card %i the plan %s", async (index, plan) => {
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(true);
+
+    await render();
+
+    expect(buttonProps[index].plan).toBe(plan);
+  });
+
+  /**
+   * **Words, not a language.** Handing over a language would make the client call
+   * `t()`, and that pulls both dictionaries into the browser bundle.
+   */
+  it("hands over sentences rather than the means to find them", async () => {
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(true);
+
+    await render();
+
+    const labels = buttonProps[0].labels as Record<string, unknown>;
+
+    expect(Object.keys(buttonProps[0]).sort()).toEqual([
+      "enabled",
+      "labels",
+      "plan",
+    ]);
+    expect(labels.choose).toBe("Choose Lite");
+    expect(labels.unavailable).toBe("Not available yet");
+    expect(labels.pending).toBe("Opening checkout...");
+  });
+
+  /** The card's own three sentences, placeholders intact for the server's numbers. */
+  it("hands over the guardrail sentences unfilled", async () => {
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(true);
+
+    await render();
+
+    const labels = buttonProps[0].labels as { overLimit: string[] };
+
+    expect(labels.overLimit).toHaveLength(3);
+    expect(labels.overLimit[0]).toContain("{active}");
+    expect(labels.overLimit[0]).toContain("{limit}");
+  });
+
+  it("hands over a sentence for every outcome a browser is told about", async () => {
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(true);
+
+    await render();
+
+    const labels = buttonProps[0].labels as {
+      messages: Record<string, string>;
+    };
+
+    expect(Object.keys(labels.messages).sort()).toEqual([
+      "billingManagement",
+      "invalidRequest",
+      "paymentProcessing",
+      "planSwitch",
+      "providerUnavailable",
+      "unavailable",
+    ]);
+    for (const sentence of Object.values(labels.messages)) {
+      expect(sentence.length).toBeGreaterThan(0);
+    }
+  });
+
+  /** Not an account, not a price, not a customer, not an address. */
+  it("hands over nothing that identifies anybody", async () => {
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(true);
+
+    await render();
+
+    const serialised = JSON.stringify(buttonProps);
+
+    expect(serialised).not.toContain(USER);
+    expect(serialised).not.toMatch(/price_|cus_|sub_|cs_test|sk_/);
+    expect(serialised.toLowerCase()).not.toContain("sandbox");
+    expect(serialised).not.toContain("@");
+  });
+
+  it("offers no acknowledgement to tick", async () => {
     const html = await render({
       activeWorkers: 3,
       plans: [pricedPlan("lite", { standing: "over-limit" })],
@@ -513,8 +653,10 @@ describe("the buttons", () => {
     expect(html).not.toContain('type="checkbox"');
   });
 
-  /** Nothing submits: there is no form and no action attribute. */
-  it("submit nothing", async () => {
+  /** The action is called as a function; there is no form and nothing posts. */
+  it("submits nothing", async () => {
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(true);
+
     const html = await render();
 
     expect(html).not.toContain("<form");
@@ -545,6 +687,7 @@ describe("what the page does not do", () => {
       "next",
       "@/components/dashboard-nav",
       "@/components/plan-cards",
+      "@/lib/billing/checkout-sandbox-server",
       "@/lib/billing/plan-labels",
       "@/lib/billing/pricing",
       "@/lib/entitlements/types",
@@ -716,8 +859,8 @@ describe("the layout", () => {
   });
 
   it("renders one card per plan", async () => {
-    const html = await render();
+    await render();
 
-    expect(html.match(/Not available yet/g)).toHaveLength(3);
+    expect(buttonProps).toHaveLength(3);
   });
 });

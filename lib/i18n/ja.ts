@@ -23,6 +23,7 @@ export const ja: Record<TranslationKey, string> = {
   "nav.settings": "設定",
   /** /dashboard が何を持つ画面かを名前で示す。nav.dashboard は据え置き。 */
   "nav.workers": "ワーカー",
+  "nav.plans": "プラン",
   "nav.signOut": "サインアウト",
   "nav.signedIn": "サインイン中",
 
@@ -801,6 +802,23 @@ export const ja: Record<TranslationKey, string> = {
   "pricing.cta.comingSoon": "まだ利用できません",
   "pricing.standing.atLimit": "現在の利用数とちょうど同じです",
   "pricing.standing.overLimit": "現在の Active 数より少ない上限です",
+  "pricing.cta.choose": "{plan} を選ぶ",
+  "checkout.pending": "お支払い画面を準備しています…",
+  "checkout.confirm.heading": "続ける前に確認してください",
+  "checkout.confirm.accept": "理解しました。続ける",
+  "checkout.confirm.cancel": "キャンセル",
+  "checkout.message.planSwitch":
+    "別のプランのお支払い手続きが進行中です。完了するか閉じたあと、しばらくしてからもう一度お選びください。",
+  "checkout.message.billingManagement":
+    "現在のご契約は、新規のお申し込みではなく変更が必要な状態です。この画面からの変更はまだご利用いただけません。",
+  "checkout.message.paymentProcessing":
+    "お支払いの確認中です。新しい手続きは開始していません。数分後にもう一度ご確認ください。",
+  "checkout.message.providerUnavailable":
+    "ご契約状況を確認できませんでした。請求は発生しておらず、何も開始されていません。もう一度お試しください。",
+  "checkout.message.unavailable":
+    "現在お支払い手続きをご利用いただけません。請求は発生しておらず、変更もありません。",
+  "checkout.message.invalidRequest":
+    "リクエストを読み取れませんでした。請求は発生しておらず、変更もありません。",
   "pricing.guardrail.atLimit.title": "このプランの上限ちょうどになります",
   "pricing.guardrail.atLimit.body":
     "現在 Active な Worker は {active} 件で、このプランの上限は {limit} 件です。いま動いている Worker はそのまま動き続けます。新しく Active にする場合（一時停止中のものを戻す場合も含みます）は、先にどれかを一時停止する必要があります。",

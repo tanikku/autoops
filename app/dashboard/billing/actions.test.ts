@@ -18,7 +18,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 /**
- * Which files, if any, actually reach for the checkout action.
+ * Which files reach for the checkout action, and which are allowed to.
+ *
+ * **One caller, named.** For as long as the action was wired to nothing, the
+ * answer was "none" and the check said so. Now exactly one control calls it, and
+ * the check is worth more than it was: the thing that keeps a purchase behind a
+ * single reviewed boundary is that a second component cannot quietly acquire the
+ * ability to start one. So the list below is an allowlist, and any file not on it
+ * that imports the action fails this.
  *
  * **Parsed rather than searched.** The first version of this asked whether the
  * text `billing/actions` appeared anywhere in a file, and a docblock saying the
@@ -37,6 +44,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * fixture, a sentence — does not.
  */
 const CHECKOUT_ACTION_PATH = "app/dashboard/billing/actions";
+
+/**
+ * The files that may start a checkout.
+ *
+ * **Exactly one, and it is a button.** Everything the purchase needs to decide is
+ * decided on the server; what this file is allowed to do is ask. A second entry
+ * here is a review question, not a formality.
+ */
+const APPROVED_CHECKOUT_ACTION_CALLERS = [
+  "components/checkout-plan-button.tsx",
+] as const;
 
 /**
  * Whether a module specifier names the checkout action, from where it was written.
@@ -158,8 +176,10 @@ function findCheckoutActionCallers(): string[] {
 }
 
 const mocks = vi.hoisted(() => ({
+  requireUserId: vi.fn(),
   requireProvisionedUserId: vi.fn(),
   isUserProvisioningError: vi.fn(),
+  isSandboxCheckoutEnabledForUser: vi.fn(),
   startCheckout: vi.fn(),
   createStripeCheckoutProvider: vi.fn(),
 }));
@@ -168,8 +188,15 @@ const mocks = vi.hoisted(() => ({
 // the real module would pull in the auth library and, with it, a server runtime
 // a test has no business starting.
 vi.mock("@/lib/session", () => ({
+  requireUserId: mocks.requireUserId,
   requireProvisionedUserId: mocks.requireProvisionedUserId,
   isUserProvisioningError: mocks.isUserProvisioningError,
+}));
+// **Stood in for so the gate can be both answers.** What the list means is settled
+// in `lib/billing/checkout-sandbox.test.ts`; what matters here is which side of it
+// a request lands on and what happens next.
+vi.mock("@/lib/billing/checkout-sandbox-server", () => ({
+  isSandboxCheckoutEnabledForUser: mocks.isSandboxCheckoutEnabledForUser,
 }));
 vi.mock("@/lib/billing/checkout", () => ({ startCheckout: mocks.startCheckout }));
 vi.mock("@/lib/billing/providers/stripe-checkout", () => ({
@@ -184,7 +211,11 @@ const PROVIDER = { createSession: vi.fn(), readSession: vi.fn(), findLiveSubscri
 const logs: string[] = [];
 
 beforeEach(() => {
+  mocks.requireUserId.mockReset().mockResolvedValue(USER);
   mocks.requireProvisionedUserId.mockReset().mockResolvedValue(USER);
+  // Inside the rollout unless a test says otherwise: the tests that were written
+  // before the gate existed are all about what an authorised request does.
+  mocks.isSandboxCheckoutEnabledForUser.mockReset().mockReturnValue(true);
   // A rejection is a redirect unless a test says otherwise.
   mocks.isUserProvisioningError.mockReset().mockReturnValue(false);
   mocks.createStripeCheckoutProvider.mockReset().mockReturnValue(PROVIDER);
@@ -262,6 +293,138 @@ describe("who the checkout is for", () => {
     } as unknown as Parameters<typeof startCheckoutAction>[0]);
 
     expect(mocks.startCheckout.mock.calls[0][0].userId).toBe(USER);
+  });
+});
+
+/**
+ * The rollout gate, which is asked before anything happens.
+ *
+ * **The button being disabled is not what enforces this.** A server action is
+ * callable by anybody with a session, whatever a page rendered, so the tests
+ * below are about a request that got here anyway — and what they check is not the
+ * answer it receives but that nothing happened on the way to it.
+ */
+describe("who may reach the checkout at all", () => {
+  beforeEach(() => {
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(false);
+  });
+
+  it("asks about the authenticated account", async () => {
+    await startCheckoutAction({ plan: "lite" });
+
+    expect(mocks.isSandboxCheckoutEnabledForUser).toHaveBeenCalledWith(USER);
+  });
+
+  it("starts no checkout for an account outside the rollout", async () => {
+    await startCheckoutAction({ plan: "lite" });
+
+    expect(mocks.startCheckout).not.toHaveBeenCalled();
+  });
+
+  it("builds no provider", async () => {
+    await startCheckoutAction({ plan: "lite" });
+
+    expect(mocks.createStripeCheckoutProvider).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **A refusal must not write the account row.** Provisioning is the only write
+   * this file can cause, and somebody who may not buy has no reason to acquire a
+   * row — so the authenticated id is read first and the provisioned one only
+   * after the gate.
+   */
+  it("provisions nothing", async () => {
+    await startCheckoutAction({ plan: "lite" });
+
+    expect(mocks.requireProvisionedUserId).not.toHaveBeenCalled();
+  });
+
+  it("answers the same way a deployment that cannot sell does", async () => {
+    await expect(startCheckoutAction({ plan: "lite" })).resolves.toEqual({
+      outcome: "unavailable",
+    });
+  });
+
+  /** Nothing in the answer says a list exists, let alone who is on it. */
+  it("says nothing about why", async () => {
+    const result = await startCheckoutAction({ plan: "lite" });
+
+    expect(JSON.stringify(result)).not.toMatch(/sandbox|allow|rollout|enabled/i);
+    expect(Object.keys(result)).toEqual(["outcome"]);
+  });
+
+  it.each(["lite", "standard", "pro"] as const)(
+    "refuses %s the same way",
+    async (plan) => {
+      await expect(startCheckoutAction({ plan })).resolves.toEqual({
+        outcome: "unavailable",
+      });
+      expect(mocks.startCheckout).not.toHaveBeenCalled();
+    },
+  );
+
+  /** An acknowledgement is not a way past the gate. */
+  it("is not opened by acknowledging the over-limit warning", async () => {
+    await startCheckoutAction({ plan: "lite", overLimitAcknowledged: true });
+
+    expect(mocks.startCheckout).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **Nothing a caller sends decides this.** The only account this action knows
+   * is the one the session named, so an id in the payload cannot be the one the
+   * gate is asked about.
+   */
+  it("cannot be aimed at another account", async () => {
+    await startCheckoutAction({
+      plan: "lite",
+      userId: "999",
+      email: "someone@example.invalid",
+      sandbox: true,
+      enabled: true,
+    } as never);
+
+    expect(mocks.isSandboxCheckoutEnabledForUser).toHaveBeenCalledWith(USER);
+    expect(mocks.startCheckout).not.toHaveBeenCalled();
+  });
+
+  it("reads the gate before anything else can be asked", async () => {
+    await startCheckoutAction({ plan: "lite" });
+
+    expect(mocks.isSandboxCheckoutEnabledForUser).toHaveBeenCalledTimes(1);
+    expect(mocks.requireUserId).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The account that passed the gate is the account that buys.
+ *
+ * Both session helpers read the same request, so these agree — and the one
+ * outcome that must not be possible is a checkout for an account that was never
+ * authorised, so it is checked rather than assumed.
+ */
+describe("when the two account ids disagree", () => {
+  beforeEach(() => {
+    mocks.requireProvisionedUserId.mockResolvedValue("999");
+  });
+
+  it("starts no checkout", async () => {
+    await startCheckoutAction({ plan: "lite" });
+
+    expect(mocks.startCheckout).not.toHaveBeenCalled();
+  });
+
+  it("answers unavailable", async () => {
+    await expect(startCheckoutAction({ plan: "lite" })).resolves.toEqual({
+      outcome: "unavailable",
+    });
+  });
+
+  it("names no account in the log", async () => {
+    await startCheckoutAction({ plan: "lite" });
+
+    expect(logs.join(" ")).not.toContain(USER);
+    expect(logs.join(" ")).not.toContain("999");
   });
 });
 
@@ -584,6 +747,7 @@ describe("what this file is not", () => {
     expect(imports).toEqual([
       "@/lib/billing/checkout-attempt",
       "@/lib/billing/checkout",
+      "@/lib/billing/checkout-sandbox-server",
       "@/lib/billing/providers/stripe-checkout",
       "@/lib/session",
     ]);
@@ -655,9 +819,28 @@ describe("what this file is not", () => {
     }
   });
 
-  /** Nothing renders this yet, and nothing may until the UI slice. */
-  it("is called from no page or component", () => {
-    expect(findCheckoutActionCallers()).toEqual([]);
+  /**
+   * **One approved caller, and no others.** The allowlist is exact: a page or a
+   * component that starts reaching for the action fails here rather than in
+   * review.
+   */
+  it("is called only from the approved boundary", () => {
+    expect(findCheckoutActionCallers()).toEqual([
+      ...APPROVED_CHECKOUT_ACTION_CALLERS,
+    ]);
+  });
+
+  it("has exactly one caller", () => {
+    expect(findCheckoutActionCallers()).toHaveLength(1);
+  });
+
+  /** The allowlist is not a wish: the file it names has to exist. */
+  it("names a file that exists", async () => {
+    const { existsSync } = await import("node:fs");
+
+    for (const caller of APPROVED_CHECKOUT_ACTION_CALLERS) {
+      expect(existsSync(caller), caller).toBe(true);
+    }
   });
 });
 

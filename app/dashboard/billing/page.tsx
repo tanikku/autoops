@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { DashboardNav } from "@/components/dashboard-nav";
 import { PlanCards } from "@/components/plan-cards";
+import { isSandboxCheckoutEnabledForUser } from "@/lib/billing/checkout-sandbox-server";
 import { planNameKey } from "@/lib/billing/plan-labels";
 import {
   type CurrentPlanView,
@@ -16,16 +17,20 @@ import { getUserLanguage } from "@/lib/users";
 /**
  * What each plan allows, and what a smaller allowance would mean.
  *
- * **Nothing on this page buys anything.** The server can start a checkout and
- * deliberately is not asked to: `app/dashboard/billing/actions.ts` is not
- * imported here, the buttons are disabled, and no provider is reached. What the
- * page is for is the part of buying that has to be understood before it happens
- * — how many workers a plan allows, and what becomes of the ones already
- * running.
+ * **This page starts nothing itself.** It does not import the checkout action:
+ * the one control that calls it is `components/checkout-plan-button.tsx`, and
+ * what this page contributes is the two questions only the server can answer —
+ * what the account is on, and whether the purchase path is open to it yet.
  *
- * **A server component with no state.** There is no selection to hold and no
- * form to submit; the whole screen is two numbers and a catalogue. Making it a
- * client component would add a boundary for nothing to cross.
+ * **Who may buy is decided here and enforced again in the action.** While the
+ * checkout is being proved against a sandbox it is open to one account; asking
+ * here is what keeps a live-looking button away from everybody else, and asking
+ * again in the action is what makes it true, because a server action is callable
+ * by anybody signed in whatever a page rendered.
+ *
+ * **Still a server component.** There is no selection to hold and no form to
+ * submit; the whole screen is two numbers and a catalogue, and the part with
+ * stages of its own is one button inside the cards.
  *
  * **Read-only.** `requireUserId` authenticates without provisioning — a page
  * view must not write the account row, and nothing here needs it to exist.
@@ -128,6 +133,10 @@ export default async function BillingPage() {
   ]);
 
   const offerPurchase = mayOfferPurchase(view.current);
+  // **The authenticated id, never anything a request supplied.** What crosses
+  // into the browser from this is one boolean; the list it was decided from stays
+  // in the environment of the server that read it.
+  const checkoutEnabled = isSandboxCheckoutEnabledForUser(userId);
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -161,6 +170,7 @@ export default async function BillingPage() {
             plans={view.plans}
             activeWorkers={view.activeWorkers}
             language={language}
+            checkoutEnabled={checkoutEnabled}
           />
         ) : (
           /* **Somebody already paying is not shown a plan to buy.** Offering one

@@ -5,10 +5,12 @@ import {
   isCheckoutAttemptPlan,
 } from "@/lib/billing/checkout-attempt";
 import { type StartCheckoutResult, startCheckout } from "@/lib/billing/checkout";
+import { isSandboxCheckoutEnabledForUser } from "@/lib/billing/checkout-sandbox-server";
 import { createStripeCheckoutProvider } from "@/lib/billing/providers/stripe-checkout";
 import {
   isUserProvisioningError,
   requireProvisionedUserId,
+  requireUserId,
 } from "@/lib/session";
 
 /**
@@ -33,6 +35,15 @@ import {
  * confirmation before anybody goes anywhere, and an action that redirected would
  * have nowhere to put that. It also means every branch below is a return value a
  * test can read.
+ *
+ * **One thing is decided here that the orchestration must not know about.**
+ * While the checkout is being proved against a sandbox, only the account doing
+ * the proving may reach it — see `lib/billing/checkout-sandbox-server.ts`. That
+ * is a rollout switch rather than a rule about subscriptions, so it is asked
+ * before the orchestration rather than inside it, and it will leave with the
+ * rollout. A page with a disabled button is not what enforces it: a server
+ * action is callable by anybody signed in, so the refusal has to live on this
+ * side of the request.
  */
 
 /** Everything a caller may send. */
@@ -173,6 +184,21 @@ export async function startCheckoutAction(
     return { outcome: "invalid-request" };
   }
 
+  // **Authenticated before provisioned, so a refusal writes nothing.**
+  // `requireUserId` reads the session and nothing else; the account row is only
+  // worth creating once the request is going ahead, and somebody outside the
+  // rollout is not going ahead. A redirect from here travels as a thrown error
+  // and is left to travel.
+  const authenticatedUserId = await requireUserId();
+
+  if (!isSandboxCheckoutEnabledForUser(authenticatedUserId)) {
+    // **The same answer as a deployment that cannot sell anything**, because
+    // that is what this is: the purchase path is not open to this account yet.
+    // Saying so in its own outcome would describe the rollout to whoever asked,
+    // and nothing a caller can do with the distinction is worth telling them.
+    return { outcome: "unavailable" };
+  }
+
   let userId: string;
 
   try {
@@ -188,6 +214,17 @@ export async function startCheckoutAction(
     }
 
     console.error("[checkout] could not provision the account row", error);
+
+    return { outcome: "unavailable" };
+  }
+
+  // **The account that passed the gate must be the account that buys.** Both
+  // helpers read `session.user.id` from the same request, so these agree unless
+  // something between them changed — and a checkout for an account that was
+  // never authorised is the one outcome that must not be possible. Refusing
+  // costs a comparison.
+  if (userId !== authenticatedUserId) {
+    console.error("[checkout] the session changed mid-request; refused");
 
     return { outcome: "unavailable" };
   }

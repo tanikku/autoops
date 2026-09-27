@@ -30,9 +30,10 @@ import { Button } from "@/components/ui/button";
 /** Where each link goes, and the section it stands for. */
 const CREATOR_ROOT = "/creator";
 const WORKERS_ROOT = "/dashboard";
+const PLANS_ROOT = "/dashboard/billing";
 const SETTINGS_ROOT = "/dashboard/settings";
 
-type NavSection = "creator" | "workers" | "settings";
+type NavSection = "creator" | "workers" | "plans" | "settings";
 
 /**
  * Whether a path is this section's own, on a segment boundary.
@@ -47,16 +48,20 @@ function isWithin(pathname: string, root: string): boolean {
 }
 
 /**
- * Which of the three sections a path belongs to, or none.
+ * Which section a path belongs to, or none.
  *
- * **Settings is asked first because it lives inside Workers.** Its route is
- * `/dashboard/settings`, so a shallower test would answer Workers for it and
- * two links would claim to be current at once. Order is what keeps the answer
- * single.
+ * **The two that live inside Workers are asked first.** Settings is
+ * `/dashboard/settings` and Plans is `/dashboard/billing`, so a shallower test
+ * would answer Workers for either and two links would claim to be current at
+ * once. Order is what keeps the answer single.
  */
 function currentSection(pathname: string): NavSection | null {
   if (isWithin(pathname, SETTINGS_ROOT)) {
     return "settings";
+  }
+
+  if (isWithin(pathname, PLANS_ROOT)) {
+    return "plans";
   }
 
   if (isWithin(pathname, WORKERS_ROOT)) {
@@ -97,10 +102,12 @@ function ariaCurrent(
 export function DashboardNavLinks({
   creatorLabel,
   workersLabel,
+  plansLabel,
   settingsLabel,
 }: {
   creatorLabel: string;
   workersLabel: string;
+  plansLabel: string;
   settingsLabel: string;
 }) {
   const pathname = usePathname();
@@ -109,14 +116,18 @@ export function DashboardNavLinks({
   const here = typeof pathname === "string" ? pathname : "";
   const current = currentSection(here);
 
+  // **Plans sits after the two the product is about and before Settings.** It is
+  // something a reader goes to once and then rarely; putting it ahead of Workers
+  // would make the bar lead with money.
   const links = [
     { section: "creator", root: CREATOR_ROOT, label: creatorLabel },
     { section: "workers", root: WORKERS_ROOT, label: workersLabel },
+    { section: "plans", root: PLANS_ROOT, label: plansLabel },
     { section: "settings", root: SETTINGS_ROOT, label: settingsLabel },
   ] as const;
 
   return (
-    /* **The wrapping is the mobile fix and stays exactly as it was.** Three
+    /* **The wrapping is the mobile fix and stays exactly as it was.** Four
        links, an account name and a sign out do not fit on a 375px row, so the
        links take a row of their own below `sm` and rejoin above it. */
     <nav className="order-last flex w-full flex-wrap items-center gap-1 sm:order-none sm:w-auto sm:flex-nowrap">

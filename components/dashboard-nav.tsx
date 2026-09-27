@@ -14,6 +14,11 @@ import { getUserLanguage } from "@/lib/users";
  * still English. It already asks who is signed in, so the account row is one
  * more question to something it was going to talk to anyway.
  *
+ * **The bar says nothing about what anybody may buy.** The Plans link is shown to
+ * everybody, because what a plan allows is worth reading whether or not the
+ * purchase path is open; which accounts may actually start a checkout is decided
+ * on that page and again in the action, not here.
+ *
  * A session with no id cannot own a language, so the default answers instead —
  * without a query, and without a write.
  */
@@ -26,7 +31,7 @@ export async function DashboardNav() {
 
   return (
     <header className="border-b border-border">
-      {/* **Three links no longer fit beside an account name on a phone.**
+      {/* **Four links no longer fit beside an account name on a phone.**
           Rather than hiding anything, the bar wraps: the brand and the account
           controls keep the first row, and the links drop to a second one below
           360px-ish. `order-last w-full` does that on small screens and is
@@ -56,6 +61,7 @@ export async function DashboardNav() {
         <DashboardNavLinks
           creatorLabel={t(language, "nav.creator")}
           workersLabel={t(language, "nav.workers")}
+          plansLabel={t(language, "nav.plans")}
           settingsLabel={t(language, "nav.settings")}
         />
 

@@ -2,23 +2,28 @@ import { TriangleAlert } from "lucide-react";
 import { planNameKeyFor } from "@/lib/billing/plan-labels";
 import type { PricedPlan, PlanStanding } from "@/lib/billing/pricing";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  CheckoutPlanButton,
+  type CheckoutPlanLabels,
+} from "@/components/checkout-plan-button";
 import { t } from "@/lib/i18n";
 
 /**
  * The three plans, and what a lower allowance would mean for workers already
  * running.
  *
- * **Nothing here can be bought.** The buttons are disabled and say so: a control
- * that looks pressable and does nothing is worse than one that is plainly not
- * ready. The purchase path exists on the server and is deliberately not wired to
- * anything yet.
+ * **Whether anything here can be bought is decided elsewhere and arrives as a
+ * boolean.** While the purchase path is being proved against a sandbox it is open
+ * to one account; every other reader gets the button they had before, disabled and
+ * saying so, because a control that looks pressable and does nothing is worse than
+ * one that is plainly not ready. The decision is the server's — see
+ * `lib/billing/checkout-sandbox-server.ts` — and a page cannot enforce it anyway.
  *
- * **A server component, because there is nothing to hold.** No selection, no
- * confirmation, no pending state — the whole screen is a reading of two numbers
- * and a catalogue. The acknowledgement a purchase will need is not here either:
- * a checkbox whose value nothing consumes is a promise the page cannot keep.
+ * **Still a server component.** The one part with stages of its own is the button,
+ * which is its own client component; the cards, the prices, the allowances and the
+ * guardrail are a reading of two numbers and a catalogue, and keeping them here is
+ * what stops the dictionaries reaching the browser.
  *
  * **The guardrail is the point of the page as much as the prices are.** An
  * account running more workers than a plan allows can still buy it, and what
@@ -145,14 +150,51 @@ function guardrailNotice({
   );
 }
 
+/**
+ * Every word the button may show, looked up here.
+ *
+ * **The over-limit sentences are the card's own three**, handed over with their
+ * placeholders intact: the numbers that go in them come from the server's answer
+ * to the press rather than from the count this page was rendered with, which may
+ * have moved in between. Saying it twice in two wordings is what this avoids.
+ */
+function checkoutLabels(plan: PricedPlan, language: string): CheckoutPlanLabels {
+  return {
+    choose: t(language, "pricing.cta.choose", {
+      plan: t(language, planNameKeyFor(plan.id)),
+    }),
+    unavailable: t(language, "pricing.cta.comingSoon"),
+    pending: t(language, "checkout.pending"),
+    confirmHeading: t(language, "checkout.confirm.heading"),
+    confirmAccept: t(language, "checkout.confirm.accept"),
+    confirmCancel: t(language, "checkout.confirm.cancel"),
+    overLimit: [
+      t(language, "pricing.guardrail.overLimit.keepsRunning"),
+      t(language, "pricing.guardrail.overLimit.restricted"),
+      t(language, "pricing.guardrail.overLimit.recovery"),
+    ],
+    messages: {
+      planSwitch: t(language, "checkout.message.planSwitch"),
+      billingManagement: t(language, "checkout.message.billingManagement"),
+      paymentProcessing: t(language, "checkout.message.paymentProcessing"),
+      providerUnavailable: t(language, "checkout.message.providerUnavailable"),
+      unavailable: t(language, "checkout.message.unavailable"),
+      invalidRequest: t(language, "checkout.message.invalidRequest"),
+    },
+  };
+}
+
 export function PlanCards({
   plans,
   activeWorkers,
   language,
+  checkoutEnabled,
 }: {
   plans: readonly PricedPlan[];
   activeWorkers: number;
   language: string;
+  /** Whether this account may start a checkout at all. Decided on the server. */
+  checkoutEnabled: boolean;
 }) {
   return (
     /* Three across from `lg`, one column on a phone. The middle card carries a
@@ -186,17 +228,15 @@ export function PlanCards({
 
             {guardrailNotice({ plan, activeWorkers, language })}
 
-            {/* **Disabled, and the label says why.** Nothing is wired to a
-                purchase; a button that looked ready would be the page claiming
-                something the server has not been asked to do. */}
-            <Button
-              type="button"
-              variant="outline"
-              className="mt-5 w-full"
-              disabled
-            >
-              {t(language, "pricing.cta.comingSoon")}
-            </Button>
+            {/* **The plan id and some sentences, and nothing else.** No account,
+                no price, no customer: the action takes who is asking from the
+                session, so there is nothing here that could make it act for
+                somebody else. */}
+            <CheckoutPlanButton
+              plan={plan.id}
+              enabled={checkoutEnabled}
+              labels={checkoutLabels(plan, language)}
+            />
           </CardContent>
         </Card>
       ))}
