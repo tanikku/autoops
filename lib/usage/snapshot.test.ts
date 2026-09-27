@@ -391,3 +391,204 @@ describe("a snapshot of a granted beta account", () => {
     expect(snapshot.periodEnd).toEqual(new Date("2026-10-01T00:00:00.000Z"));
   });
 });
+
+/**
+ * A bought plan's own period, and its own numbers.
+ *
+ * **What these fix.** The window was the calendar month for any account that was
+ * not in a trial, so a paid subscription — whose period starts when it was bought
+ * — had its `UsagePeriod` looked for at the wrong instant, found nothing, and was
+ * measured against the observation yardstick. Production showed an account paying
+ * for Lite `0 / 10` active workers and `0 / 300` AI runs; Lite allows 2 and 30.
+ */
+describe("a paid subscription's snapshot", () => {
+  const PERIOD_START = new Date("2026-09-27T06:34:36.000Z");
+  const PERIOD_END = new Date("2026-10-27T06:34:36.000Z");
+  const DURING = new Date("2026-10-05T09:00:00.000Z");
+
+  function paidRow(overrides: Record<string, unknown> = {}) {
+    return {
+      plan: "lite",
+      state: "active",
+      source: "stripe",
+      trialStartedAt: null,
+      trialEndsAt: null,
+      trialConsumedAt: null,
+      trialForfeitedAt: new Date("2026-09-25T15:51:15.150Z"),
+      currentPeriodStart: PERIOD_START,
+      currentPeriodEnd: PERIOD_END,
+      notificationWorkerId: null,
+      expiresAt: null,
+      ...overrides,
+    };
+  }
+
+  /** As `activatePaidSubscription` opens it: stamped with the period's own start. */
+  function paidPeriod(
+    plan: string,
+    counters: { kind: string; used: number; limit: number }[],
+  ) {
+    return { createdAt: PERIOD_START, planAtStart: plan, counters };
+  }
+
+  beforeEach(() => {
+    subscriptionFindUnique.mockResolvedValue(paidRow());
+    count.mockResolvedValue(0);
+  });
+
+  /** The lookup that used to miss: the period's start, not the month's. */
+  it("reads the period the purchase opened", async () => {
+    findUnique.mockResolvedValue(
+      paidPeriod("lite", [{ kind: "aiProcessing", used: 12, limit: 30 }]),
+    );
+
+    const snapshot = await getUsageSnapshot(USER, DURING);
+
+    expect(findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId_periodStart: { userId: USER, periodStart: PERIOD_START } },
+      }),
+    );
+    expect(snapshot.periodStart).toEqual(PERIOD_START);
+    expect(snapshot.periodEnd).toEqual(PERIOD_END);
+  });
+
+  it("does not look for a calendar month", async () => {
+    findUnique.mockResolvedValue(null);
+
+    await getUsageSnapshot(USER, DURING);
+
+    const asked = findUnique.mock.calls[0][0] as {
+      where: { userId_periodStart: { periodStart: Date } };
+    };
+
+    expect(asked.where.userId_periodStart.periodStart).not.toEqual(
+      new Date("2026-10-01T00:00:00.000Z"),
+    );
+  });
+
+  it.each([
+    ["lite", 2, 30],
+    ["standard", 8, 150],
+    ["pro", 15, 300],
+  ])("measures %s against its own allowances", async (plan, workers, ai) => {
+    subscriptionFindUnique.mockResolvedValue(paidRow({ plan }));
+    findUnique.mockResolvedValue(
+      paidPeriod(plan, [{ kind: "aiProcessing", used: 1, limit: ai }]),
+    );
+
+    const snapshot = await getUsageSnapshot(USER, DURING);
+
+    expect(snapshot.planBaseline).toBe(plan);
+    expect(snapshot.activeWorkerLimit).toBe(workers);
+    expect(
+      snapshot.counters?.find((counter) => counter.kind === "aiProcessing")?.limit,
+    ).toBe(ai);
+  });
+
+  /** The number the account actually spent, out of the row it was spent in. */
+  it("reports what the paid period has used", async () => {
+    findUnique.mockResolvedValue(
+      paidPeriod("lite", [{ kind: "aiProcessing", used: 17, limit: 30 }]),
+    );
+
+    const snapshot = await getUsageSnapshot(USER, DURING);
+    const ai = snapshot.counters?.find((c) => c.kind === "aiProcessing");
+
+    expect(ai?.used).toBe(17);
+    expect(ai?.limit).toBe(30);
+  });
+
+  /**
+   * **A period with no row is an account that has done nothing in it**, not one
+   * with no allowance — and the allowance is still the plan's, never the
+   * yardstick's.
+   */
+  it("still uses the paid plan's allowances when nothing was counted", async () => {
+    findUnique.mockResolvedValue(null);
+
+    const snapshot = await getUsageSnapshot(USER, DURING);
+
+    expect(snapshot.planBaseline).toBe("lite");
+    expect(snapshot.activeWorkerLimit).toBe(2);
+    expect(snapshot.counters).toBeNull();
+  });
+
+  /** Neither the beta yardstick nor its numbers may appear for a paid account. */
+  it("never falls through to the observation yardstick", async () => {
+    findUnique.mockResolvedValue(null);
+
+    const snapshot = await getUsageSnapshot(USER, DURING);
+
+    expect(snapshot.planBaseline).not.toBe("beta");
+    expect(snapshot.activeWorkerLimit).not.toBe(10);
+  });
+
+  /** A period stamped with its own start covers the whole of itself. */
+  it("does not call a whole paid period partial", async () => {
+    findUnique.mockResolvedValue(
+      paidPeriod("lite", [{ kind: "aiProcessing", used: 0, limit: 30 }]),
+    );
+
+    expect((await getUsageSnapshot(USER, DURING)).partialPeriod).toBe(false);
+  });
+
+  it("counts the account's active workers as live state", async () => {
+    count.mockResolvedValue(2);
+    findUnique.mockResolvedValue(null);
+
+    const snapshot = await getUsageSnapshot(USER, DURING);
+
+    expect(count).toHaveBeenCalledWith({
+      where: { userId: USER, status: "active" },
+    });
+    expect(snapshot.activeWorkers).toBe(2);
+  });
+
+  /** A lapsed subscription is measured as an account with nothing again. */
+  it("falls back once the entitlement has lapsed", async () => {
+    subscriptionFindUnique.mockResolvedValue(paidRow({ state: "inactive" }));
+    findUnique.mockResolvedValue(null);
+
+    const snapshot = await getUsageSnapshot(USER, DURING);
+
+    expect(snapshot.planBaseline).toBe("beta");
+    expect(snapshot.periodStart).toEqual(new Date("2026-10-01T00:00:00.000Z"));
+  });
+
+  /** A paid row reconciliation has not finished with has no period to read. */
+  it("falls back when no period is stored", async () => {
+    subscriptionFindUnique.mockResolvedValue(
+      paidRow({ currentPeriodStart: null, currentPeriodEnd: null }),
+    );
+    findUnique.mockResolvedValue(null);
+
+    expect((await getUsageSnapshot(USER, DURING)).planBaseline).toBe("beta");
+  });
+
+  /**
+   * **The stored row's plan wins over the window's.** A period opened under one
+   * plan and read after an upgrade is still the period it was — its counters were
+   * measured against the allowance it was opened with.
+   */
+  it("prefers the period's own plan over the window's", async () => {
+    subscriptionFindUnique.mockResolvedValue(paidRow({ plan: "standard" }));
+    findUnique.mockResolvedValue(
+      paidPeriod("lite", [{ kind: "aiProcessing", used: 5, limit: 30 }]),
+    );
+
+    const snapshot = await getUsageSnapshot(USER, DURING);
+
+    expect(snapshot.planBaseline).toBe("lite");
+    expect(snapshot.activeWorkerLimit).toBe(2);
+  });
+
+  it("does not throw for a state it cannot read", async () => {
+    subscriptionFindUnique.mockResolvedValue(paidRow({ state: "renegotiating" }));
+    findUnique.mockResolvedValue(null);
+
+    await expect(getUsageSnapshot(USER, DURING)).resolves.toMatchObject({
+      planBaseline: "beta",
+    });
+  });
+});

@@ -674,3 +674,361 @@ describe("which period a snapshot reads", () => {
     });
   });
 });
+
+/**
+ * A bought plan, counted over the period it is being paid for.
+ *
+ * **The defect these exist for.** A subscription's period starts when it was
+ * bought — `2026-09-27T06:34:36Z`, not the first of the month — and
+ * `activatePaidSubscription` opens the `UsagePeriod` at exactly that instant.
+ * Both resolvers read the calendar month instead, found no row there, and fell
+ * through to the observation yardstick: an account paying for Lite was measured
+ * against beta's ten workers and three hundred AI runs, while the quota refused
+ * it a third worker. The counting went into a month-shaped row the purchase had
+ * never opened, so the paid row stayed empty for good.
+ *
+ * **Every test here is about which window comes back**, not about what is in it.
+ * What a window's counters say is `snapshot.test.ts`.
+ */
+describe("a paid subscription's own billing period", () => {
+  const PERIOD_START = new Date("2026-09-27T06:34:36.000Z");
+  const PERIOD_END = new Date("2026-10-27T06:34:36.000Z");
+  /** Inside the period, and in a different calendar month from its start. */
+  const DURING = new Date("2026-10-05T09:00:00.000Z");
+
+  /** The Production row, as reconciliation left it. */
+  function paidRow(overrides: Record<string, unknown> = {}) {
+    return {
+      plan: "lite",
+      state: "active",
+      source: "stripe",
+      trialStartedAt: null,
+      trialEndsAt: null,
+      trialConsumedAt: null,
+      trialForfeitedAt: new Date("2026-09-25T15:51:15.150Z"),
+      currentPeriodStart: PERIOD_START,
+      currentPeriodEnd: PERIOD_END,
+      notificationWorkerId: null,
+      expiresAt: null,
+      ...overrides,
+    };
+  }
+
+  const both = [
+    ["write", resolveUsageWriteWindow] as const,
+    ["snapshot", resolveUsageSnapshotWindow] as const,
+  ];
+
+  it.each(both)("the %s window is the billing period", async (_label, resolve) => {
+    subscriptionFindUnique.mockResolvedValue(paidRow());
+
+    expect(await resolve(USER, DURING)).toEqual({
+      kind: "period",
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END,
+      plan: "lite",
+    });
+  });
+
+  it.each([
+    ["lite", 0],
+    ["standard", 0],
+    ["pro", 0],
+  ])("%s is measured over its own period", async (plan) => {
+    subscriptionFindUnique.mockResolvedValue(paidRow({ plan }));
+
+    for (const [, resolve] of both) {
+      expect(await resolve(USER, DURING)).toEqual({
+        kind: "period",
+        periodStart: PERIOD_START,
+        periodEnd: PERIOD_END,
+        plan,
+      });
+    }
+  });
+
+  /** The whole point: the window is not the month, and is not beta's. */
+  it.each(both)(
+    "the %s window is neither the calendar month nor the yardstick",
+    async (_label, resolve) => {
+      subscriptionFindUnique.mockResolvedValue(paidRow());
+
+      const window = await resolve(USER, DURING);
+      const month = observationWindowFor(DURING);
+
+      expect(window).toMatchObject({ kind: "period" });
+      expect((window as { plan: string }).plan).not.toBe(OBSERVATION_PLAN);
+      expect((window as { periodStart: Date }).periodStart).not.toEqual(
+        month.periodStart,
+      );
+    },
+  );
+
+  /** Both sides have to agree, or the counting and the reading part company. */
+  it("writes and reads the same window", async () => {
+    subscriptionFindUnique.mockResolvedValue(paidRow());
+
+    expect(await resolveUsageWriteWindow(USER, DURING)).toEqual(
+      await resolveUsageSnapshotWindow(USER, DURING),
+    );
+  });
+
+  /** A period that begins on the first of a month is still its own period. */
+  it.each(both)(
+    "the %s window uses a month-aligned period as a period",
+    async (_label, resolve) => {
+      const start = new Date("2026-10-01T00:00:00.000Z");
+      const end = new Date("2026-11-01T00:00:00.000Z");
+      subscriptionFindUnique.mockResolvedValue(
+        paidRow({ currentPeriodStart: start, currentPeriodEnd: end }),
+      );
+
+      expect(await resolve(USER, DURING)).toEqual({
+        kind: "period",
+        periodStart: start,
+        periodEnd: end,
+        plan: "lite",
+      });
+    },
+  );
+
+  /** A renewal moved the window; the resolvers follow the row. */
+  it.each(both)("the %s window follows a renewal", async (_label, resolve) => {
+    const start = new Date("2026-10-27T06:34:36.000Z");
+    const end = new Date("2026-11-27T06:34:36.000Z");
+    subscriptionFindUnique.mockResolvedValue(
+      paidRow({ currentPeriodStart: start, currentPeriodEnd: end }),
+    );
+
+    expect(await resolve(USER, new Date("2026-11-01T00:00:00.000Z"))).toEqual({
+      kind: "period",
+      periodStart: start,
+      periodEnd: end,
+      plan: "lite",
+    });
+  });
+
+  /**
+   * **Behind on payment and cancelling inside the period both still entitle.**
+   * Somebody in either state is using the plan they paid for, and the window they
+   * are using it in is the one they paid for.
+   */
+  it.each(["grace", "canceled_active"])(
+    "a paid plan in %s keeps its period",
+    async (state) => {
+      subscriptionFindUnique.mockResolvedValue(paidRow({ state }));
+
+      for (const [, resolve] of both) {
+        expect(await resolve(USER, DURING)).toMatchObject({
+          periodStart: PERIOD_START,
+          plan: "lite",
+        });
+      }
+    },
+  );
+
+  /**
+   * **A subscription that has ended does not lend its allowance to today.** Its
+   * period is history; what happens now falls back to the yardstick, which is
+   * what an account with nothing has always been measured against.
+   */
+  it.each(both)(
+    "the %s window falls back once the entitlement has lapsed",
+    async (_label, resolve) => {
+      subscriptionFindUnique.mockResolvedValue(paidRow({ state: "inactive" }));
+
+      expect(await resolve(USER, DURING)).toEqual({
+        kind: "period",
+        ...observationWindowFor(DURING),
+        plan: OBSERVATION_PLAN,
+      });
+    },
+  );
+
+  /** A paid row reconciliation has not finished with has no period to use. */
+  it.each(both)(
+    "the %s window falls back when no period is stored",
+    async (_label, resolve) => {
+      subscriptionFindUnique.mockResolvedValue(
+        paidRow({ currentPeriodStart: null, currentPeriodEnd: null }),
+      );
+
+      expect(await resolve(USER, DURING)).toEqual({
+        kind: "period",
+        ...observationWindowFor(DURING),
+        plan: OBSERVATION_PLAN,
+      });
+    },
+  );
+
+  it.each(both)(
+    "the %s window falls back when only one end is stored",
+    async (_label, resolve) => {
+      subscriptionFindUnique.mockResolvedValue(
+        paidRow({ currentPeriodEnd: null }),
+      );
+
+      expect(await resolve(USER, DURING)).toMatchObject({
+        plan: OBSERVATION_PLAN,
+      });
+    },
+  );
+
+  /**
+   * **A state this version cannot read falls through rather than throwing.**
+   * `computeEntitlement` refuses it, and it is right to — but a screen asking
+   * what somebody used is not where that refusal belongs, and a page that threw
+   * would show nothing at all.
+   */
+  it.each(both)(
+    "the %s window falls back for a state it cannot read",
+    async (_label, resolve) => {
+      subscriptionFindUnique.mockResolvedValue(
+        paidRow({ state: "renegotiating" }),
+      );
+
+      await expect(resolve(USER, DURING)).resolves.toMatchObject({
+        plan: OBSERVATION_PLAN,
+      });
+    },
+  );
+
+  it.each(both)(
+    "the %s window falls back for a plan it cannot read",
+    async (_label, resolve) => {
+      subscriptionFindUnique.mockResolvedValue(paidRow({ plan: "enterprise" }));
+
+      await expect(resolve(USER, DURING)).resolves.toMatchObject({
+        plan: OBSERVATION_PLAN,
+      });
+    },
+  );
+});
+
+/**
+ * The accounts that were carried over, and the trial.
+ *
+ * **Nothing about either moved.** The paid branch sits between them and is
+ * reached only by a bought plan in force, so a granted allowance is measured
+ * exactly as it was — against the month, against the yardstick — and a trial
+ * keeps its fortnight whatever else its row says.
+ */
+describe("what the paid branch must not touch", () => {
+  function grantRow(overrides: Record<string, unknown> = {}) {
+    return {
+      plan: "beta",
+      state: "active",
+      source: "admin",
+      trialStartedAt: null,
+      trialEndsAt: null,
+      trialConsumedAt: null,
+      trialForfeitedAt: new Date("2026-09-22T10:05:58.508Z"),
+      // A grant has no billing cycle, which is why the yardstick exists.
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+      notificationWorkerId: null,
+      expiresAt: new Date("2026-12-31T23:59:59.000Z"),
+      ...overrides,
+    };
+  }
+
+  it.each([
+    ["write", resolveUsageWriteWindow] as const,
+    ["snapshot", resolveUsageSnapshotWindow] as const,
+  ])("the granted beta cohort keeps the month in the %s window", async (
+    _label,
+    resolve,
+  ) => {
+    subscriptionFindUnique.mockResolvedValue(grantRow());
+
+    expect(await resolve(USER, SEPTEMBER)).toEqual({
+      kind: "period",
+      ...observationWindowFor(SEPTEMBER),
+      plan: OBSERVATION_PLAN,
+    });
+  });
+
+  /** Even if somebody put a period on a grant, it is not a bought plan. */
+  it("does not give a grant a billing period it should not have", async () => {
+    subscriptionFindUnique.mockResolvedValue(
+      grantRow({
+        currentPeriodStart: new Date("2026-09-27T06:34:36.000Z"),
+        currentPeriodEnd: new Date("2026-10-27T06:34:36.000Z"),
+      }),
+    );
+
+    expect(await resolveUsageSnapshotWindow(USER, SEPTEMBER)).toMatchObject({
+      plan: OBSERVATION_PLAN,
+    });
+  });
+
+  /**
+   * **A row that still says `trialing` is a trial, whatever its plan says.** The
+   * trial is asked first for exactly this case, so nothing the paid branch does
+   * can take a fortnight away from somebody who was given one.
+   */
+  it("keeps a trialing row on its trial even with a paid plan and a period", async () => {
+    const trialStart = new Date("2026-09-01T00:00:00.000Z");
+    const trialEnd = new Date("2026-09-15T00:00:00.000Z");
+
+    subscriptionFindUnique.mockResolvedValue({
+      plan: "lite",
+      state: "trialing",
+      source: "stripe",
+      trialStartedAt: trialStart,
+      trialEndsAt: trialEnd,
+      trialConsumedAt: null,
+      trialForfeitedAt: null,
+      currentPeriodStart: new Date("2026-09-27T06:34:36.000Z"),
+      currentPeriodEnd: new Date("2026-10-27T06:34:36.000Z"),
+      notificationWorkerId: null,
+      expiresAt: null,
+    });
+
+    expect(
+      await resolveUsageSnapshotWindow(USER, new Date("2026-09-10T00:00:00.000Z")),
+    ).toEqual({
+      kind: "period",
+      periodStart: trialStart,
+      periodEnd: trialEnd,
+      plan: "trial",
+    });
+  });
+
+  it("still skips a write outside a trial rather than using a paid period", async () => {
+    subscriptionFindUnique.mockResolvedValue({
+      plan: "trial",
+      state: "trialing",
+      source: "trial",
+      trialStartedAt: new Date("2026-09-01T00:00:00.000Z"),
+      trialEndsAt: new Date("2026-09-15T00:00:00.000Z"),
+      trialConsumedAt: null,
+      trialForfeitedAt: null,
+      currentPeriodStart: new Date("2026-09-27T06:34:36.000Z"),
+      currentPeriodEnd: new Date("2026-10-27T06:34:36.000Z"),
+      notificationWorkerId: null,
+      expiresAt: null,
+    });
+
+    expect(
+      await resolveUsageWriteWindow(USER, new Date("2026-10-05T00:00:00.000Z")),
+    ).toEqual({ kind: "skip", reason: "outside-trial" });
+  });
+
+  /** An account with no row at all is unchanged. */
+  it.each([
+    ["write", resolveUsageWriteWindow] as const,
+    ["snapshot", resolveUsageSnapshotWindow] as const,
+  ])("an account with no row keeps the month in the %s window", async (
+    _label,
+    resolve,
+  ) => {
+    subscriptionFindUnique.mockResolvedValue(null);
+
+    expect(await resolve(USER, SEPTEMBER)).toEqual({
+      kind: "period",
+      ...observationWindowFor(SEPTEMBER),
+      plan: OBSERVATION_PLAN,
+    });
+  });
+});

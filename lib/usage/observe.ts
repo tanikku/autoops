@@ -1,6 +1,9 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import { isPaidPlan } from "@/lib/billing/events";
+import { computeEntitlement } from "@/lib/entitlements/index";
+import type { SubscriptionRecord } from "@/lib/entitlements/types";
 import { openOrGetUsagePeriod } from "@/lib/usage/period";
 import type { UsageKind } from "@/lib/usage/types";
 
@@ -37,6 +40,12 @@ import type { UsageKind } from "@/lib/usage/types";
  * arrives it comes from `Subscription`, and `planAtStart` will record whatever
  * that says. Until then this string means "what we compared against", and
  * `lib/entitlements/` remains the only place a right is decided.
+ *
+ * **Entitlement has since arrived, and this is no longer where a paid account
+ * lands.** A bought plan in force is measured against its own billing period and
+ * its own plan — see `paidWindowOf`. What is left here is what it was written
+ * for: the carried-over accounts, which have no billing cycle to read a month
+ * against. It is still a yardstick and still not a right.
  */
 export const OBSERVATION_PLAN = "beta" as const;
 
@@ -116,13 +125,14 @@ export type UsageSnapshotWindow =
   /** Nothing was counted anywhere that can be attributed to this account. */
   | { readonly kind: "none"; readonly plan: string };
 
-/** The trial columns, as the two resolvers below need to see them. */
-type TrialColumns = {
-  readonly plan: string;
-  readonly state: string;
-  readonly trialStartedAt: Date | null;
-  readonly trialEndsAt: Date | null;
-};
+/**
+ * The row both resolvers below read, which is now the whole entitlement record.
+ *
+ * **It used to be four trial columns.** Deciding where a paid account counts
+ * needs the period and the state as well, and one wider select answers both
+ * questions in the query that was already being made.
+ */
+type SubscriptionColumns = SubscriptionRecord;
 
 /**
  * Whether this row is a trial at all.
@@ -133,12 +143,12 @@ type TrialColumns = {
  * says so. The breadth is deliberately on the safe side: being wrong this way
  * skips a count, and being wrong the other way files the account under beta.
  */
-function isTrialRecord(record: TrialColumns): boolean {
+function isTrialRecord(record: SubscriptionColumns): boolean {
   return record.plan === "trial" || record.state === "trialing";
 }
 
 /** A trial's own window, or null when the row does not say what it is. */
-function trialWindowOf(record: TrialColumns): UsageWindow | null {
+function trialWindowOf(record: SubscriptionColumns): UsageWindow | null {
   if (record.trialStartedAt === null || record.trialEndsAt === null) {
     return null;
   }
@@ -158,24 +168,104 @@ function trialWindowOf(record: TrialColumns): UsageWindow | null {
  * would make observation depend on a decision it must not be able to act on,
  * and would let an unreadable row stop the counting.
  */
-async function readTrialColumns(userId: string): Promise<TrialColumns | null> {
+async function readSubscriptionColumns(
+  userId: string,
+): Promise<SubscriptionColumns | null> {
   return prisma.subscription.findUnique({
     where: { userId },
-    select: { plan: true, state: true, trialStartedAt: true, trialEndsAt: true },
+    select: RECORD_FIELDS,
   });
+}
+
+/** Everything the entitlement is worked out from. The set `lib/entitlements` reads. */
+const RECORD_FIELDS = {
+  plan: true,
+  state: true,
+  trialStartedAt: true,
+  trialEndsAt: true,
+  trialConsumedAt: true,
+  trialForfeitedAt: true,
+  currentPeriodStart: true,
+  currentPeriodEnd: true,
+  notificationWorkerId: true,
+  source: true,
+  expiresAt: true,
+} as const;
+
+/**
+ * The billing period a bought plan is being paid for, if that is what this is.
+ *
+ * **Why a paid account cannot use the calendar month.** A subscription's period
+ * starts when it was bought — `2026-09-27T06:34:36Z`, not the first of the month
+ * — and `activatePaidSubscription` opens the `UsagePeriod` at exactly that
+ * instant. Reading the month therefore looked for a row that does not exist,
+ * found nothing, and fell through to the observation yardstick: an account paying
+ * for Lite was shown beta's numbers — ten active workers and three hundred AI
+ * runs — while the quota refused it a third worker. The same mistake was being
+ * made twice, because the counters were written to a month-shaped row and read
+ * from a period-shaped one.
+ *
+ * **The period comes from the row, never from arithmetic.** `currentPeriodStart`
+ * and `currentPeriodEnd` are what the provider said and what reconciliation
+ * stored; a window computed here from a cycle length would disagree with the
+ * `UsagePeriod` the moment a provider moved a renewal by an hour.
+ *
+ * **Three conditions, and each excludes something real.** The plan has to be one
+ * somebody buys, which keeps the granted beta cohort out — they are `active` too.
+ * The entitlement has to be in force, so a subscription that has ended does not
+ * go on presenting its last paid month as the current allowance. And the period
+ * has to be stored, because a paid row without one is a row reconciliation has
+ * not finished with.
+ *
+ * **An unreadable state falls through rather than throwing.** `computeEntitlement`
+ * refuses a state it does not know, and it is right to — but neither counting a
+ * unit nor drawing a screen is the place that refusal belongs, and a page that
+ * threw would show nothing at all. The answer is the one this file gave before
+ * any of this existed.
+ */
+function paidWindowOf(
+  record: SubscriptionColumns,
+  now: Date,
+): UsageWindow | null {
+  let entitlement;
+
+  try {
+    entitlement = computeEntitlement(record, now);
+  } catch {
+    return null;
+  }
+
+  if (
+    entitlement.plan === null ||
+    !isPaidPlan(entitlement.plan) ||
+    !entitlement.entitled ||
+    entitlement.period === null
+  ) {
+    return null;
+  }
+
+  return {
+    periodStart: entitlement.period.start,
+    periodEnd: entitlement.period.end,
+    plan: entitlement.plan,
+  };
 }
 
 /**
  * Where to count an account's product usage at this instant, if anywhere.
  *
- * Three answers, and the third is the one this exists for:
+ * Four answers, asked in this order:
  *
- * 1. **No trial** — the calendar month, against the observation yardstick.
- *    Unchanged for every account that has one today, including the granted beta
- *    cohort: their month is exactly the month it was.
- * 2. **Inside a trial** — the trial's own fourteen days. A month boundary would
+ * 1. **Inside a trial** — the trial's own fourteen days. A month boundary would
  *    reset the allowance halfway through a fortnight somebody was given whole.
- * 3. **A trial, but not inside it** — nothing. See `UsageWriteWindow`.
+ * 2. **A trial, but not inside it** — nothing. See `UsageWriteWindow`.
+ * 3. **A bought plan in force** — that subscription's own billing period, which
+ *    is the period `activatePaidSubscription` opened. Counting a paid account's
+ *    work into a calendar month filed it under beta's numbers and left the row
+ *    the purchase opened permanently empty.
+ * 4. **Anything else** — the calendar month, against the observation yardstick.
+ *    Unchanged for the granted beta cohort: their month is exactly the month it
+ *    was.
  *
  * **Skipping is not an error and not a limit.** Nothing is refused, nothing
  * fails, and the call that prompted it goes on exactly as it would have. What
@@ -185,9 +275,9 @@ export async function resolveUsageWriteWindow(
   userId: string,
   now: Date,
 ): Promise<UsageWriteWindow> {
-  const record = await readTrialColumns(userId);
+  const record = await readSubscriptionColumns(userId);
 
-  if (record === null || !isTrialRecord(record)) {
+  if (record === null) {
     return {
       kind: "period",
       ...observationWindowFor(now),
@@ -195,19 +285,36 @@ export async function resolveUsageWriteWindow(
     };
   }
 
-  const trial = trialWindowOf(record);
+  // **The trial is asked first, and deliberately.** A row that still says
+  // `trialing` is a trial whatever else it says, and its fortnight is the window
+  // it was given — so nothing below can take that away from it.
+  if (isTrialRecord(record)) {
+    const trial = trialWindowOf(record);
 
-  if (trial === null) {
-    return { kind: "skip", reason: "unreadable-trial" };
+    if (trial === null) {
+      return { kind: "skip", reason: "unreadable-trial" };
+    }
+
+    const inside =
+      now.getTime() >= trial.periodStart.getTime() &&
+      now.getTime() < trial.periodEnd.getTime();
+
+    return inside
+      ? { kind: "period", ...trial }
+      : { kind: "skip", reason: "outside-trial" };
   }
 
-  const inside =
-    now.getTime() >= trial.periodStart.getTime() &&
-    now.getTime() < trial.periodEnd.getTime();
+  const paid = paidWindowOf(record, now);
 
-  return inside
-    ? { kind: "period", ...trial }
-    : { kind: "skip", reason: "outside-trial" };
+  if (paid !== null) {
+    return { kind: "period", ...paid };
+  }
+
+  return {
+    kind: "period",
+    ...observationWindowFor(now),
+    plan: OBSERVATION_PLAN,
+  };
 }
 
 /**
@@ -222,14 +329,19 @@ export async function resolveUsageWriteWindow(
  * **A trial that does not say when it ran has nothing to show.** Reading the
  * month instead would quietly hand back a beta period — possibly one holding
  * this account's pre-trial drafting — and label it as this account's usage.
+ *
+ * **A bought plan in force is read over its billing period.** The same window
+ * the counting goes into, which is the point: reading a month while writing a
+ * period showed an account paying for Lite ten workers and three hundred AI runs
+ * out of a row nothing had ever written to.
  */
 export async function resolveUsageSnapshotWindow(
   userId: string,
   now: Date,
 ): Promise<UsageSnapshotWindow> {
-  const record = await readTrialColumns(userId);
+  const record = await readSubscriptionColumns(userId);
 
-  if (record === null || !isTrialRecord(record)) {
+  if (record === null) {
     return {
       kind: "period",
       ...observationWindowFor(now),
@@ -237,9 +349,27 @@ export async function resolveUsageSnapshotWindow(
     };
   }
 
-  const trial = trialWindowOf(record);
+  // Asked first for the same reason as in the write window: a trial's fortnight
+  // is the trial's, and a finished one is still what there is to show.
+  if (isTrialRecord(record)) {
+    const trial = trialWindowOf(record);
 
-  return trial === null ? { kind: "none", plan: "trial" } : { kind: "period", ...trial };
+    return trial === null
+      ? { kind: "none", plan: "trial" }
+      : { kind: "period", ...trial };
+  }
+
+  const paid = paidWindowOf(record, now);
+
+  if (paid !== null) {
+    return { kind: "period", ...paid };
+  }
+
+  return {
+    kind: "period",
+    ...observationWindowFor(now),
+    plan: OBSERVATION_PLAN,
+  };
 }
 
 /**

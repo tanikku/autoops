@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { planNameKey } from "@/lib/billing/plan-labels";
 import { readPricingView } from "@/lib/billing/pricing";
+import { readActiveWorkerLimit } from "@/lib/entitlements/active-worker-limit";
 import { t } from "@/lib/i18n";
 import { getDocumentLanguage } from "@/lib/i18n/server";
 import { getPlanDefinition } from "@/lib/plans";
@@ -29,10 +30,18 @@ import { getUserLanguage, getUserTimezone } from "@/lib/users";
  * a screen of its own to go to.
  *
  * **Read-only, and structurally so.** `requireUserId` authenticates without
- * provisioning, and the three helpers below are the same ones their own screens
- * use: `getUsageSnapshot` and `readPricingView` both document that they never
- * write, and `listRecentRuns` takes a limit. A home page that opened a usage
- * period to say what had been used would turn looking into using.
+ * provisioning, and the helpers below are the same ones their own screens use:
+ * `getUsageSnapshot`, `readPricingView` and `readActiveWorkerLimit` all
+ * document that they never write, and `listRecentRuns` takes a limit. A home
+ * page that opened a usage period to say what had been used would turn looking
+ * into using.
+ *
+ * **The worker allowance is read from the thing that enforces it.** A snapshot
+ * reports what its counters were *compared against*, which is not the same
+ * question as what an activation would be refused at — and while those two
+ * disagreed this page advertised ten workers to an account the quota stopped at
+ * two. `readActiveWorkerLimit` is the number `lib/worker-quota.ts` refuses on,
+ * so the screen and the refusal cannot drift apart again.
  *
  * **A server component, whole.** There is nothing to hold: no selection, no
  * form, no pending state. Keeping it here is also what keeps both translation
@@ -80,6 +89,21 @@ function currentPlanLabel(
     : t(language, key);
 }
 
+/**
+ * What an allowance is, for a period whose counters have not been opened.
+ *
+ * **From the baseline the snapshot resolved**, which for a bought plan in force
+ * is that plan and for a carried-over account is the observation yardstick. The
+ * stored counter is preferred over this wherever one exists, because that is the
+ * limit the period was actually opened with.
+ */
+function usageLimitFor(
+  usage: Awaited<ReturnType<typeof getUsageSnapshot>>,
+  kind: "aiProcessing",
+): number {
+  return getPlanDefinition(usage.planBaseline)[`${kind}Limit`];
+}
+
 /** One number and what it is, as the three summary cards show it. */
 function SummaryCard({
   label,
@@ -109,25 +133,28 @@ export default async function DashboardHomePage() {
   // runs and the stuck-run judgement cannot disagree about when "now" was.
   const now = new Date();
 
-  const [usage, pricing, recentRuns, timezone, language] = await Promise.all([
-    getUsageSnapshot(userId, now),
-    readPricingView(userId),
-    // Three, because this is a summary. The Workers screen has the rest.
-    listRecentRuns(userId, RECENT_RUNS_ON_HOME),
-    getUserTimezone(userId),
-    getUserLanguage(userId),
-  ]);
+  const [usage, pricing, activeWorkerLimit, recentRuns, timezone, language] =
+    await Promise.all([
+      getUsageSnapshot(userId, now),
+      readPricingView(userId),
+      // **The number an activation is refused at**, not the one a snapshot
+      // compared its counters against.
+      readActiveWorkerLimit(userId, now),
+      // Three, because this is a summary. The Workers screen has the rest.
+      listRecentRuns(userId, RECENT_RUNS_ON_HOME),
+      getUserTimezone(userId),
+      getUserLanguage(userId),
+    ]);
 
-  // **The counter, or the allowance it would have been measured against.** A
-  // month with no counters is an account that has done nothing observable, not
-  // an account with no allowance — so the number is zero and the limit comes
-  // from the plan the snapshot was compared against.
+  // **The counter for the period this account is actually in.** A period with no
+  // counters is an account that has done nothing in it, not an account with no
+  // allowance — so the number is zero and the limit is the one the snapshot
+  // resolved for the window, which for a bought plan is that plan's own.
   const aiCounter = usage.counters?.find(
     (counter) => counter.kind === "aiProcessing",
   );
   const aiUsed = aiCounter?.used ?? 0;
-  const aiLimit =
-    aiCounter?.limit ?? getPlanDefinition(usage.planBaseline).aiProcessingLimit;
+  const aiLimit = aiCounter?.limit ?? usageLimitFor(usage, "aiProcessing");
 
   return (
     <div className="flex flex-1 flex-col bg-background">
@@ -168,7 +195,7 @@ export default async function DashboardHomePage() {
           <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <SummaryCard
               label={t(language, "dashboard.home.activeWorkers")}
-              value={`${usage.activeWorkers} / ${usage.activeWorkerLimit}`}
+              value={`${usage.activeWorkers} / ${activeWorkerLimit}`}
             />
             {/* **"AI runs", never "AI runs this month".** The counters cover the
                 account's current usage period, which begins when the account

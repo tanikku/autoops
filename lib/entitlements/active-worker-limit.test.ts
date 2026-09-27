@@ -181,9 +181,39 @@ describe("an entitlement that cannot be read", () => {
 });
 
 describe("what the module deliberately does not offer", () => {
+  /**
+   * **Two ways to ask how many, and still nothing about whether.** The second is
+   * the same answer for a caller with no transaction to offer — a screen — and it
+   * exists so a page showing the allowance shows the one that refuses rather than
+   * a usage snapshot's comparison figure. Neither export decides anything.
+   */
   it("answers how many, and nothing about whether", async () => {
     const exported = await import("@/lib/entitlements/active-worker-limit");
 
-    expect(Object.keys(exported)).toEqual(["resolveActiveWorkerLimit"]);
+    expect(Object.keys(exported).sort()).toEqual([
+      "readActiveWorkerLimit",
+      "resolveActiveWorkerLimit",
+    ]);
+  });
+
+  it("offers no refusal, no activation and no write", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(
+      "lib/entitlements/active-worker-limit.ts",
+      "utf8",
+    )
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/[^\n]*/g, "");
+
+    for (const forbidden of [
+      "routine.update",
+      "subscription.update",
+      "subscription.create",
+      "usagePeriod.create",
+      "enforce",
+      "throw new Error",
+    ]) {
+      expect(source, `offers ${forbidden}`).not.toContain(forbidden);
+    }
   });
 });

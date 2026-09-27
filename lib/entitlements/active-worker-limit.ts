@@ -2,7 +2,7 @@ import "server-only";
 
 import { computeEntitlement } from "@/lib/entitlements/index";
 import { getPlanDefinition } from "@/lib/plans";
-import type { DbClient } from "@/lib/prisma";
+import { type DbClient, prisma } from "@/lib/prisma";
 
 /**
  * How many workers this account may run at once.
@@ -85,4 +85,22 @@ export async function resolveActiveWorkerLimit(
     limits?.activeWorkerLimit ??
     getPlanDefinition(PRE_TRIAL_PLAN).activeWorkerLimit
   );
+}
+
+/**
+ * The same number, for a caller that has no transaction to offer.
+ *
+ * **A screen showing the allowance has to show the one that refuses.** While the
+ * home page read a usage snapshot's comparison figure instead, it advertised ten
+ * workers to an account `enforceActiveWorkerLimit` stopped at two. This is the
+ * enforced number, read the way a page reads anything else, and it exists so that
+ * a page does not have to hold a database client to ask for it.
+ *
+ * **Reads and never writes**, like the function it wraps.
+ */
+export async function readActiveWorkerLimit(
+  userId: string,
+  now: Date = new Date(),
+): Promise<number> {
+  return resolveActiveWorkerLimit(prisma, userId, now);
 }

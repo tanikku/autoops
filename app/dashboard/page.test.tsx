@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   requireUserId: vi.fn(),
   getUsageSnapshot: vi.fn(),
   readPricingView: vi.fn(),
+  readActiveWorkerLimit: vi.fn(),
   listRecentRuns: vi.fn(),
   getUserTimezone: vi.fn(),
   getUserLanguage: vi.fn(),
@@ -33,6 +34,12 @@ vi.mock("@/lib/usage/snapshot", () => ({
 }));
 vi.mock("@/lib/billing/pricing", () => ({
   readPricingView: mocks.readPricingView,
+}));
+// **The number an activation is refused at.** Stood in for so the page can be
+// asked which of the two allowances it shows; what it resolves is settled in
+// `lib/entitlements/active-worker-limit.test.ts`.
+vi.mock("@/lib/entitlements/active-worker-limit", () => ({
+  readActiveWorkerLimit: mocks.readActiveWorkerLimit,
 }));
 vi.mock("@/lib/runs", () => ({ listRecentRuns: mocks.listRecentRuns }));
 vi.mock("@/lib/users", () => ({
@@ -62,7 +69,10 @@ function snapshot(overrides: Record<string, unknown> = {}) {
       { kind: "manualRun", used: 3, limit: 20, percent: 15, status: "normal" },
     ],
     activeWorkers: 1,
-    activeWorkerLimit: 2,
+    // **Deliberately not Lite's number.** The snapshot reports what its counters
+    // were compared against; the page must show what the quota refuses on, and
+    // these two disagreeing is exactly the defect being fixed.
+    activeWorkerLimit: 10,
     ...overrides,
   };
 }
@@ -96,6 +106,8 @@ const render = async () => renderToStaticMarkup(await HomePage());
 beforeEach(() => {
   mocks.requireUserId.mockReset().mockResolvedValue(USER);
   mocks.getUsageSnapshot.mockReset().mockResolvedValue(snapshot());
+  // Lite's own allowance, which is what the quota refuses on for this account.
+  mocks.readActiveWorkerLimit.mockReset().mockResolvedValue(2);
   mocks.readPricingView
     .mockReset()
     .mockResolvedValue({ current: current(), activeWorkers: 1, plans: [] });
@@ -241,14 +253,46 @@ describe("the two things it offers to do", () => {
 });
 
 describe("the three numbers", () => {
-  it("counts the account's active workers against its allowance", async () => {
+  /**
+   * **The allowance shown is the one that refuses.** A usage snapshot reports
+   * what its counters were compared against, which for an account whose billing
+   * period is not a calendar month used to be beta's ten — while the quota
+   * stopped the same account at two. The page reads the enforced number.
+   */
+  it("counts active workers against the limit the quota enforces", async () => {
     const html = await render();
 
     expect(html).toContain(t("en", "dashboard.home.activeWorkers"));
     expect(html).toContain("1 / 2");
   });
 
-  it("reads them from the usage snapshot for this account", async () => {
+  it("does not show the snapshot's comparison figure", async () => {
+    const html = await render();
+
+    expect(html).not.toContain("1 / 10");
+  });
+
+  it("asks the enforcement helper about this account", async () => {
+    await render();
+
+    expect(mocks.readActiveWorkerLimit).toHaveBeenCalledWith(
+      USER,
+      expect.any(Date),
+    );
+  });
+
+  it.each([
+    [2, "1 / 2"],
+    [8, "1 / 8"],
+    [15, "1 / 15"],
+    [10, "1 / 10"],
+  ])("shows an enforced limit of %i", async (limit, expected) => {
+    mocks.readActiveWorkerLimit.mockResolvedValue(limit);
+
+    expect(await render()).toContain(expected);
+  });
+
+  it("reads the count from the usage snapshot for this account", async () => {
     await render();
 
     expect(mocks.getUsageSnapshot).toHaveBeenCalledWith(USER, expect.any(Date));
@@ -280,6 +324,44 @@ describe("the three numbers", () => {
     );
 
     expect(await render()).toContain("0 / 150");
+  });
+
+  /**
+   * **The stored counter's limit wins over the baseline's.** A period was opened
+   * with the allowance its plan had at the time, and that is the number the
+   * account was measured against inside it.
+   */
+  it.each([
+    ["lite", 30],
+    ["standard", 150],
+    ["pro", 300],
+  ])("shows a %s period's own AI allowance", async (plan, limit) => {
+    mocks.getUsageSnapshot.mockResolvedValue(
+      snapshot({
+        planBaseline: plan,
+        counters: [
+          { kind: "aiProcessing", used: 4, limit, percent: 0, status: "normal" },
+        ],
+      }),
+    );
+
+    expect(await render()).toContain(`4 / ${limit}`);
+  });
+
+  /** A paid account that has used something shows what it used, not zero. */
+  it("shows a used figure that is not zero", async () => {
+    mocks.getUsageSnapshot.mockResolvedValue(
+      snapshot({
+        counters: [
+          { kind: "aiProcessing", used: 17, limit: 30, percent: 57, status: "normal" },
+        ],
+      }),
+    );
+
+    const html = await render();
+
+    expect(html).toContain("17 / 30");
+    expect(html).not.toContain("0 / 30");
   });
 
   /**
@@ -376,6 +458,29 @@ describe("the plan it names", () => {
       expect(html).not.toContain("Lite");
     },
   );
+
+  /**
+   * **A subscription that has ended does not go on lending its allowance.** The
+   * snapshot stops resolving the paid window once the entitlement lapses, and the
+   * enforced limit falls back with it — so the numbers beside "No plan" are the
+   * ones that would actually be applied.
+   */
+  it("shows the fallen-back allowances alongside no plan", async () => {
+    mocks.readPricingView.mockResolvedValue({
+      current: current({ state: "inactive", entitled: false }),
+      activeWorkers: 0,
+      plans: [],
+    });
+    mocks.readActiveWorkerLimit.mockResolvedValue(2);
+    mocks.getUsageSnapshot.mockResolvedValue(
+      snapshot({ counters: null, planBaseline: "beta", activeWorkers: 0 }),
+    );
+
+    const html = await render();
+
+    expect(html).toContain(t("en", "dashboard.home.noPlan"));
+    expect(html).toContain("0 / 2");
+  });
 
   it("says no plan when there is none", async () => {
     mocks.readPricingView.mockResolvedValue({
@@ -490,13 +595,9 @@ describe("an account that has done nothing yet", () => {
   beforeEach(() => {
     // A trial's own allowances, as the catalogue states them.
     mocks.getUsageSnapshot.mockResolvedValue(
-      snapshot({
-        counters: null,
-        activeWorkers: 0,
-        activeWorkerLimit: 3,
-        planBaseline: "trial",
-      }),
+      snapshot({ counters: null, activeWorkers: 0, planBaseline: "trial" }),
     );
+    mocks.readActiveWorkerLimit.mockResolvedValue(3);
     mocks.readPricingView.mockResolvedValue({
       current: { kind: "none" },
       activeWorkers: 0,
