@@ -819,6 +819,24 @@ export const ja: Record<TranslationKey, string> = {
     "現在お支払い手続きをご利用いただけません。請求は発生しておらず、変更もありません。",
   "checkout.message.invalidRequest":
     "リクエストを読み取れませんでした。請求は発生しておらず、変更もありません。",
+  "checkout.return.title": "お支払い",
+  "checkout.return.description":
+    "お支払いからプラン反映までの状況をお知らせします。",
+  "checkout.return.pending.heading": "お支払いを受け付けました。",
+  "checkout.return.pending.body": "プランへの反映を確認しています…",
+  "checkout.return.pending.patience": "数分かかる場合があります。",
+  "checkout.return.active.heading": "{plan} をご利用いただけます。",
+  "checkout.return.active.body":
+    "追加の操作は不要です。ただ今より各上限が適用されます。",
+  "checkout.return.notEntitled.heading": "有効なプランをまだ確認できません",
+  "checkout.return.notEntitled.body":
+    "このお支払いから有効なプランを確認できませんでした。現在のご契約状況はプラン画面でご確認ください。",
+  "checkout.return.timedOut.heading": "お支払い状況を確認中です",
+  "checkout.return.timedOut.body":
+    "お支払い状況を確認中です。数分後にもう一度プラン画面をご確認ください。反映されない場合はサポートへお問い合わせください。",
+  "checkout.return.goToPlans": "プランを確認",
+  "pricing.checkoutInProgress":
+    "お支払い手続きが進行中です。お支払いが完了している場合、この画面への反映まで数分かかることがあります。",
   "pricing.guardrail.atLimit.title": "このプランの上限ちょうどになります",
   "pricing.guardrail.atLimit.body":
     "現在 Active な Worker は {active} 件で、このプランの上限は {limit} 件です。いま動いている Worker はそのまま動き続けます。新しく Active にする場合（一時停止中のものを戻す場合も含みます）は、先にどれかを一時停止する必要があります。",

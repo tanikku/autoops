@@ -12,11 +12,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const subscriptionFindUnique = vi.fn();
 const routineCount = vi.fn();
+const checkoutAttemptFindUnique = vi.fn();
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     subscription: { findUnique: subscriptionFindUnique },
     routine: { count: routineCount },
+    checkoutAttempt: { findUnique: checkoutAttemptFindUnique },
   },
 }));
 
@@ -58,7 +60,17 @@ function paid(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   subscriptionFindUnique.mockReset().mockResolvedValue(row());
   routineCount.mockReset().mockResolvedValue(0);
+  checkoutAttemptFindUnique.mockReset().mockResolvedValue(null);
 });
+
+/** An attempt as the view reads it: only its state and when it lapses. */
+function attempt(overrides: Record<string, unknown> = {}) {
+  return {
+    state: "open",
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    ...overrides,
+  };
+}
 
 describe("which plans are priced", () => {
   it("lists exactly the three that can be bought", async () => {
@@ -274,6 +286,79 @@ describe("whether a purchase may be offered", () => {
         entitled: true,
       }),
     ).toBe(true);
+  });
+});
+
+/**
+ * Whether there is an unfinished checkout to mention.
+ *
+ * **Mentioning is all it is for.** Whether the slot may be taken again is the
+ * orchestration's question, asked under the account's lock with the provider's
+ * answer in hand — a page that decided it here would lock somebody who abandoned
+ * a payment page out of trying again until the attempt's TTL.
+ */
+describe("whether a checkout is unfinished", () => {
+  it("says no when there is no attempt", async () => {
+    const view = await readPricingView(USER);
+
+    expect(view.checkoutInProgress).toBe(false);
+  });
+
+  it("asks about this account's attempt", async () => {
+    await readPricingView(USER);
+
+    expect(checkoutAttemptFindUnique).toHaveBeenCalledWith({
+      where: { userId: USER },
+      select: { state: true, expiresAt: true },
+    });
+  });
+
+  it.each(["starting", "open"])("says yes for an attempt in %s", async (state) => {
+    checkoutAttemptFindUnique.mockResolvedValue(attempt({ state }));
+
+    expect((await readPricingView(USER)).checkoutInProgress).toBe(true);
+  });
+
+  it("says no for one that was closed", async () => {
+    checkoutAttemptFindUnique.mockResolvedValue(attempt({ state: "closed" }));
+
+    expect((await readPricingView(USER)).checkoutInProgress).toBe(false);
+  });
+
+  /** A lapsed attempt holds nothing and explains nothing. */
+  it("says no for one that has lapsed", async () => {
+    checkoutAttemptFindUnique.mockResolvedValue(
+      attempt({ expiresAt: new Date(Date.now() - 1000) }),
+    );
+
+    expect((await readPricingView(USER)).checkoutInProgress).toBe(false);
+  });
+
+  it("says no for a closed attempt that has also lapsed", async () => {
+    checkoutAttemptFindUnique.mockResolvedValue(
+      attempt({ state: "closed", expiresAt: new Date(Date.now() - 1000) }),
+    );
+
+    expect((await readPricingView(USER)).checkoutInProgress).toBe(false);
+  });
+
+  /** It says nothing about what may be bought: that answer is unchanged. */
+  it("does not change whether a purchase may be offered", async () => {
+    checkoutAttemptFindUnique.mockResolvedValue(attempt());
+
+    const view = await readPricingView(USER);
+
+    expect(mayOfferPurchase(view.current)).toBe(true);
+  });
+
+  /** Whatever plan the attempt was for, this is one boolean. */
+  it("carries no plan and no identifier", async () => {
+    checkoutAttemptFindUnique.mockResolvedValue(attempt());
+
+    const view = await readPricingView(USER);
+
+    expect(view.checkoutInProgress).toBe(true);
+    expect(JSON.stringify(view)).not.toContain("attempt");
   });
 });
 

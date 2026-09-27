@@ -289,11 +289,44 @@ function readEligibility(
 }
 
 /**
+ * Where the provider sends somebody back to.
+ *
+ * **Written out here rather than at the call site** so the pages and the tests
+ * name the same two strings: an address that only existed inside a URL
+ * constructor would be one nothing could check against.
+ */
+const CHECKOUT_RETURN_PATH = "/dashboard/billing/return";
+const CHECKOUT_CANCEL_PATH = "/dashboard/billing";
+
+/**
  * Where a completed or abandoned checkout comes back to.
  *
  * **Built from the deployment's own origin, never from anything a caller
  * supplied.** A return address taken from input is an open redirect, and a
  * payment page is the last place to hand one out.
+ *
+ * **Success has a page of its own now.** Both of these used to be `/dashboard`,
+ * which meant somebody who had just paid landed on a screen that knew nothing
+ * about it: the entitlement is written by a reconciliation run seconds to minutes
+ * later, so the dashboard — and the plans page they went to next — told them they
+ * were not on a plan. The success address is a page whose whole job is to wait
+ * for the entitlement and say so meanwhile.
+ *
+ * **Nothing about the account is in either address.** No id, no email, no price,
+ * no customer, no session. The page reads who is asking from the session, which
+ * is the only account it could answer for; a query parameter naming one would be
+ * a parameter somebody could change.
+ *
+ * **`{CHECKOUT_SESSION_ID}` is deliberately not used.** The provider offers to
+ * put the session's id in the address, and taking it would put a provider
+ * identifier in a browser's history and give the page something to trust that a
+ * caller can type. What the page needs to know is whether *this account's*
+ * entitlement has landed, and Koqentra's own rows answer that.
+ *
+ * **Cancelling goes back to the plans page unchanged.** The session stays
+ * payable and the attempt keeps its slot, so pressing the button again resumes
+ * the same checkout — which is what somebody who changed their mind at the
+ * payment page and then changed it back should get.
  */
 function returnUrls(): { success: string; cancel: string } | null {
   const base = process.env.AUTH_URL?.trim();
@@ -303,8 +336,8 @@ function returnUrls(): { success: string; cancel: string } | null {
   }
 
   try {
-    const success = new URL("/dashboard", base);
-    const cancel = new URL("/dashboard", base);
+    const success = new URL(CHECKOUT_RETURN_PATH, base);
+    const cancel = new URL(CHECKOUT_CANCEL_PATH, base);
 
     if (success.protocol !== "https:" && success.protocol !== "http:") {
       return null;

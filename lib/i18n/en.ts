@@ -1515,6 +1515,54 @@ Notes for the report:
     "Checkout is not available right now. Nothing was charged and nothing has changed.",
   "checkout.message.invalidRequest":
     "That request could not be read. Nothing was charged and nothing has changed.",
+  /**
+   * Coming back from a payment page, before Koqentra knows about it.
+   *
+   * **Nothing here claims a purchase succeeded.** The provider redirects when a
+   * card clears; the entitlement is written afterwards by a reconciliation run,
+   * measured at 52 seconds in production and bounded by a five-minute cron
+   * cadence. For that window the only honest thing to say is that the payment
+   * arrived and the plan is being confirmed — so the success sentence is behind a
+   * bought plan actually being active, and the waiting sentence never promises
+   * one.
+   *
+   * **Running out of time is not a failure, and is not worded as one.** A
+   * payment that has not appeared may still appear; telling somebody it failed
+   * would invite them to pay twice.
+   */
+  "checkout.return.title": "Your payment",
+  "checkout.return.description":
+    "What happens between paying and your plan being ready.",
+  "checkout.return.pending.heading": "Payment received.",
+  "checkout.return.pending.body": "Confirming your plan...",
+  "checkout.return.pending.patience": "This can take a few minutes.",
+  "checkout.return.active.heading": "Your {plan} plan is active.",
+  "checkout.return.active.body":
+    "Nothing else is needed. Your allowances apply from now.",
+  /**
+   * **Said when a payment did not produce an active bought plan**, which also
+   * covers a subscription that landed behind on payment or already cancelled.
+   * Those have precise wording on the plans page, and repeating it here in a
+   * second voice would be a second thing to keep true.
+   */
+  "checkout.return.notEntitled.heading": "No active plan to show yet",
+  "checkout.return.notEntitled.body":
+    "We could not confirm an active plan from this payment. The Plans page shows what your account is on now.",
+  "checkout.return.timedOut.heading": "Still confirming your payment",
+  "checkout.return.timedOut.body":
+    "Your payment is still being confirmed. Please check Plans again in a few minutes. If it still has not updated, contact support.",
+  "checkout.return.goToPlans": "Go to Plans",
+  /**
+   * Said on the plans page while a checkout of this account's is unfinished.
+   *
+   * **It explains rather than blocks.** The buttons stay usable, because an
+   * unfinished checkout is as likely to be one somebody abandoned at the payment
+   * page — pressing again resumes that same session — as one they paid for. What
+   * was missing was any acknowledgement that a payment may be in flight, which is
+   * what made a correctly-reported "your subscription has ended" so alarming.
+   */
+  "pricing.checkoutInProgress":
+    "A checkout of yours is still open. If you have just paid, your plan can take a few minutes to appear here.",
   "pricing.guardrail.atLimit.title": "You would be at this plan's limit",
   "pricing.guardrail.atLimit.body":
     "{active} of your Workers are active and this plan allows {limit}. They keep running. To make another Worker active — including one that is paused — you would first have to pause one.",

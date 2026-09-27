@@ -163,6 +163,19 @@ export default async function BillingPage() {
               count: view.activeWorkers,
             })}
           </p>
+          {/* **Said while a checkout of theirs is unfinished, and it explains
+              rather than blocks.** A payment that has cleared takes seconds to
+              minutes to become an entitlement, and during that window the
+              sentence above is correct and alarming. The buttons stay as they
+              were: whether this checkout may be replaced is the orchestration's
+              question, asked under the account's lock with the provider's answer
+              in hand, and a page that guessed at it would lock somebody who
+              abandoned a payment page out of trying again. */}
+          {view.checkoutInProgress ? (
+            <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
+              {t(language, "pricing.checkoutInProgress")}
+            </p>
+          ) : null}
         </section>
 
         {offerPurchase ? (

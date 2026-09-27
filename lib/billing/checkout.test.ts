@@ -816,13 +816,52 @@ describe("what the request carries", () => {
   });
 
   /** Built from the deployment's origin, never from anything a caller sent. */
+  /**
+   * **Success has a page of its own.** Both of these used to be `/dashboard`, so
+   * somebody who had just paid landed on a product that knew nothing about it —
+   * the entitlement is written by a reconciliation run seconds to minutes later.
+   * Cancelling still goes back to the plans page, where pressing the button again
+   * resumes the same session.
+   */
   it("returns to this deployment's own pages", async () => {
     await start();
 
     const request = createSession.mock.calls[0][0];
 
-    expect(request.successUrl).toBe("https://app.example.invalid/dashboard");
-    expect(request.cancelUrl).toBe("https://app.example.invalid/dashboard");
+    expect(request.successUrl).toBe(
+      "https://app.example.invalid/dashboard/billing/return",
+    );
+    expect(request.cancelUrl).toBe(
+      "https://app.example.invalid/dashboard/billing",
+    );
+  });
+
+  /**
+   * **Nothing about the account is in either address.** An id or an address in a
+   * query string is something a caller can change and a browser history keeps.
+   */
+  it("puts nothing identifying in either address", async () => {
+    await start();
+
+    const request = createSession.mock.calls[0][0];
+
+    for (const url of [request.successUrl, request.cancelUrl]) {
+      expect(url).not.toContain("?");
+      expect(url).not.toContain("@");
+      expect(url).not.toContain(USER);
+      expect(url).not.toMatch(/price_|cus_|sub_|cs_test|CHECKOUT_SESSION_ID/);
+    }
+  });
+
+  /** Both are on this deployment's own origin: there is no redirect to hand out. */
+  it("builds both from the deployment's origin", async () => {
+    await start();
+
+    const request = createSession.mock.calls[0][0];
+
+    for (const url of [request.successUrl, request.cancelUrl]) {
+      expect(new URL(url).origin).toBe("https://app.example.invalid");
+    }
   });
 
   it.each(["", "   ", "mailto:someone@example.invalid"])(

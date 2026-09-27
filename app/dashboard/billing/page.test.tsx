@@ -108,6 +108,7 @@ function pricedPlan(
 function view(overrides: Record<string, unknown> = {}) {
   return {
     activeWorkers: 1,
+    checkoutInProgress: false,
     current: {
       kind: "on-plan",
       plan: "beta",
@@ -372,6 +373,93 @@ describe("what the account is on now", () => {
     const html = await render({ activeWorkers: 3 });
 
     expect(html).toContain("3 of your Workers are active.");
+  });
+});
+
+/**
+ * Saying that a payment may be on its way.
+ *
+ * **This is the part of F-90 the plans page carries.** A payment that has cleared
+ * takes seconds to minutes to become an entitlement, and during that window the
+ * sentence above is correct and alarming: an account that has just paid is told
+ * its subscription has ended. The notice explains the gap.
+ *
+ * **It explains and does not block.** An unfinished checkout is as likely to be
+ * one somebody abandoned at the payment page as one they paid for, and only the
+ * provider can say which — `startCheckout` asks it. A page that disabled its
+ * buttons on this alone would lock somebody who changed their mind out of trying
+ * again for the eighteen hours of the attempt's TTL.
+ */
+describe("while a checkout of theirs is unfinished", () => {
+  it("says nothing when there is none", async () => {
+    const html = await render();
+
+    expect(html).not.toContain("A checkout of yours is still open");
+  });
+
+  it("says a payment may take a few minutes to appear", async () => {
+    const html = await render({ checkoutInProgress: true });
+
+    expect(html).toContain("A checkout of yours is still open");
+    expect(html).toContain("can take a few minutes to appear");
+  });
+
+  it("says it in Japanese too", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+
+    const html = await render({ checkoutInProgress: true });
+
+    expect(html).toContain("お支払い手続きが進行中です");
+  });
+
+  /** The buttons are exactly as they were: this is a sentence, not a gate. */
+  it("leaves the purchase buttons as they were", async () => {
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(true);
+
+    await render({ checkoutInProgress: true });
+
+    expect(buttonProps).toHaveLength(3);
+    for (const props of buttonProps) {
+      expect(props.enabled).toBe(true);
+    }
+  });
+
+  it("leaves them disabled for an account outside the rollout", async () => {
+    await render({ checkoutInProgress: true });
+
+    expect(buttonProps.map((props) => props.enabled)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+  });
+
+  /** It does not claim a payment succeeded, and it names nothing. */
+  it("claims nothing about the payment and identifies nothing", async () => {
+    const html = await render({ checkoutInProgress: true });
+
+    expect(html).not.toContain("Your Lite plan is active");
+    expect(html).not.toContain("You are subscribed");
+    expect(html.toLowerCase()).not.toContain("stripe");
+    expect(html).not.toContain(USER);
+    expect(html).not.toMatch(/cs_test|price_|cus_|sub_/);
+  });
+
+  /** The sentence about what the account is on is unchanged by it. */
+  it("does not change what the account is said to be on", async () => {
+    const html = await render({
+      checkoutInProgress: true,
+      current: {
+        kind: "on-plan",
+        plan: "lite",
+        state: "inactive",
+        purchased: true,
+        entitled: false,
+      },
+    });
+
+    expect(html).toContain("Your Lite subscription has ended.");
+    expect(html).toContain("A checkout of yours is still open");
   });
 });
 

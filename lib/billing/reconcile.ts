@@ -1,5 +1,6 @@
 import "server-only";
 
+import { closeSettledCheckoutAttempt } from "@/lib/billing/checkout-cleanup";
 import {
   type BillingEventKind,
   comparePaidPlans,
@@ -43,6 +44,12 @@ import { type DbClient, prisma } from "@/lib/prisma";
  * lock: making two concurrent reads of provider state safe is a matter of
  * serialising the *reads*, which belongs to whatever calls this, and is why
  * everything here takes a transaction client rather than reaching for one.
+ *
+ * **One thing happens after the transaction, on purpose.** An activation is the
+ * end of a checkout, and the coordination slot that checkout was holding can be
+ * released — but releasing it is tidying, not truth, so it runs once the
+ * entitlement has committed and a failure at that point changes nothing that was
+ * applied. See `lib/billing/checkout-cleanup.ts`.
  */
 
 /** What a reconciliation did, or why it did nothing. */
@@ -90,9 +97,61 @@ export async function reconcileProviderSubscription(
 
   const run = (tx: DbClient) => converge(tx, snapshot, reconciliationRunId);
 
-  return "$transaction" in client && typeof client.$transaction === "function"
-    ? await (client as typeof prisma).$transaction(run)
-    : await run(client);
+  const result =
+    "$transaction" in client && typeof client.$transaction === "function"
+      ? await (client as typeof prisma).$transaction(run)
+      : await run(client);
+
+  await releaseSettledCheckout(snapshot, result, client);
+
+  return result;
+}
+
+/**
+ * Lets go of the slot a completed purchase was holding.
+ *
+ * **Only an activation, and only after it committed.** A renewal, a plan change,
+ * a cancellation and a run that found nothing to do are none of them a checkout
+ * ending; and an entitlement that has been applied is owed whatever happens here,
+ * so nothing this does or fails to do is allowed to reach the caller. An attempt
+ * left open lapses at its own TTL, which is what happened before this existed.
+ */
+async function releaseSettledCheckout(
+  snapshot: ProviderSubscriptionSnapshot,
+  result: ReconciliationResult,
+  client: DbClient,
+): Promise<void> {
+  if (
+    result.outcome !== "applied" ||
+    !result.kinds.includes("subscription.activated")
+  ) {
+    return;
+  }
+
+  const period = snapshotPeriod(snapshot);
+
+  // An activation cannot happen without either of these; asked rather than
+  // asserted, because a refusal here is free and a wrong close is not.
+  if (period === null || snapshot.plan === null) {
+    return;
+  }
+
+  try {
+    await closeSettledCheckoutAttempt({
+      userId: snapshot.userId,
+      plan: snapshot.plan,
+      subscriptionStartedAt: period.start,
+      client,
+    });
+  } catch (error) {
+    // **The category, never the cause, and never an identifier.** The
+    // entitlement is applied; this is a slot that will now lapse instead of
+    // being released early.
+    console.error(
+      "[billing] could not release the settled checkout slot —",
+      error instanceof Error ? error.name : "an unexpected failure",
+    );
+  }
 }
 
 async function converge(

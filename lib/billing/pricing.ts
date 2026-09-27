@@ -66,6 +66,22 @@ export type PricingView = {
   readonly activeWorkers: number;
   readonly current: CurrentPlanView;
   readonly plans: readonly PricedPlan[];
+  /**
+   * Whether a checkout of this account's is still unfinished.
+   *
+   * **It is a reason to explain, not a reason to refuse.** An unfinished checkout
+   * is as likely to be one somebody abandoned at the payment page as one they paid
+   * for, and only the provider can say which — `startCheckout` asks it, and
+   * answers `payment-processing` or resumes the session accordingly. A page that
+   * disabled its buttons on this alone would lock somebody who changed their mind
+   * out of trying again for the eighteen hours of the attempt's TTL.
+   *
+   * **What it buys is the sentence that was missing.** During the window between
+   * paying and the entitlement landing, the plans page correctly said the account
+   * was on nothing — correct, and alarming to somebody who had just paid. This is
+   * what lets it add that a payment may be on its way.
+   */
+  readonly checkoutInProgress: boolean;
 };
 
 /**
@@ -121,17 +137,30 @@ function standingFor(activeWorkers: number, limit: number): PlanStanding {
  * with a number that did not cause it.
  */
 export async function readPricingView(userId: string): Promise<PricingView> {
-  const [subscription, activeWorkers] = await Promise.all([
+  const now = new Date();
+
+  const [subscription, activeWorkers, attempt] = await Promise.all([
     prisma.subscription.findUnique({
       where: { userId },
       select: SUBSCRIPTION_FIELDS,
     }),
     prisma.routine.count({ where: { userId, status: "active" } }),
+    // **Read, like everything else here.** Whether the slot it holds may be
+    // taken again is the orchestration's question and is asked under a lock; this
+    // is only whether there is something to mention.
+    prisma.checkoutAttempt.findUnique({
+      where: { userId },
+      select: { state: true, expiresAt: true },
+    }),
   ]);
 
   return {
     activeWorkers,
     current: readCurrent(subscription),
+    checkoutInProgress:
+      attempt !== null &&
+      attempt.state !== "closed" &&
+      attempt.expiresAt.getTime() > now.getTime(),
     plans: checkoutAttemptPlans.map((id) => {
       const definition = getPlanDefinition(id);
 

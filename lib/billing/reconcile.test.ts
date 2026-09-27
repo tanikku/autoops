@@ -44,10 +44,24 @@ const clientStub = {
 
 vi.mock("@/lib/prisma", () => ({ prisma: clientStub }));
 
+/**
+ * **Stood in for, because it is the one thing that runs outside the
+ * transaction.** What it decides is settled in `checkout-cleanup.test.ts`; what
+ * matters here is that it is asked after an activation and nowhere else, and that
+ * nothing it does can reach the caller.
+ */
+const closeSettledCheckoutAttempt = vi.fn();
+
+vi.mock("@/lib/billing/checkout-cleanup", () => ({
+  closeSettledCheckoutAttempt,
+}));
+
 const { reconcileProviderSubscription } = await import(
   "@/lib/billing/reconcile"
 );
 const { getPlanDefinition } = await import("@/lib/plans");
+
+const cleanupLogs: string[] = [];
 
 const USER = "google-sub-1";
 const SUB = "provider-sub-1";
@@ -136,6 +150,13 @@ function updateWith(field: string): Record<string, unknown> | undefined {
 }
 
 beforeEach(() => {
+  closeSettledCheckoutAttempt
+    .mockReset()
+    .mockResolvedValue({ outcome: "closed" });
+  cleanupLogs.length = 0;
+  vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    cleanupLogs.push(args.map(String).join(" "));
+  });
   subscriptionFindUnique.mockReset().mockResolvedValue(null);
   subscriptionCreate.mockReset().mockResolvedValue({ id: "s1" });
   subscriptionUpdate.mockReset().mockResolvedValue({ id: "s1" });
@@ -1000,5 +1021,133 @@ describe("provider neutrality", () => {
 
     expect(source).toContain("reconcileProviderSubscription");
     expect(source).toContain("provider-domain-regression");
+  });
+});
+
+/**
+ * Letting go of the slot a completed purchase was holding.
+ *
+ * **An activation is the only thing that ends a checkout.** A renewal, a plan
+ * change, a cancellation and a run that found the two already in agreement are
+ * none of them a purchase completing — and a cancellation releasing somebody's
+ * slot midway through buying would be the worst of those mistakes.
+ *
+ * **It runs after the transaction, so it cannot undo what was applied.** An
+ * entitlement that has committed is owed whatever happens to a coordination row.
+ */
+const reconcile = (input: Snapshot) =>
+  reconcileProviderSubscription(input, RUN);
+
+describe("the checkout slot a purchase was holding", () => {
+  it("is released when a subscription activates", async () => {
+    subscriptionFindUnique.mockResolvedValue(null);
+
+    await reconcile(snapshot());
+
+    expect(closeSettledCheckoutAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: USER,
+        plan: "standard",
+        subscriptionStartedAt: P1.start,
+      }),
+    );
+  });
+
+  it("is asked about with the period the provider activated", async () => {
+    subscriptionFindUnique.mockResolvedValue(null);
+
+    await reconcile(snapshot({ periodStart: P2.start, periodEnd: P2.end }));
+
+    expect(closeSettledCheckoutAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ subscriptionStartedAt: P2.start }),
+    );
+  });
+
+  it("is left alone when nothing changed", async () => {
+    subscriptionFindUnique.mockResolvedValue(stored());
+
+    await reconcile(snapshot());
+
+    expect(closeSettledCheckoutAttempt).not.toHaveBeenCalled();
+  });
+
+  it("is left alone by a renewal", async () => {
+    subscriptionFindUnique.mockResolvedValue(stored());
+
+    await reconcile(snapshot({ periodStart: P2.start, periodEnd: P2.end }));
+
+    expect(writtenKinds()).toContain("subscription.renewed");
+    expect(closeSettledCheckoutAttempt).not.toHaveBeenCalled();
+  });
+
+  /** Somebody midway through buying must not have their slot taken away. */
+  it("is left alone by a cancellation", async () => {
+    subscriptionFindUnique.mockResolvedValue(stored());
+
+    await reconcile(snapshot({ entitlement: "not-entitled" }));
+
+    expect(closeSettledCheckoutAttempt).not.toHaveBeenCalled();
+  });
+
+  it("is left alone by a plan change", async () => {
+    subscriptionFindUnique.mockResolvedValue(stored({ plan: "lite" }));
+
+    await reconcile(snapshot({ plan: "standard" }));
+
+    expect(writtenKinds()).toContain("subscription.plan_changed");
+    expect(closeSettledCheckoutAttempt).not.toHaveBeenCalled();
+  });
+
+  it("is left alone by a refusal", async () => {
+    subscriptionFindUnique.mockResolvedValue(stored({ plan: "pro" }));
+
+    const result = await reconcile(snapshot({ plan: "lite" }));
+
+    expect(result.outcome).toBe("provider-domain-mismatch");
+    expect(closeSettledCheckoutAttempt).not.toHaveBeenCalled();
+  });
+
+  it("is left alone by a malformed snapshot", async () => {
+    const result = await reconcile(snapshot({ userId: "" }));
+
+    expect(result.outcome).toBe("malformed");
+    expect(closeSettledCheckoutAttempt).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **A failure to tidy is not a failure to apply.** The entitlement is what the
+   * account is owed; a coordination row that could not be closed lapses at its
+   * own TTL, which is what happened before any of this existed.
+   */
+  it("does not disturb the entitlement when it fails", async () => {
+    subscriptionFindUnique.mockResolvedValue(null);
+    closeSettledCheckoutAttempt.mockRejectedValue(
+      new Error("no such table: CheckoutAttempt"),
+    );
+
+    const result = await reconcile(snapshot());
+
+    expect(result).toEqual({
+      outcome: "applied",
+      kinds: ["subscription.activated"],
+    });
+    expect(writtenKinds()).toEqual(["subscription.activated"]);
+  });
+
+  it("logs the category of a failure and nothing else", async () => {
+    subscriptionFindUnique.mockResolvedValue(null);
+    closeSettledCheckoutAttempt.mockRejectedValue(
+      new Error("connection to cus-1 for google-sub-1 failed"),
+    );
+
+    await reconcile(snapshot());
+
+    const logged = cleanupLogs.join(" ");
+
+    expect(logged).toContain("Error");
+    expect(logged).not.toContain(USER);
+    expect(logged).not.toContain(SUB);
+    expect(logged).not.toContain("cus-1");
+    expect(logged).not.toContain("connection to");
   });
 });
