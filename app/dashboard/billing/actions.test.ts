@@ -1,3 +1,7 @@
+import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { posix } from "node:path";
+import ts from "typescript";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -12,6 +16,146 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * below either checks what was handed to it, or what came back out of the
  * action — which is the whole of what this file adds.
  */
+
+/**
+ * Which files, if any, actually reach for the checkout action.
+ *
+ * **Parsed rather than searched.** The first version of this asked whether the
+ * text `billing/actions` appeared anywhere in a file, and a docblock saying the
+ * action is deliberately *not* imported read as a caller — as did a sibling test
+ * asserting the same absence. What the question is about is a module reference,
+ * and a module reference is a syntax tree node rather than a substring.
+ *
+ * **TypeScript's own parser, which is already a dependency.** Nothing new is
+ * installed to answer this; the compiler that typechecks the repository can also
+ * say where an import is. A comment is not a node, so it cannot be mistaken for
+ * one, and neither can a string sitting in an assertion.
+ *
+ * **Four shapes count, and they are the four that run code**: a static import
+ * with bindings, a static import for its side effect alone, a dynamic `import()`
+ * and a `require()`. Anything else that merely names the module — an assertion, a
+ * fixture, a sentence — does not.
+ */
+const CHECKOUT_ACTION_PATH = "app/dashboard/billing/actions";
+
+/**
+ * Whether a module specifier names the checkout action, from where it was written.
+ *
+ * **A relative specifier has to be resolved, not pattern-matched.** `./actions`
+ * beside the billing page means this module; the same three characters beside the
+ * settings page mean a different one entirely — so the importing file's own
+ * directory is part of the question. The alias form is absolute and answers for
+ * itself.
+ */
+function namesCheckoutAction(specifier: string, importerPath: string): boolean {
+  const withoutExtension = specifier.replace(/\.[tj]sx?$/, "");
+
+  if (withoutExtension.startsWith("@/")) {
+    return withoutExtension.slice(2) === CHECKOUT_ACTION_PATH;
+  }
+
+  if (!withoutExtension.startsWith(".")) {
+    // A bare package specifier cannot reach a file in this repository.
+    return false;
+  }
+
+  const importerDirectory = importerPath.split("/").slice(0, -1).join("/");
+  const resolved = posix.normalize(posix.join(importerDirectory, withoutExtension));
+
+  return resolved === CHECKOUT_ACTION_PATH;
+}
+
+function referencesCheckoutAction(source: string, fileName: string): boolean {
+  const tree = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ false,
+    fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+
+  let found = false;
+
+  const isCheckoutAction = (node: ts.Node | undefined): boolean =>
+    node !== undefined &&
+    ts.isStringLiteralLike(node) &&
+    namesCheckoutAction(node.text, fileName);
+
+  const visit = (node: ts.Node): void => {
+    if (found) {
+      return;
+    }
+
+    // `import x from "..."` and `import "..."` — the module specifier of an
+    // import declaration is a string literal in both.
+    if (ts.isImportDeclaration(node) && isCheckoutAction(node.moduleSpecifier)) {
+      found = true;
+      return;
+    }
+
+    // `export ... from "..."`, which re-exports and therefore also reaches it.
+    if (
+      ts.isExportDeclaration(node) &&
+      isCheckoutAction(node.moduleSpecifier)
+    ) {
+      found = true;
+      return;
+    }
+
+    // `import("...")` and `require("...")`. The first is a call whose expression
+    // is the `import` keyword; the second an ordinary call to an identifier.
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      const isImportCall = callee.kind === ts.SyntaxKind.ImportKeyword;
+      const isRequireCall =
+        ts.isIdentifier(callee) && callee.text === "require";
+
+      if ((isImportCall || isRequireCall) && isCheckoutAction(node.arguments[0])) {
+        found = true;
+        return;
+      }
+    }
+
+    ts.forEachChild(node, visit);
+  };
+
+  visit(tree);
+
+  return found;
+}
+
+/**
+ * Every file that could render, and whether any of them imports the action.
+ *
+ * **Tracked and untracked both**, because the blind spot that let this through
+ * was exactly that: `git ls-files` lists what is committed, so two files added in
+ * the same change were invisible to their own check until the moment they were
+ * committed — and the check then failed in CI rather than here.
+ * `--cached --others --exclude-standard` asks for both while still honouring
+ * `.gitignore`, so `node_modules`, `.next` and the generated client stay out.
+ *
+ * **Tests are not callers.** A file whose job is to assert that nothing imports
+ * the action would otherwise be the thing that imports it.
+ */
+function findCheckoutActionCallers(): string[] {
+  const listed = execSync(
+    "git ls-files --cached --others --exclude-standard -- app components",
+    { encoding: "utf8" },
+  )
+    .split("\n")
+    .filter(Boolean);
+
+  return listed
+    .filter(
+      (file) =>
+        (file.endsWith(".ts") || file.endsWith(".tsx")) &&
+        !file.endsWith(".test.ts") &&
+        !file.endsWith(".test.tsx") &&
+        // The action itself is not a caller of itself.
+        !/billing\/actions\.tsx?$/.test(file),
+    )
+    .filter((file) => referencesCheckoutAction(readFileSync(file, "utf8"), file));
+}
 
 const mocks = vi.hoisted(() => ({
   requireProvisionedUserId: vi.fn(),
@@ -512,21 +656,160 @@ describe("what this file is not", () => {
   });
 
   /** Nothing renders this yet, and nothing may until the UI slice. */
-  it("is called from no page or component", async () => {
+  it("is called from no page or component", () => {
+    expect(findCheckoutActionCallers()).toEqual([]);
+  });
+});
+
+/**
+ * What counts as reaching for the action, and what does not.
+ *
+ * **These exist because the first version of the check was a substring search.**
+ * It read a docblock saying the action is deliberately not imported as a caller,
+ * and it read the assertion above as one too — so CI refused a change whose
+ * production code was correct. Each case below is one of those mistakes, fixed.
+ *
+ * **Parsed rather than matched**, so a mention in a comment or a string is not a
+ * reference. The four positive cases are the four shapes that actually run
+ * another module.
+ */
+describe("what counts as importing the checkout action", () => {
+  const MODULE = "@/app/dashboard/billing/actions";
+
+  /**
+   * **The mistakes that broke CI, each as its own case.** A docblock explaining
+   * that the action is not imported, an assertion proving the same thing, and an
+   * ordinary string are all mentions rather than references — and a substring
+   * search cannot tell them apart.
+   */
+  it.each([
+    [
+      "a docblock saying it is not imported",
+      `/**
+       * ${MODULE} is deliberately not imported here.
+       */
+export const a = 1;`,
+    ],
+    [
+      "a line comment naming it",
+      `// nothing imports ${MODULE}
+export const a = 1;`,
+    ],
+    [
+      "an assertion that nothing imports it",
+      `expect(source).not.toContain(${JSON.stringify(MODULE)});`,
+    ],
+    ["an ordinary string", `const note = ${JSON.stringify(MODULE)};`],
+    [
+      "a fixture holding the path",
+      `const fixtures = { action: ${JSON.stringify(MODULE)} };`,
+    ],
+    [
+      "a similarly named module",
+      `import { x } from "@/app/dashboard/billing/actions-helper";`,
+    ],
+  ])("does not count %s", (_label, source) => {
+    expect(referencesCheckoutAction(source, "sample.ts")).toBe(false);
+  });
+
+  /** The four shapes that actually run the module, and a re-export. */
+  it.each([
+    ["a named static import", `import { startCheckoutAction } from "${MODULE}";`],
+    ["a default static import", `import action from "${MODULE}";`],
+    ["a side-effect import", `import "${MODULE}";`],
+    ["a dynamic import", `const m = await import("${MODULE}");`],
+    ["a require", `const m = require("${MODULE}");`],
+    ["a re-export", `export { startCheckoutAction } from "${MODULE}";`],
+  ])("counts %s", (_label, source) => {
+    expect(referencesCheckoutAction(source, "sample.ts")).toBe(true);
+  });
+
+  /** Single quotes are a matter of formatting, not of meaning. */
+  it("counts an import written with single quotes", () => {
+    const source = 'import { startCheckoutAction } from \'@/app/dashboard/billing/actions\';';
+
+    expect(referencesCheckoutAction(source, "sample.ts")).toBe(true);
+  });
+
+  /**
+   * **A relative specifier is resolved from where it was written.** `./actions`
+   * beside the billing page is this module; beside the settings page it is a
+   * different one, and reading it as the same would refuse a change to a screen
+   * that has nothing to do with buying.
+   */
+  it.each([
+    ["./actions", "app/dashboard/billing/page.tsx"],
+    ["../billing/actions", "app/dashboard/settings/page.tsx"],
+    ["@/app/dashboard/billing/actions", "components/plan-cards.tsx"],
+  ])("counts %s written in %s", (specifier, importer) => {
+    const source = `import { startCheckoutAction } from "${specifier}";`;
+
+    expect(referencesCheckoutAction(source, importer)).toBe(true);
+  });
+
+  /** Another module's own `actions.ts` is not this one. */
+  it.each([
+    ["./actions", "app/dashboard/settings/page.tsx"],
+    ["./actions", "app/dashboard/page.tsx"],
+    ["@/app/dashboard/settings/actions", "app/dashboard/billing/page.tsx"],
+  ])("does not count %s written in %s", (specifier, importer) => {
+    const source = `import { updateTimezoneAction } from "${specifier}";`;
+
+    expect(referencesCheckoutAction(source, importer)).toBe(false);
+  });
+
+  /** JSX has to parse, or a page component would be unreadable to the check. */
+  it("parses a component that imports it", () => {
+    const source = `import { startCheckoutAction } from "${MODULE}";
+export function Buy() {
+  return <button onClick={() => startCheckoutAction({ plan: "lite" })}>Buy</button>;
+}`;
+
+    expect(referencesCheckoutAction(source, "buy.tsx")).toBe(true);
+  });
+});
+
+/**
+ * Which files the check looks at.
+ *
+ * **Untracked ones too, which is the other half of the bug.** `git ls-files`
+ * lists what is committed, so the two files added alongside this check were
+ * invisible to it until the commit that made them visible — and the failure then
+ * landed in CI instead of here.
+ */
+describe("which files the check considers", () => {
+  it("lists files git has not been told about yet", async () => {
     const { execSync } = await import("node:child_process");
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
 
-    const found = execSync(
-      'git ls-files "app/**/*.tsx" "components/**/*.tsx" "app/**/page.ts*" || true',
-      { encoding: "utf8" },
-    )
-      .split("\n")
-      .filter(Boolean);
+    // **Written outside the repository.** A fixture inside it would be a file
+    // the repository now carries, which is what this check exists to notice.
+    const scratch = mkdtempSync(join(tmpdir(), "caller-scan-"));
 
-    const { readFileSync } = await import("node:fs");
-    const callers = found.filter((file) =>
-      readFileSync(file, "utf8").includes("billing/actions"),
-    );
+    try {
+      execSync("git init --quiet", { cwd: scratch });
+      writeFileSync(join(scratch, "tracked.tsx"), "export const a = 1;");
+      execSync("git add tracked.tsx", { cwd: scratch });
+      writeFileSync(join(scratch, "untracked.tsx"), "export const b = 2;");
 
-    expect(callers).toEqual([]);
+      const listed = execSync(
+        "git ls-files --cached --others --exclude-standard",
+        { cwd: scratch, encoding: "utf8" },
+      );
+
+      expect(listed).toContain("tracked.tsx");
+      expect(listed).toContain("untracked.tsx");
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  /** A test asserting the absence must not be the thing that breaks it. */
+  it("leaves test files out", () => {
+    const callers = findCheckoutActionCallers();
+
+    expect(callers.filter((file) => file.includes(".test."))).toEqual([]);
   });
 });
