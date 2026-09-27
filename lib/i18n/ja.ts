@@ -764,4 +764,40 @@ export const ja: Record<TranslationKey, string> = {
   "notify.email.openMonitored": "監視先を開く:",
   "run.detail.openMonitored": "監視先を開く",
 
+  "pricing.title": "プラン",
+  "pricing.description": "各プランでできること。金額は月額です。",
+  "pricing.current.heading": "現在のプラン",
+  "pricing.current.none": "まだプランに加入していません。",
+  "pricing.current.onPlan": "現在のプランは {plan} です。",
+  "pricing.current.unreadable":
+    "現在のプランを表示できませんでした。設定は変更されていません。",
+  "pricing.current.activeWorkers": "現在 Active な Worker は {count} 件です。",
+  "pricing.managed.heading": "契約の管理",
+  "pricing.managed.description":
+    "お支払い中のプランの変更・解約は、まだ画面からは行えません。サポートへご連絡いただければ対応します。",
+  "pricing.plan.lite": "Lite",
+  "pricing.plan.standard": "Standard",
+  "pricing.plan.pro": "Pro",
+  "pricing.price.monthly": "月額 {amount} 円",
+  "pricing.allowance.activeWorkers": "同時に Active な Worker {limit} 件",
+  "pricing.allowance.aiProcessing": "AI 実行 月 {limit} 回",
+  "pricing.allowance.manualRun": "手動実行 月 {limit} 回",
+  "pricing.allowance.discovery": "ディスカバリー実行 月 {limit} 回",
+  "pricing.allowance.emailOneWorker": "1 つの Worker からメール通知",
+  "pricing.allowance.emailAllWorkers": "すべての Worker からメール通知",
+  "pricing.allowance.historyDays": "実行履歴 {days} 日分",
+  "pricing.cta.comingSoon": "まだ利用できません",
+  "pricing.standing.atLimit": "現在の利用数とちょうど同じです",
+  "pricing.standing.overLimit": "現在の Active 数より少ない上限です",
+  "pricing.guardrail.atLimit.title": "このプランの上限ちょうどになります",
+  "pricing.guardrail.atLimit.body":
+    "現在 Active な Worker は {active} 件で、このプランの上限は {limit} 件です。いま動いている Worker はそのまま動き続けます。新しく Active にする場合（一時停止中のものを戻す場合も含みます）は、先にどれかを一時停止する必要があります。",
+  "pricing.guardrail.overLimit.title": "このプランの上限は現在より少なくなります",
+  "pricing.guardrail.overLimit.keepsRunning":
+    "現在 Active な Worker は {active} 件で、このプランの上限は {limit} 件です。いま動いている Worker は止まりません。Koqentra が止める Worker を選ぶことはありません。",
+  "pricing.guardrail.overLimit.restricted":
+    "Active が {limit} 件未満になるまでは、新しい Worker の Active 化、下書きの Active 化、一時停止中の Worker の再開はできません。",
+  "pricing.guardrail.overLimit.recovery":
+    "一時停止と削除はいつでもできます。Active が {limit} 件未満になれば、また増やせるようになります。",
+
 };

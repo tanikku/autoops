@@ -1388,6 +1388,60 @@ Notes for the report:
   /** On the run's own page, beside what the run found. */
   "run.detail.openMonitored": "Open monitored page",
 
+  /**
+   * Plans, and what a lower allowance means for workers already running.
+   *
+   * **The guardrail wording says what will and will not happen, in that order.**
+   * Somebody reading it is deciding whether to buy, and the thing they need
+   * first is that nothing of theirs stops — the restriction comes second because
+   * it is the smaller surprise. **Nothing here names the Closed Beta**: the same
+   * sentences serve a trial, a granted allowance and a plan somebody is leaving.
+   */
+  "pricing.title": "Plans",
+  "pricing.description":
+    "What each plan allows. Prices are per month.",
+  "pricing.current.heading": "Your plan",
+  "pricing.current.none": "You are not on a plan yet.",
+  "pricing.current.onPlan": "You are on {plan}.",
+  "pricing.current.unreadable":
+    "Your plan cannot be shown right now. Nothing has changed.",
+  "pricing.current.activeWorkers":
+    "{count} of your Workers are active.",
+  "pricing.managed.heading": "Managing your subscription",
+  "pricing.managed.description":
+    "Changing or cancelling a plan you pay for is not available yet. Email support and somebody will do it for you.",
+  "pricing.plan.lite": "Lite",
+  "pricing.plan.standard": "Standard",
+  "pricing.plan.pro": "Pro",
+  "pricing.price.monthly": "¥{amount} / month",
+  "pricing.allowance.activeWorkers": "{limit} active Workers",
+  "pricing.allowance.aiProcessing": "{limit} AI runs a month",
+  "pricing.allowance.manualRun": "{limit} hand-started runs a month",
+  "pricing.allowance.discovery": "{limit} discovery runs a month",
+  "pricing.allowance.emailOneWorker": "Email from one Worker",
+  "pricing.allowance.emailAllWorkers": "Email from every Worker",
+  "pricing.allowance.historyDays": "{days} days of run history",
+  "pricing.cta.comingSoon": "Not available yet",
+  "pricing.standing.atLimit": "This is exactly what you use now",
+  "pricing.standing.overLimit": "Fewer active Workers than you run now",
+  /**
+   * What happens to workers that are already running.
+   *
+   * **Read in the order it is written.** Nothing of yours stops; then what you
+   * cannot do until you free a slot; then how to free one. A reader who stops
+   * after the first line has the answer that matters most.
+   */
+  "pricing.guardrail.atLimit.title": "You would be at this plan's limit",
+  "pricing.guardrail.atLimit.body":
+    "{active} of your Workers are active and this plan allows {limit}. They keep running. To make another Worker active — including one that is paused — you would first have to pause one.",
+  "pricing.guardrail.overLimit.title": "This plan allows fewer active Workers",
+  "pricing.guardrail.overLimit.keepsRunning":
+    "{active} of your Workers are active and this plan allows {limit}. The ones running now keep running: nothing is stopped, and Koqentra never chooses a Worker to stop on your behalf.",
+  "pricing.guardrail.overLimit.restricted":
+    "Until fewer than {limit} are active, you could not make a new Worker active, activate a draft, or resume a paused one.",
+  "pricing.guardrail.overLimit.recovery":
+    "Pausing or deleting a Worker is always allowed, and once fewer than {limit} are active you could add them again.",
+
 } as const;
 
 /**
