@@ -58,12 +58,15 @@ describe("the dictionaries", () => {
         // looking for "Discovery"; translating only the usage label would
         // leave one screen calling it something no other screen does.
         "trial.usage.discovery",
-        // The three plans' own names. A plan is called Lite on an invoice, in
-        // the provider's dashboard and in every conversation about it, so a
-        // Japanese rendering would be a fourth name for the same thing.
+        // The plans' own names. A plan is called Lite on an invoice, in the
+        // provider's dashboard and in every conversation about it, so a
+        // Japanese rendering would be a fourth name for the same thing. Trial
+        // and Beta are named the same way for the same reason.
+        "pricing.plan.trial",
         "pricing.plan.lite",
         "pricing.plan.standard",
         "pricing.plan.pro",
+        "pricing.plan.beta",
       ].sort(),
     );
   });

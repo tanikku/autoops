@@ -768,16 +768,28 @@ export const ja: Record<TranslationKey, string> = {
   "pricing.description": "各プランでできること。金額は月額です。",
   "pricing.current.heading": "現在のプラン",
   "pricing.current.none": "まだプランに加入していません。",
-  "pricing.current.onPlan": "現在のプランは {plan} です。",
+  "pricing.current.trialing": "トライアル期間中です。",
+  "pricing.current.trialExpired": "トライアル期間は終了しました。",
+  "pricing.current.activeGranted": "{plan} の利用枠が有効です。",
+  "pricing.current.activePurchased": "{plan} を契約中です。",
+  "pricing.current.grace":
+    "{plan} は有効ですが、お支払い状況の確認が必要です。",
+  "pricing.current.cancelledActive":
+    "{plan} は解約済みですが、現在の請求期間が終了するまでは利用できます。",
+  "pricing.current.inactive":
+    "現在プランはありません。{plan} の契約は終了しています。",
+  "pricing.current.expired": "{plan} の利用枠は終了しました。",
   "pricing.current.unreadable":
     "現在のプランを表示できませんでした。設定は変更されていません。",
   "pricing.current.activeWorkers": "現在 Active な Worker は {count} 件です。",
   "pricing.managed.heading": "契約の管理",
   "pricing.managed.description":
     "お支払い中のプランの変更・解約は、まだ画面からは行えません。サポートへご連絡いただければ対応します。",
+  "pricing.plan.trial": "Trial",
   "pricing.plan.lite": "Lite",
   "pricing.plan.standard": "Standard",
   "pricing.plan.pro": "Pro",
+  "pricing.plan.beta": "Beta",
   "pricing.price.monthly": "月額 {amount} 円",
   "pricing.allowance.activeWorkers": "同時に Active な Worker {limit} 件",
   "pricing.allowance.aiProcessing": "AI 実行 月 {limit} 回",

@@ -1,8 +1,14 @@
 import type { Metadata } from "next";
 import { DashboardNav } from "@/components/dashboard-nav";
 import { PlanCards } from "@/components/plan-cards";
-import { mayOfferPurchase, readPricingView } from "@/lib/billing/pricing";
-import { t } from "@/lib/i18n";
+import { planNameKey } from "@/lib/billing/plan-labels";
+import {
+  type CurrentPlanView,
+  mayOfferPurchase,
+  readPricingView,
+} from "@/lib/billing/pricing";
+import type { EntitlementState } from "@/lib/entitlements/types";
+import { type TranslationKey, t } from "@/lib/i18n";
 import { getDocumentLanguage } from "@/lib/i18n/server";
 import { requireUserId } from "@/lib/session";
 import { getUserLanguage } from "@/lib/users";
@@ -24,6 +30,87 @@ import { getUserLanguage } from "@/lib/users";
  * **Read-only.** `requireUserId` authenticates without provisioning — a page
  * view must not write the account row, and nothing here needs it to exist.
  */
+
+/**
+ * Which sentence describes each state, and the one state that needs two.
+ *
+ * **Keyed by every state so a new one cannot be forgotten.** The record is typed
+ * over `EntitlementState`, so adding a ninth state to `lib/entitlements` fails
+ * this file to compile rather than quietly falling through to "cannot be shown".
+ *
+ * **`active` is two different facts.** A grant and a purchase both read as
+ * active, and telling somebody on the Closed Beta allowance that they are
+ * subscribed would be telling them they are being charged.
+ */
+type StateCopy =
+  | TranslationKey
+  | { readonly granted: TranslationKey; readonly purchased: TranslationKey };
+
+const STATE_COPY: Readonly<Record<EntitlementState, StateCopy>> = {
+  none: "pricing.current.none",
+  trialing: "pricing.current.trialing",
+  trial_expired: "pricing.current.trialExpired",
+  active: {
+    granted: "pricing.current.activeGranted",
+    purchased: "pricing.current.activePurchased",
+  },
+  grace: "pricing.current.grace",
+  canceled_active: "pricing.current.cancelledActive",
+  inactive: "pricing.current.inactive",
+  expired: "pricing.current.expired",
+};
+
+/**
+ * One sentence saying what the account has.
+ *
+ * **The state decides the sentence; the plan only fills in a name.** Reading the
+ * plan alone is what put "You are on lite" on the screen of an account whose
+ * Lite subscription had ended — a plan says what was bought, and only a state
+ * says whether it still gives anything.
+ *
+ * **Presentation only.** Nothing here decides what may be bought: that is
+ * `mayOfferPurchase`, asked once and separately, and a second opinion about it
+ * living in a heading would be a second thing to keep in step.
+ *
+ * **A stored value this build cannot read is not guessed at**, whether it is the
+ * state or the plan. Either way the answer is the one the page already gives for
+ * an unreadable row.
+ */
+function currentPlanSentence(
+  current: CurrentPlanView,
+  language: string,
+): string {
+  if (current.kind === "none") {
+    return t(language, "pricing.current.none");
+  }
+
+  if (current.kind === "unreadable") {
+    return t(language, "pricing.current.unreadable");
+  }
+
+  // Widened at the lookup, not at the declaration: the record is exhaustive over
+  // the states this build knows, and a row may hold one it does not.
+  const copy: StateCopy | undefined = (
+    STATE_COPY as Readonly<Record<string, StateCopy | undefined>>
+  )[current.state];
+  const nameKey = planNameKey(current.plan);
+
+  if (copy === undefined || nameKey === null) {
+    return t(language, "pricing.current.unreadable");
+  }
+
+  return t(
+    language,
+    typeof copy === "string"
+      ? copy
+      : current.purchased
+        ? copy.purchased
+        : copy.granted,
+    // Named, never the stored id: the cards below call the same plan `Lite`.
+    { plan: t(language, nameKey) },
+  );
+}
+
 export async function generateMetadata(): Promise<Metadata> {
   const language = await getDocumentLanguage();
 
@@ -59,13 +146,7 @@ export default async function BillingPage() {
             {t(language, "pricing.current.heading")}
           </h2>
           <p className="mt-3 text-sm text-muted-foreground">
-            {view.current.kind === "none"
-              ? t(language, "pricing.current.none")
-              : view.current.kind === "unreadable"
-                ? t(language, "pricing.current.unreadable")
-                : t(language, "pricing.current.onPlan", {
-                    plan: view.current.plan,
-                  })}
+            {currentPlanSentence(view.current, language)}
           </p>
           {/* The count every guardrail sentence below refers to, said once. */}
           <p className="mt-1.5 text-sm text-muted-foreground">

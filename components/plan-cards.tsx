@@ -1,4 +1,5 @@
 import { TriangleAlert } from "lucide-react";
+import { planNameKeyFor } from "@/lib/billing/plan-labels";
 import type { PricedPlan, PlanStanding } from "@/lib/billing/pricing";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,19 +25,6 @@ import { t } from "@/lib/i18n";
  * matters is that they know what does and does not happen — so the wording leads
  * with "nothing stops" and only then says what is restricted.
  */
-
-/**
- * Which key names each plan.
- *
- * **Written out rather than built from the id.** `t` takes a key it can check at
- * compile time, and a template would defeat that — a plan added without a name
- * would then be a missing string on a screen instead of a build failure.
- */
-const PLAN_NAME_KEYS = {
-  lite: "pricing.plan.lite",
-  standard: "pricing.plan.standard",
-  pro: "pricing.plan.pro",
-} as const;
 
 /** One allowance line, as a plan card lists it. */
 function allowanceLines(plan: PricedPlan, language: string): string[] {
@@ -179,7 +167,7 @@ export function PlanCards({
           <CardContent>
             <div className="flex items-start justify-between gap-2">
               <h3 className="text-base font-semibold tracking-tight">
-                {t(language, PLAN_NAME_KEYS[plan.id])}
+                {t(language, planNameKeyFor(plan.id))}
               </h3>
               {standingBadge(plan.standing, language)}
             </div>

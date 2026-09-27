@@ -1402,7 +1402,36 @@ Notes for the report:
     "What each plan allows. Prices are per month.",
   "pricing.current.heading": "Your plan",
   "pricing.current.none": "You are not on a plan yet.",
-  "pricing.current.onPlan": "You are on {plan}.",
+  /**
+   * What the account has, said one way per state.
+   *
+   * **A plan and a live entitlement are different facts.** The first version of
+   * this screen said "You are on Lite" for an account whose Lite subscription had
+   * ended, because it read the plan and ignored the state — and a plan is what
+   * *was* allowed as much as what is. Each state below therefore gets its own
+   * sentence, and the three that entitle nothing say so first.
+   *
+   * **Granted and bought are different too.** The Closed Beta's accounts have an
+   * allowance nobody paid for; telling them they are subscribed would be telling
+   * them they are being charged.
+   */
+  "pricing.current.trialing": "Your trial is active.",
+  "pricing.current.trialExpired": "Your trial has ended.",
+  "pricing.current.activeGranted": "Your {plan} access is active.",
+  "pricing.current.activePurchased": "You are subscribed to {plan}.",
+  /**
+   * **Says what needs doing, not what went wrong.** The provider reports a
+   * payment that has not settled; whether a card was declined, expired or simply
+   * slow is not something this screen knows, and naming a cause it cannot see
+   * would be worse than naming none.
+   */
+  "pricing.current.grace":
+    "Your {plan} subscription is active, but payment needs attention.",
+  "pricing.current.cancelledActive":
+    "Your {plan} subscription is cancelled but remains active until the end of the current billing period.",
+  "pricing.current.inactive":
+    "You are not on a plan. Your {plan} subscription has ended.",
+  "pricing.current.expired": "Your {plan} access has ended.",
   "pricing.current.unreadable":
     "Your plan cannot be shown right now. Nothing has changed.",
   "pricing.current.activeWorkers":
@@ -1410,9 +1439,11 @@ Notes for the report:
   "pricing.managed.heading": "Managing your subscription",
   "pricing.managed.description":
     "Changing or cancelling a plan you pay for is not available yet. Email support and somebody will do it for you.",
+  "pricing.plan.trial": "Trial",
   "pricing.plan.lite": "Lite",
   "pricing.plan.standard": "Standard",
   "pricing.plan.pro": "Pro",
+  "pricing.plan.beta": "Beta",
   "pricing.price.monthly": "¥{amount} / month",
   "pricing.allowance.activeWorkers": "{limit} active Workers",
   "pricing.allowance.aiProcessing": "{limit} AI runs a month",

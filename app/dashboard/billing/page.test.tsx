@@ -164,23 +164,187 @@ describe("the three plans", () => {
   });
 });
 
+/** What the read model calls being on a plan, as the page has to say it. */
+function onPlan(
+  plan: string,
+  state: string,
+  purchased: boolean,
+  entitled = true,
+) {
+  return { current: { kind: "on-plan", plan, state, purchased, entitled } };
+}
+
+/**
+ * What the account has, said one state at a time.
+ *
+ * **The state decides the sentence.** The first version of this section read the
+ * plan and nothing else, so an account whose Lite subscription had ended was told
+ * it was on Lite — a plan it no longer had, named by its stored id. Every state
+ * below therefore has its own assertion, and the ones that entitle nothing are
+ * asserted to say so.
+ */
 describe("what the account is on now", () => {
-  it("names the current plan", async () => {
-    const html = await render();
-
-    expect(html).toContain("You are on beta.");
-  });
-
   it("says so when there is no plan", async () => {
     const html = await render({ current: { kind: "none" } });
 
     expect(html).toContain("You are not on a plan yet.");
   });
 
+  it("says a trial is running", async () => {
+    const html = await render(onPlan("trial", "trialing", false));
+
+    expect(html).toContain("Your trial is active.");
+  });
+
+  it("says a trial has ended", async () => {
+    const html = await render(onPlan("trial", "trial_expired", false, false));
+
+    expect(html).toContain("Your trial has ended.");
+  });
+
+  /**
+   * **A grant is not a purchase.** Telling somebody on the Closed Beta allowance
+   * that they are subscribed would be telling them they are being charged.
+   */
+  it("calls a granted allowance access rather than a subscription", async () => {
+    const html = await render(onPlan("beta", "active", false));
+
+    expect(html).toContain("Your Beta access is active.");
+    expect(html).not.toContain("You are subscribed");
+  });
+
+  it("calls a bought plan a subscription", async () => {
+    mocks.mayOfferPurchase.mockReturnValue(false);
+
+    const html = await render(onPlan("lite", "active", true));
+
+    expect(html).toContain("You are subscribed to Lite.");
+    expect(html).not.toContain("access is active");
+  });
+
+  /** What needs doing, without naming a cause the page cannot see. */
+  it("says a payment needs attention in grace", async () => {
+    mocks.mayOfferPurchase.mockReturnValue(false);
+
+    const html = await render(onPlan("lite", "grace", true));
+
+    expect(html).toContain(
+      "Your Lite subscription is active, but payment needs attention.",
+    );
+  });
+
+  it("says a cancellation still has its period to run", async () => {
+    mocks.mayOfferPurchase.mockReturnValue(false);
+
+    const html = await render(onPlan("lite", "canceled_active", true));
+
+    expect(html).toContain(
+      "Your Lite subscription is cancelled but remains active until the end of the current billing period.",
+    );
+  });
+
+  /**
+   * **No date, deliberately.** The period end is not in the read model, and a
+   * date invented on a page about somebody's billing would be worse than none.
+   */
+  it("names no date for a cancellation", async () => {
+    mocks.mayOfferPurchase.mockReturnValue(false);
+
+    const html = await render(onPlan("lite", "canceled_active", true));
+
+    expect(html).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+    expect(html).not.toContain("until 2026");
+  });
+
+  /** The defect this section exists for: a plan that has ended says so first. */
+  it("says a subscription that has ended is over", async () => {
+    const html = await render(onPlan("lite", "inactive", true, false));
+
+    expect(html).toContain("You are not on a plan.");
+    expect(html).toContain("Your Lite subscription has ended.");
+  });
+
+  it("says a grant that has expired is over", async () => {
+    const html = await render(onPlan("beta", "expired", false, false));
+
+    expect(html).toContain("Your Beta access has ended.");
+  });
+
   it("says nothing it cannot read", async () => {
     const html = await render({ current: { kind: "unreadable" } });
 
     expect(html).toContain("cannot be shown right now");
+  });
+
+  /** A state written by a version that knew more is not described. */
+  it("says nothing about a state it does not know", async () => {
+    const html = await render(onPlan("lite", "renegotiating", true));
+
+    expect(html).toContain("cannot be shown right now");
+  });
+
+  /** Nor a plan it does not know: there is no name to read off an id. */
+  it("says nothing about a plan it does not know", async () => {
+    const html = await render(onPlan("enterprise", "active", true));
+
+    expect(html).toContain("cannot be shown right now");
+  });
+
+  /** Every state this build knows has a sentence of its own. */
+  it.each([
+    ["trialing", "trial"],
+    ["trial_expired", "trial"],
+    ["active", "lite"],
+    ["grace", "lite"],
+    ["canceled_active", "lite"],
+    ["inactive", "lite"],
+    ["expired", "beta"],
+  ])("has copy for %s", async (state, plan) => {
+    mocks.mayOfferPurchase.mockReturnValue(false);
+
+    const html = await render(onPlan(plan, state, true));
+
+    expect(html).not.toContain("cannot be shown right now");
+  });
+
+  /** Never the stored id: the cards call the same plan Lite. */
+  it.each(["active", "grace", "canceled_active", "inactive"])(
+    "names the plan as a card writes it in %s",
+    async (state) => {
+      mocks.mayOfferPurchase.mockReturnValue(false);
+
+      const html = await render(onPlan("lite", state, true));
+
+      expect(html).toContain("Lite");
+      expect(html).not.toContain("You are on lite");
+    },
+  );
+
+  /** The old wording said one thing for eight different situations. */
+  it("never says only which plan somebody is on", async () => {
+    for (const current of [
+      onPlan("beta", "active", false),
+      onPlan("lite", "inactive", true, false),
+      onPlan("trial", "trialing", false),
+    ]) {
+      expect(await render(current)).not.toContain("You are on ");
+    }
+  });
+
+  /**
+   * **The sentence and the offer are answered separately.** One is presentation
+   * and the other is `mayOfferPurchase`; a heading with its own opinion about
+   * what may be bought would be a second thing to keep in step.
+   */
+  it("says the same thing whether or not a purchase is offered", async () => {
+    mocks.mayOfferPurchase.mockReturnValue(true);
+    const offered = await render(onPlan("lite", "active", true));
+
+    mocks.mayOfferPurchase.mockReturnValue(false);
+    const managed = await render(onPlan("lite", "active", true));
+
+    expect(offered).toContain("You are subscribed to Lite.");
+    expect(managed).toContain("You are subscribed to Lite.");
   });
 
   /** The number every guardrail sentence refers to, said once at the top. */
@@ -381,7 +545,9 @@ describe("what the page does not do", () => {
       "next",
       "@/components/dashboard-nav",
       "@/components/plan-cards",
+      "@/lib/billing/plan-labels",
       "@/lib/billing/pricing",
+      "@/lib/entitlements/types",
       "@/lib/i18n",
       "@/lib/i18n/server",
       "@/lib/session",
@@ -404,6 +570,7 @@ describe("what the page does not do", () => {
     for (const file of [
       "app/dashboard/billing/page.tsx",
       "components/plan-cards.tsx",
+      "lib/billing/plan-labels.ts",
       "lib/billing/pricing.ts",
     ]) {
       const source = readFileSync(file, "utf8")
@@ -431,6 +598,7 @@ describe("what the page does not do", () => {
     for (const file of [
       "app/dashboard/billing/page.tsx",
       "components/plan-cards.tsx",
+      "lib/billing/plan-labels.ts",
       "lib/billing/pricing.ts",
     ]) {
       const source = readFileSync(file, "utf8")
@@ -504,6 +672,21 @@ describe("in Japanese", () => {
     const html = await render();
 
     expect(html).toContain("月額 780 円");
+  });
+
+  it("says what the account is on in Japanese", async () => {
+    expect(await render(onPlan("beta", "active", false))).toContain(
+      "Beta の利用枠が有効です。",
+    );
+
+    mocks.mayOfferPurchase.mockReturnValue(false);
+
+    expect(await render(onPlan("lite", "active", true))).toContain(
+      "Lite を契約中です。",
+    );
+    expect(await render(onPlan("lite", "inactive", true, false))).toContain(
+      "Lite の契約は終了しています。",
+    );
   });
 
   it("warns over the limit in Japanese", async () => {
