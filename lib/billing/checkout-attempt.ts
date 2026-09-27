@@ -96,6 +96,17 @@ export type CheckoutAttempt = {
   readonly state: CheckoutAttemptState;
   readonly providerCheckoutSessionId: string | null;
   readonly expiresAt: Date;
+  /**
+   * When this attempt was taken.
+   *
+   * **Read because a retry has to agree with itself.** The provider refuses an
+   * idempotency key reused with different parameters, so anything derived from
+   * the clock has to be derived from a *stored* instant rather than from the
+   * current one — a session expiry computed as "now plus twelve hours" would be
+   * a different number on the second attempt at the same request. This is that
+   * instant, and it does not move.
+   */
+  readonly createdAt: Date;
 };
 
 /**
@@ -145,6 +156,7 @@ const ATTEMPT_FIELDS = {
   state: true,
   providerCheckoutSessionId: true,
   expiresAt: true,
+  createdAt: true,
 } as const;
 
 type StoredAttempt = {
@@ -153,6 +165,7 @@ type StoredAttempt = {
   state: string;
   providerCheckoutSessionId: string | null;
   expiresAt: Date;
+  createdAt: Date;
 };
 
 /**
@@ -189,6 +202,7 @@ function readStored(row: StoredAttempt): CheckoutAttempt {
     state: row.state,
     providerCheckoutSessionId: row.providerCheckoutSessionId,
     expiresAt: row.expiresAt,
+    createdAt: row.createdAt,
   };
 }
 
