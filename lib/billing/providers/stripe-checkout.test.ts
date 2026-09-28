@@ -13,11 +13,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const sessionsCreate = vi.fn();
 const sessionsRetrieve = vi.fn();
 const subscriptionsList = vi.fn();
+/** Never to be called: a session in the wrong world is left to lapse. */
+const sessionsExpire = vi.fn();
 const StripeConstructor = vi.fn();
 
 vi.mock("stripe", () => ({
   default: class {
-    checkout = { sessions: { create: sessionsCreate, retrieve: sessionsRetrieve } };
+    checkout = {
+      sessions: {
+        create: sessionsCreate,
+        retrieve: sessionsRetrieve,
+        expire: sessionsExpire,
+      },
+    };
     subscriptions = { list: subscriptionsList };
     constructor(...args: unknown[]) {
       StripeConstructor(...args);
@@ -347,6 +355,131 @@ describe("looking for a subscription that stops another", () => {
       "incomplete",
       "paused",
     ]);
+  });
+});
+
+/**
+ * Which Stripe world a session belongs to.
+ *
+ * **Asked before the address leaves.** A checkout made in the wrong world can
+ * still be paid, and reconciliation would then refuse what it produced — so a
+ * session that does not match `STRIPE_EXPECTED_LIVEMODE` is never handed out.
+ * Unset, nothing is checked, exactly as before.
+ */
+describe("the world a session belongs to", () => {
+  const withFlag = (flag: string | undefined) =>
+    ({
+      ...configured,
+      ...(flag === undefined ? {} : { STRIPE_EXPECTED_LIVEMODE: flag }),
+    }) as unknown as NodeJS.ProcessEnv;
+
+  const created = (livemode: unknown) =>
+    sessionsCreate.mockResolvedValue({
+      id: "cs_test_1",
+      url: "https://pay.example.invalid/1",
+      livemode,
+    });
+
+  beforeEach(() => {
+    sessionsExpire.mockReset();
+  });
+
+  it.each([
+    ["unset, a test session", undefined, false],
+    ["unset, a live session", undefined, true],
+    ["false, a test session", "false", false],
+    ["true, a live session", "true", true],
+  ])("hands out the session when the flag is %s", async (_label, flag, livemode) => {
+    created(livemode);
+
+    expect(await provider(withFlag(flag)).createSession(request())).toEqual({
+      sessionId: "cs_test_1",
+      url: "https://pay.example.invalid/1",
+    });
+  });
+
+  it.each([
+    ["false, and the session is live", "false", true],
+    ["true, and the session is a test one", "true", false],
+    ["true, and the session does not say", "true", undefined],
+  ])("refuses when the flag is %s", async (_label, flag, livemode) => {
+    created(livemode);
+
+    const attempt = provider(withFlag(flag)).createSession(request());
+
+    await expect(attempt).rejects.toMatchObject({
+      name: "StripeLivemodeMismatchError",
+    });
+  });
+
+  /** Nothing about the session travels in what is thrown. */
+  it("carries no address and no identifier in the refusal", async () => {
+    created(true);
+
+    const error = await provider(withFlag("false"))
+      .createSession(request({ providerCustomerId: "cus_existing" }))
+      .catch((caught: unknown) => caught);
+
+    const said = `${(error as Error).name} ${(error as Error).message}`;
+
+    for (const forbidden of ["cs_test_1", "pay.example", "cus_existing", "116614511017733764020"]) {
+      expect(said, `says ${forbidden}`).not.toContain(forbidden);
+    }
+  });
+
+  /** Refusing is not a reason to ask Stripe for anything else. */
+  it("asks Stripe for nothing more", async () => {
+    created(true);
+
+    await provider(withFlag("false"))
+      .createSession(request())
+      .catch(() => undefined);
+
+    expect(sessionsCreate).toHaveBeenCalledTimes(1);
+    expect(sessionsExpire).not.toHaveBeenCalled();
+    expect(sessionsRetrieve).not.toHaveBeenCalled();
+    expect(subscriptionsList).not.toHaveBeenCalled();
+  });
+
+  it("still refuses a flag that is neither, before asking Stripe", () => {
+    expect(createStripeCheckoutProvider(withFlag("yes"))).toEqual({
+      unavailable: "bad-livemode-flag",
+    });
+    expect(StripeConstructor).not.toHaveBeenCalled();
+  });
+
+  /** A stored session from the other world is not one to resume. */
+  it.each([
+    ["false", true],
+    ["true", false],
+  ])("does not resume a session from the other world (flag %s)", async (flag, livemode) => {
+    sessionsRetrieve.mockResolvedValue({
+      status: "open",
+      url: "https://pay.example.invalid/1",
+      livemode,
+    });
+
+    expect(await provider(withFlag(flag)).readSession("cs_test_1")).toEqual({
+      kind: "unreadable",
+      url: null,
+    });
+  });
+
+  it.each([
+    [undefined, true],
+    ["false", false],
+    ["true", true],
+  ])("resumes a session that matches (flag %s)", async (flag, livemode) => {
+    sessionsRetrieve.mockResolvedValue({
+      status: "open",
+      url: "https://pay.example.invalid/1",
+      livemode,
+    });
+
+    expect(await provider(withFlag(flag)).readSession("cs_test_1")).toEqual({
+      kind: "payable",
+      url: "https://pay.example.invalid/1",
+    });
   });
 });
 

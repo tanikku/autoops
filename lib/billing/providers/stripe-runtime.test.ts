@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  matchesExpectedLivemode,
   readStripeRuntime,
   resolveProviderReader,
   STRIPE_ENV,
+  StripeLivemodeMismatchError,
 } from "@/lib/billing/providers/stripe-runtime";
 
 /**
@@ -143,6 +145,50 @@ describe("saying which Stripe world the configuration is for", () => {
         [STRIPE_ENV.expectedLivemode]: "maybe",
       } as unknown as NodeJS.ProcessEnv)("stripe"),
     ).toEqual({ unavailable: "bad-livemode-flag" });
+  });
+});
+
+/**
+ * Whether something Stripe returned is from the world the flag names.
+ *
+ * **One comparison, shared by checkout and the portal**, so the two cannot come
+ * to read the same flag differently.
+ */
+describe("matching an object to the expected world", () => {
+  const prices = {
+    lite: "price_lite",
+    standard: "price_standard",
+    pro: "price_pro",
+  };
+
+  it.each([true, false, undefined, null, "true"])(
+    "matches anything when no world is named (%j)",
+    (livemode) => {
+      expect(matchesExpectedLivemode({ prices }, livemode)).toBe(true);
+    },
+  );
+
+  it.each([
+    [true, true, true],
+    [true, false, false],
+    [false, false, true],
+    [false, true, false],
+    [true, undefined, false],
+    [false, undefined, false],
+    [false, null, false],
+    [true, "true", false],
+  ])("expects %j, given %j → %j", (expected, livemode, matches) => {
+    expect(
+      matchesExpectedLivemode({ prices, expectedLivemode: expected }, livemode),
+    ).toBe(matches);
+  });
+
+  it("names its refusal and nothing else", () => {
+    const error = new StripeLivemodeMismatchError();
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.name).toBe("StripeLivemodeMismatchError");
+    expect(error.message).not.toMatch(/cs_|bps_|cus_|sub_|https?:/);
   });
 });
 
