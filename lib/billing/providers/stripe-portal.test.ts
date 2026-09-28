@@ -139,6 +139,79 @@ describe("what a portal session asks for", () => {
   });
 });
 
+/**
+ * Which Stripe world a portal session belongs to.
+ *
+ * **Asked before the address leaves**, with the same flag checkout and
+ * reconciliation read. Unset, nothing is checked.
+ */
+describe("the world a portal session belongs to", () => {
+  const withFlag = (flag: string | undefined) =>
+    ({
+      ...configured,
+      ...(flag === undefined ? {} : { STRIPE_EXPECTED_LIVEMODE: flag }),
+    }) as unknown as NodeJS.ProcessEnv;
+
+  const created = (livemode: unknown) =>
+    portalSessionsCreate.mockResolvedValue({
+      id: "bps_1",
+      url: "https://billing.stripe.com/p/session/x",
+      livemode,
+    });
+
+  it.each([
+    ["unset, a test session", undefined, false],
+    ["unset, a live session", undefined, true],
+    ["false, a test session", "false", false],
+    ["true, a live session", "true", true],
+  ])("hands out the session when the flag is %s", async (_label, flag, livemode) => {
+    created(livemode);
+
+    expect(await provider(withFlag(flag)).createPortalSession(REQUEST)).toEqual({
+      url: "https://billing.stripe.com/p/session/x",
+    });
+  });
+
+  it.each([
+    ["false, and the session is live", "false", true],
+    ["true, and the session is a test one", "true", false],
+    ["true, and the session does not say", "true", undefined],
+  ])("refuses when the flag is %s", async (_label, flag, livemode) => {
+    created(livemode);
+
+    await expect(
+      provider(withFlag(flag)).createPortalSession(REQUEST),
+    ).rejects.toMatchObject({ name: "StripeLivemodeMismatchError" });
+  });
+
+  it("carries no address and no identifier in the refusal", async () => {
+    created(true);
+
+    const error = await provider(withFlag("false"))
+      .createPortalSession(REQUEST)
+      .catch((caught: unknown) => caught);
+
+    const said = `${(error as Error).name} ${(error as Error).message}`;
+
+    for (const forbidden of ["bps_1", "billing.stripe.com", "cus_existing", "app.example"]) {
+      expect(said, `says ${forbidden}`).not.toContain(forbidden);
+    }
+  });
+
+  it("asks Stripe for nothing more and changes no subscription", async () => {
+    created(true);
+
+    await provider(withFlag("false"))
+      .createPortalSession(REQUEST)
+      .catch(() => undefined);
+
+    expect(portalSessionsCreate).toHaveBeenCalledTimes(1);
+    expect(subscriptionsUpdate).not.toHaveBeenCalled();
+    expect(subscriptionsCancel).not.toHaveBeenCalled();
+    expect(checkoutSessionsCreate).not.toHaveBeenCalled();
+  });
+});
+
 describe("the source itself", () => {
   it("calls no subscription or checkout operation", async () => {
     const { readFileSync } = await import("node:fs");

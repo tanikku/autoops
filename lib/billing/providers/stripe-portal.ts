@@ -6,7 +6,9 @@ import type {
   BillingPortalSessionRequest,
 } from "@/lib/billing/portal";
 import {
+  matchesExpectedLivemode,
   readStripeRuntime,
+  StripeLivemodeMismatchError,
   type StripeRuntime,
 } from "@/lib/billing/providers/stripe-runtime";
 
@@ -45,6 +47,12 @@ export function createStripeBillingPortalProvider(
         customer: request.customerId,
         return_url: request.returnUrl,
       });
+
+      // **Refused before anybody is sent to it**, and nothing further is asked
+      // of Stripe: a portal session in the other world expires by itself.
+      if (!matchesExpectedLivemode(runtime.config, session.livemode)) {
+        throw new StripeLivemodeMismatchError();
+      }
 
       return { url: typeof session.url === "string" ? session.url : null };
     },

@@ -2,7 +2,11 @@ import "server-only";
 
 import Stripe from "stripe";
 import { KOQENTRA_USER_ID_KEY } from "@/lib/billing/providers/stripe";
-import { readStripeRuntime } from "@/lib/billing/providers/stripe-runtime";
+import {
+  matchesExpectedLivemode,
+  readStripeRuntime,
+  StripeLivemodeMismatchError,
+} from "@/lib/billing/providers/stripe-runtime";
 import type {
   CheckoutProvider,
   CheckoutSessionRequest,
@@ -121,7 +125,8 @@ export function createStripeCheckoutProvider(
   // **One construction, after the configuration has been read and found
   // whole.** Importing this file builds nothing.
   const stripe = new Stripe(runtime.secretKey);
-  const prices = runtime.config.prices;
+  const config = runtime.config;
+  const prices = config.prices;
 
   return {
     async createSession(request: CheckoutSessionRequest) {
@@ -157,11 +162,25 @@ export function createStripeCheckoutProvider(
         { idempotencyKey: `checkout:${request.attemptId}` },
       );
 
+      // **Refused before anybody is sent to it.** Thrown rather than returned
+      // without a url, so the attempt is never marked open with this session:
+      // an attempt that named it would later be resumed through `readSession`.
+      // Nothing is asked of Stripe about the session — it lapses on its own.
+      if (!matchesExpectedLivemode(config, session.livemode)) {
+        throw new StripeLivemodeMismatchError();
+      }
+
       return { sessionId: session.id, url: session.url };
     },
 
     async readSession(sessionId: string): Promise<ProviderSessionState> {
       const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+      // A stored session from the other world is not one to send anybody back
+      // to. `unreadable` is what the orchestration already refuses.
+      if (!matchesExpectedLivemode(config, session.livemode)) {
+        return { kind: "unreadable", url: null };
+      }
 
       return {
         kind: readSessionStatus(session.status ?? null),

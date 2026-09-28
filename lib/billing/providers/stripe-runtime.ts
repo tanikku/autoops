@@ -123,6 +123,41 @@ export function readStripeRuntime(
 }
 
 /**
+ * Whether an object Stripe just returned belongs to the world this deployment
+ * says it is in.
+ *
+ * **The same flag reconciliation already checks, asked earlier.** A checkout
+ * made in the wrong world can still be paid; reconciliation would then refuse
+ * the subscription it produced, and somebody would have paid for an entitlement
+ * that never arrives. Asking here keeps that page from being handed out at all.
+ *
+ * **No flag, no check** — the same as everywhere else it is read. A value that
+ * is not a boolean does not match either world, so an object whose `livemode`
+ * is missing is refused whenever the flag is set.
+ */
+export function matchesExpectedLivemode(
+  config: StripeAdapterConfig,
+  livemode: unknown,
+): boolean {
+  return (
+    config.expectedLivemode === undefined || livemode === config.expectedLivemode
+  );
+}
+
+/**
+ * Thrown when Stripe answers from the other world.
+ *
+ * **A name and nothing else.** No session, no customer, no address: whoever
+ * catches it decides what a person is told, and none of it identifies anybody.
+ */
+export class StripeLivemodeMismatchError extends Error {
+  constructor() {
+    super("Stripe answered from a different mode than this deployment expects");
+    this.name = "StripeLivemodeMismatchError";
+  }
+}
+
+/**
  * Which reader a sweep should use for a provider.
  *
  * **The client is built here and nowhere earlier.** Constructing one at module
