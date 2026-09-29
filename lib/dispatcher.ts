@@ -1,5 +1,6 @@
 import "server-only";
 
+import { isExecutionEntitlementBlocked } from "@/lib/entitlements/worker-execution";
 import { isExecutionSuppressed } from "@/lib/execution-lease";
 import { enqueueRoutine } from "@/lib/queue";
 import { claimRoutineSlot } from "@/lib/routines";
@@ -139,6 +140,18 @@ export async function dispatchDueWorkers(now: Date): Promise<DispatchResult> {
         console.warn(
           "[dispatcher] worker was already running — slot spent, nothing started",
           worker.id,
+        );
+        continue;
+      }
+
+      // **Not entitled to run, which is also neither.** Nothing was started and
+      // nothing went wrong; the account's plan simply does not cover a run right
+      // now. The slot is spent like any other, and the worker is left exactly as
+      // it is, so it runs again once the account is entitled. The log names the
+      // category and nothing that identifies the account or the worker.
+      if (isExecutionEntitlementBlocked(error)) {
+        console.warn(
+          "[dispatcher] worker execution suppressed — entitlement unavailable",
         );
         continue;
       }

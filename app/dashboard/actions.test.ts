@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ExecutionEntitlementBlockedError } from "@/lib/entitlements/worker-execution";
 import { ExecutionSuppressedError } from "@/lib/execution-lease";
 import { RunPersistenceError } from "@/lib/runs";
 
@@ -1301,5 +1302,99 @@ describe("runRoutineAction — a hand-started discovery run", () => {
 
     expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
     expect(mocks.enqueueRoutine).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A worker the account is not entitled to run.
+ *
+ * **Decided in `runRoutine`, said here.** The action does not read the account's
+ * entitlement itself — the check that counts is the one both manual and
+ * scheduled runs reach — so all this fixes is what a person is told, that the
+ * refusal's own words stay out of it, and that nothing else about the run
+ * changes.
+ */
+describe("runRoutineAction — a worker the account is not entitled to run", () => {
+  beforeEach(() => {
+    mocks.enqueueRoutine.mockRejectedValue(new ExecutionEntitlementBlockedError());
+  });
+
+  it("says the plan does not cover this run, and how to continue", async () => {
+    expect(await runRoutineAction(null, form("worker-1"))).toEqual({
+      status: "error",
+      message:
+        "This run isn't available with your current plan status. Check Plans to continue.",
+    });
+  });
+
+  it("says it in Japanese", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+
+    expect(await runRoutineAction(null, form("worker-1"))).toEqual({
+      status: "error",
+      message:
+        "現在の利用状態では実行できません。Plansでプランの状態を確認してください。",
+    });
+  });
+
+  it("does not show the refusal's own words or name anything", async () => {
+    const result = await runRoutineAction(null, form("worker-1"));
+    const said = JSON.stringify(result);
+
+    expect(said).not.toContain(new ExecutionEntitlementBlockedError().message);
+    expect(said).not.toContain("worker-1");
+    expect(said).not.toContain("Daily digest");
+  });
+
+  /** Neither "failed" nor "already running": both would send somebody the wrong way. */
+  it("is not reported as a failed or a busy run", async () => {
+    const { message } = (await runRoutineAction(null, form("worker-1"))) as {
+      message: string;
+    };
+
+    expect(message).not.toContain("failed");
+    expect(message).not.toContain("already running");
+  });
+
+  it("gives the account's slot back and revalidates nothing", async () => {
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.releaseManualRunSlot).toHaveBeenCalledTimes(1);
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  /** The existing checks still come first, in the order they always did. */
+  it("still refuses a worker that is not the caller's before asking anything", async () => {
+    mocks.getRoutine.mockResolvedValue(null);
+
+    const result = await runRoutineAction(null, form("worker-1"));
+
+    expect(result).toEqual({ status: "error", message: "Worker not found." });
+    expect(mocks.enqueueRoutine).not.toHaveBeenCalled();
+  });
+
+  it("still answers the hourly limit before reaching execution", async () => {
+    mocks.consumeManualRunQuota.mockResolvedValue(false);
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.enqueueRoutine).not.toHaveBeenCalled();
+  });
+
+  /** The entitlement is not read here; the check that counts is in `runRoutine`. */
+  it("does not read the account's entitlement itself", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("app/dashboard/actions.ts", "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/[^\n]*/g, "");
+
+    for (const forbidden of [
+      "requireWorkerExecutionEntitlement",
+      "getEffectiveEntitlement",
+      "computeEntitlement",
+      "subscription.",
+    ]) {
+      expect(source, `uses ${forbidden}`).not.toContain(forbidden);
+    }
   });
 });

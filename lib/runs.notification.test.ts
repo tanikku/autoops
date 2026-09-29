@@ -60,6 +60,12 @@ vi.mock("@/lib/ai/factory", () => ({
   }),
 }));
 
+// **Run as an entitled account.** Who may run a worker is decided in
+// `lib/entitlements/worker-execution.test.ts`; these tests are about what a run
+// does once it is allowed to start.
+vi.mock("@/lib/entitlements/worker-execution", () => ({
+  requireWorkerExecutionEntitlement: vi.fn(async () => undefined),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     routine: {

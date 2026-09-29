@@ -1209,6 +1209,8 @@ Notes for the report:
 
   "run.action.noWorkerSelected": "No worker selected.",
   "run.action.alreadyRunning": "\"{name}\" is already running.",
+  "run.action.entitlementBlocked":
+    "This run isn't available with your current plan status. Check Plans to continue.",
   /**
    * The account already has a hand-started run going — a different worker's,
    * or this one would have said `alreadyRunning` instead.

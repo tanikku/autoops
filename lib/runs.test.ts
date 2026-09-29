@@ -21,7 +21,21 @@ const mocks = vi.hoisted(() => ({
   findFirst: vi.fn(),
   usageCreate: vi.fn(),
   recordUsageObservation: vi.fn(),
+  requireEntitlement: vi.fn(),
 }));
+
+// **The decision is stood in for; the refusal is the real one.** Which states
+// may run is `lib/entitlements/worker-execution.test.ts`; what these fix is
+// what `runRoutine` does with each answer.
+vi.mock("@/lib/entitlements/worker-execution", async () => {
+  const actual = await vi.importActual<
+    typeof import("@/lib/entitlements/worker-execution")
+  >("@/lib/entitlements/worker-execution");
+  return {
+    ...actual,
+    requireWorkerExecutionEntitlement: mocks.requireEntitlement,
+  };
+});
 
 vi.mock("@/lib/execution-lease", async () => {
   const actual =
@@ -65,6 +79,9 @@ const {
   RunPersistenceError,
 } = await import("@/lib/runs");
 const { ExecutionSuppressedError } = await import("@/lib/execution-lease");
+const { ExecutionEntitlementBlockedError } = await import(
+  "@/lib/entitlements/worker-execution"
+);
 const { ProviderError } = await import("@/lib/ai/provider");
 // Imported for one comparison, and only here: the two constants belong to
 // different modules on purpose — the dispatcher must not know what a prompt
@@ -120,6 +137,8 @@ beforeEach(() => {
   mocks.execute.mockReset().mockResolvedValue(aiResult());
   mocks.usageCreate.mockReset().mockResolvedValue({});
   mocks.recordUsageObservation.mockReset().mockResolvedValue({ recorded: true });
+  // Entitled unless a test says otherwise.
+  mocks.requireEntitlement.mockReset().mockResolvedValue(undefined);
   mocks.findUniqueOrThrow
     .mockReset()
     .mockResolvedValue({ userId: "user-1", prompt: "hello", kind: "prompt" });
@@ -859,5 +878,116 @@ describe("runRoutine — counting a prompt run against the month", () => {
     await runRoutine("worker-1");
 
     expect(written()).toMatchObject({ status: "completed", output: "done" });
+  });
+});
+
+/**
+ * **Whether the account may run a worker at all, asked where every run meets.**
+ *
+ * Scheduled and manual runs both come through `runRoutine`, so this is the one
+ * place the entitlement can be checked without leaving the other path open. A
+ * refusal must leave nothing behind — no lease, no row, no model call, no
+ * notification, and no change to the worker — so that an account that becomes
+ * entitled again simply runs again.
+ */
+describe("a worker whose account is not entitled to run", () => {
+  beforeEach(() => {
+    mocks.requireEntitlement.mockRejectedValue(new ExecutionEntitlementBlockedError());
+  });
+
+  it("asks about the worker's own account", async () => {
+    await runRoutine("worker-1").catch(() => undefined);
+
+    expect(mocks.requireEntitlement).toHaveBeenCalledTimes(1);
+    expect(mocks.requireEntitlement).toHaveBeenCalledWith("user-1");
+  });
+
+  it("is refused with the entitlement error", async () => {
+    await expect(runRoutine("worker-1")).rejects.toBeInstanceOf(
+      ExecutionEntitlementBlockedError,
+    );
+  });
+
+  it("takes no lease, writes no row, calls no model and counts nothing", async () => {
+    await runRoutine("worker-1").catch(() => undefined);
+
+    expect(mocks.acquire).not.toHaveBeenCalled();
+    expect(mocks.release).not.toHaveBeenCalled();
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.update).not.toHaveBeenCalled();
+    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(mocks.usageCreate).not.toHaveBeenCalled();
+    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
+  });
+
+  /** A refusal is not a verdict about anything else the worker could be. */
+  it("still reports a worker that does not exist as missing", async () => {
+    mocks.findUniqueOrThrow.mockRejectedValue(new Error("not found"));
+
+    await expect(runRoutine("worker-1")).rejects.toThrow("not found");
+    expect(mocks.requireEntitlement).not.toHaveBeenCalled();
+  });
+
+  it("still reports an unreadable kind as unsupported", async () => {
+    mocks.findUniqueOrThrow.mockResolvedValue({
+      userId: "user-1",
+      prompt: "hello",
+      kind: "something-new",
+    });
+
+    const error = await runRoutine("worker-1").catch((caught: unknown) => caught);
+
+    expect(isUnsupportedRoutineKind(error)).toBe(true);
+    expect(mocks.requireEntitlement).not.toHaveBeenCalled();
+  });
+
+  /** Checked before the lease, so contention cannot hide a refusal. */
+  it("is checked before the lease is asked for", async () => {
+    mocks.requireEntitlement.mockResolvedValue(undefined);
+
+    await runRoutine("worker-1");
+
+    expect(mocks.requireEntitlement.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.acquire.mock.invocationCallOrder[0],
+    );
+  });
+
+  /** A database that could not be read is a failure, not a refusal. */
+  it("lets an ordinary failure of the check travel as it is", async () => {
+    mocks.requireEntitlement.mockRejectedValue(new Error("connection refused"));
+
+    const error = await runRoutine("worker-1").catch((caught: unknown) => caught);
+
+    expect(error).not.toBeInstanceOf(ExecutionEntitlementBlockedError);
+    expect(mocks.acquire).not.toHaveBeenCalled();
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **Nothing about the worker changes, so nothing has to be undone.** The
+   * same worker, refused once, runs as soon as the account is entitled again.
+   */
+  it("runs again once the account is entitled, without anything being rewritten", async () => {
+    await expect(runRoutine("worker-1")).rejects.toBeInstanceOf(
+      ExecutionEntitlementBlockedError,
+    );
+
+    mocks.requireEntitlement.mockResolvedValue(undefined);
+
+    const run = await runRoutine("worker-1");
+
+    expect(run.status).toBe("completed");
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+    expect(mocks.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("carries nothing that identifies the account or the worker", async () => {
+    const error = (await runRoutine("worker-1").catch(
+      (caught: unknown) => caught,
+    )) as Error;
+
+    for (const forbidden of ["user-1", "worker-1", "run-1"]) {
+      expect(error.message, `says ${forbidden}`).not.toContain(forbidden);
+    }
   });
 });

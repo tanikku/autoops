@@ -11,6 +11,7 @@ import {
   executeDiscovery,
 } from "@/lib/discovery/execute";
 import { recordSeenItems } from "@/lib/discovery/repository";
+import { requireWorkerExecutionEntitlement } from "@/lib/entitlements/worker-execution";
 import type { DiscoveryCandidate } from "@/lib/discovery/types";
 import {
   acquireExecutionLease,
@@ -671,6 +672,15 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
   if (!isRoutineKind(routine.kind)) {
     throw new UnsupportedRoutineKindError(routineId, routine.kind);
   }
+
+  // **The authoritative entitlement check, and the only one on this path.**
+  // Scheduled and manual runs both arrive here, so a refusal placed anywhere
+  // earlier would leave the other one open. Asked before the lease, the row and
+  // the provider — a refused run leaves nothing behind — and asked once: a run
+  // allowed now finishes even if the entitlement lapses while it is running.
+  // Nothing about the worker is changed, so an account that is entitled again
+  // simply runs again.
+  await requireWorkerExecutionEntitlement(routine.userId);
 
   const lease = await acquireExecutionLease(routineId);
   if (lease === null) {

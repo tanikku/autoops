@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { isExecutionEntitlementBlocked } from "@/lib/entitlements/worker-execution";
 import { isExecutionSuppressed } from "@/lib/execution-lease";
 import {
   acquireManualRunSlot,
@@ -245,6 +246,17 @@ export async function runRoutineAction(
         message: t(language, "run.action.alreadyRunning", {
           name: routine.name,
         }),
+      };
+    }
+
+    // **Refused by the account's entitlement, not by anything that went
+    // wrong.** The check lives in `runRoutine`, which both manual and scheduled
+    // runs reach; this only says so in words a person can act on. The refusal's
+    // own message is for logs and never shown.
+    if (isExecutionEntitlementBlocked(error)) {
+      return {
+        status: "error",
+        message: t(language, "run.action.entitlementBlocked"),
       };
     }
 

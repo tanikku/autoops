@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ExecutionEntitlementBlockedError } from "@/lib/entitlements/worker-execution";
 import { ExecutionSuppressedError } from "@/lib/execution-lease";
 import { RunPersistenceError } from "@/lib/runs";
 import type { DueWorker } from "@/lib/scheduler";
@@ -358,6 +359,74 @@ describe("dispatchDueWorkers", () => {
       expect(mocks.claimRoutineSlot.mock.calls[0][2]).toEqual(
         new Date("2026-08-11T09:00:00.000Z"),
       );
+    });
+  });
+
+  /**
+   * A worker whose account is not entitled to run is neither, either. Nothing
+   * was started and nothing went wrong — the refusal happened before a lease, a
+   * row or a model call — so it belongs in neither number, and the one line it
+   * leaves names the category and nobody.
+   */
+  describe("a worker whose account is not entitled to run", () => {
+    let warnings: string[];
+
+    beforeEach(() => {
+      warnings = [];
+      vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+        warnings.push(args.map(String).join(" "));
+      });
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("is counted as neither dispatched nor failed", async () => {
+      mocks.getDueWorkers.mockResolvedValue([due("worker-blocked")]);
+      mocks.enqueueRoutine.mockRejectedValue(new ExecutionEntitlementBlockedError());
+
+      expect(await dispatchDueWorkers(NOW)).toEqual({ dispatched: [], failed: 0 });
+    });
+
+    it("does not stop the workers behind it", async () => {
+      mocks.getDueWorkers.mockResolvedValue([due("worker-blocked"), due("free")]);
+      mocks.enqueueRoutine.mockRejectedValueOnce(
+        new ExecutionEntitlementBlockedError(),
+      );
+
+      expect(await dispatchDueWorkers(NOW)).toEqual({
+        dispatched: ["free"],
+        failed: 0,
+      });
+    });
+
+    /** The claim is the only write, exactly as for any other refusal. */
+    it("has spent its slot, and nothing restores it", async () => {
+      mocks.getDueWorkers.mockResolvedValue([due("worker-blocked")]);
+      mocks.enqueueRoutine.mockRejectedValue(new ExecutionEntitlementBlockedError());
+
+      await dispatchDueWorkers(NOW);
+
+      expect(mocks.claimRoutineSlot).toHaveBeenCalledTimes(1);
+      expect(mocks.claimRoutineSlot.mock.calls[0][2]).toEqual(
+        new Date("2026-08-11T09:00:00.000Z"),
+      );
+    });
+
+    it("leaves one line that names nobody", async () => {
+      mocks.getDueWorkers.mockResolvedValue([
+        due("worker-blocked", { userId: "user-blocked" }),
+      ]);
+      mocks.enqueueRoutine.mockRejectedValue(new ExecutionEntitlementBlockedError());
+
+      await dispatchDueWorkers(NOW);
+
+      expect(warnings).toEqual([
+        "[dispatcher] worker execution suppressed — entitlement unavailable",
+      ]);
+      expect(warnings.join(" ")).not.toContain("worker-blocked");
+      expect(warnings.join(" ")).not.toContain("user-blocked");
     });
   });
 
