@@ -325,9 +325,17 @@ async function spendWithin(
   client: DbClient,
   userId: string,
   items: readonly AllowanceItem[],
-  now: Date,
+  explicitNow: Date | undefined,
 ): Promise<void> {
   await lockAccount(client, userId);
+
+  // **The clock is read once the lock is held, not before.** A trial start that
+  // took the lock first has committed by now, and its start instant is in the
+  // past of a clock read here — so this spend lands inside the trial rather
+  // than just before it, where no period would take it. A clock read before
+  // waiting would describe a moment the account has already moved on from. An
+  // explicit instant is a caller's own snapshot and is used as given.
+  const now = explicitNow ?? new Date();
 
   const lane = await readLane(client, userId, now);
 
@@ -402,7 +410,9 @@ export async function spendAllowances(input: {
   readonly client?: DbClient;
 }): Promise<SpendAllowancesResult> {
   const items = validateItems(input.items);
-  const now = input.now ?? new Date();
+  // Not defaulted here: see `spendWithin`, which reads the clock under the lock
+  // — and, on a retry, reads it again rather than reusing the first attempt's.
+  const now = input.now;
   const client = input.client ?? prisma;
 
   const owned = "$transaction" in client && typeof client.$transaction === "function";

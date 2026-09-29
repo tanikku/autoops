@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Spending part of an allowance, and the one thing a mock cannot show.
@@ -907,5 +907,198 @@ describe("spendAllowances — what it does not do", () => {
     for (const limit of ["50", "30", "20", "14", "150", "300"]) {
       expect(source, `holds ${limit}`).not.toMatch(new RegExp(`\\b${limit}\\b`));
     }
+  });
+});
+
+/**
+ * Which instant a spend is judged at, when the caller does not say.
+ *
+ * **Read once the account's lock is held.** A trial start that took the lock
+ * first has committed its start instant by the time a waiting spend gets the
+ * lock; a clock read before waiting would fall just before that start — outside
+ * the trial and inside no period — and the spend would be refused as not
+ * counted. That is the race the PostgreSQL run found, reproduced here with the
+ * lock standing in as the moment time moves.
+ */
+describe("spendAllowances — the instant it is judged at", () => {
+  const BEFORE_TRIAL = new Date("2026-10-15T09:00:00.000Z");
+  const TRIAL_START = new Date("2026-10-15T09:00:01.000Z");
+  const TRIAL_END = new Date("2026-10-29T09:00:01.000Z");
+  const AFTER_LOCK = new Date("2026-10-15T09:00:02.000Z");
+
+  /** The trial another transaction committed while this one waited. */
+  const startedTrial = {
+    plan: "trial",
+    state: "trialing",
+    source: "trial",
+    trialStartedAt: TRIAL_START,
+    trialEndsAt: TRIAL_END,
+    trialConsumedAt: TRIAL_START,
+    trialForfeitedAt: null,
+    currentPeriodStart: null,
+    currentPeriodEnd: null,
+    notificationWorkerId: null,
+    expiresAt: null,
+  };
+
+  /** Moves the clock the moment the lock is granted, as waiting would. */
+  function clockMovesAtLock(db: ReturnType<typeof fakeDatabase>, ...instants: Date[]) {
+    for (const instant of instants) {
+      db.tx.user.update.mockImplementationOnce(
+        async (args: { where: { id: string } }) => {
+          db.calls.push(`lock:${args.where.id}`);
+          vi.setSystemTime(instant);
+          return { id: args.where.id };
+        },
+      );
+    }
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(BEFORE_TRIAL);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("spends from a trial that started while it waited for the lock", async () => {
+    const db = fakeDatabase({ subscription: startedTrial });
+    clockMovesAtLock(db, AFTER_LOCK);
+
+    expect(
+      await spendAllowances({
+        userId: USER,
+        items: [{ kind: "aiProcessing", units: 1 }],
+        client: db.client as never,
+      }),
+    ).toEqual({ granted: true });
+
+    const [period] = db.periods();
+    expect(period.planAtStart).toBe("trial");
+    expect(period.periodStart).toEqual(TRIAL_START);
+    expect(db.used(period.id, "aiProcessing")).toBe(1);
+  });
+
+  /** The same trial, judged at an instant the caller named: used as given. */
+  it("uses an explicit instant exactly as given, even one before the trial", async () => {
+    const db = fakeDatabase({ subscription: startedTrial });
+    clockMovesAtLock(db, AFTER_LOCK);
+
+    expect(
+      await spendAllowances({
+        userId: USER,
+        items: [{ kind: "aiProcessing", units: 1 }],
+        now: BEFORE_TRIAL,
+        client: db.client as never,
+      }),
+    ).toEqual({ granted: false, reason: "not-counted" });
+    expect(db.periods()).toEqual([]);
+  });
+
+  /** Spend first, trial later: nothing about the pre-trial path changes. */
+  it("still spends from the pre-trial pool when it gets the lock first", async () => {
+    const db = fakeDatabase({ subscription: null });
+    clockMovesAtLock(db, AFTER_LOCK);
+
+    expect(
+      await spendAllowances({
+        userId: USER,
+        items: [{ kind: "aiProcessing", units: 1 }],
+        client: db.client as never,
+      }),
+    ).toEqual({ granted: true });
+
+    const [period] = db.periods();
+    expect(period.planAtStart).toBe("beta");
+    expect(period.periodStart).toEqual(new Date("2026-10-01T00:00:00.000Z"));
+  });
+
+  it("reads the clock after the lock, not before it", async () => {
+    const db = fakeDatabase({ subscription: startedTrial });
+    const order: string[] = [];
+    db.tx.user.update.mockImplementationOnce(async (args: { where: { id: string } }) => {
+      order.push("lock");
+      vi.setSystemTime(AFTER_LOCK);
+      return { id: args.where.id };
+    });
+    db.tx.subscription.findUnique.mockImplementation(async () => {
+      order.push(`read at ${new Date().toISOString()}`);
+      return structuredClone(startedTrial);
+    });
+
+    await spendAllowances({
+      userId: USER,
+      items: [{ kind: "aiProcessing", units: 1 }],
+      client: db.client as never,
+    });
+
+    expect(order[0]).toBe("lock");
+    expect(order.slice(1).every((line) => line === `read at ${AFTER_LOCK.toISOString()}`)).toBe(
+      true,
+    );
+  });
+
+  /**
+   * **A retry reads the clock again.** The first attempt's instant belongs to a
+   * transaction that no longer exists; the second is judged at its own lock.
+   * Crossing a month boundary between the two makes the difference visible.
+   */
+  it("reads a fresh instant for the retry after a period collision", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const db = fakeDatabase({ subscription: null, createFailures: 1 });
+    clockMovesAtLock(
+      db,
+      new Date("2026-10-31T23:59:59.000Z"),
+      new Date("2026-11-01T00:00:01.000Z"),
+    );
+
+    expect(
+      await spendAllowances({
+        userId: USER,
+        items: [{ kind: "aiProcessing", units: 1 }],
+        client: db.client as never,
+      }),
+    ).toEqual({ granted: true });
+
+    const [period] = db.periods();
+    expect(period.periodStart).toEqual(new Date("2026-11-01T00:00:00.000Z"));
+  });
+
+  it("keeps an explicit instant across the retry", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const db = fakeDatabase({ subscription: null, createFailures: 1 });
+    clockMovesAtLock(
+      db,
+      new Date("2026-10-31T23:59:59.000Z"),
+      new Date("2026-11-01T00:00:01.000Z"),
+    );
+
+    expect(
+      await spendAllowances({
+        userId: USER,
+        items: [{ kind: "aiProcessing", units: 1 }],
+        now: new Date("2026-10-20T00:00:00.000Z"),
+        client: db.client as never,
+      }),
+    ).toEqual({ granted: true });
+
+    const [period] = db.periods();
+    expect(period.periodStart).toEqual(new Date("2026-10-01T00:00:00.000Z"));
+  });
+
+  it("reads it after the lock inside a caller's transaction too", async () => {
+    const db = fakeDatabase({ subscription: startedTrial });
+    clockMovesAtLock(db, AFTER_LOCK);
+
+    expect(
+      await spendAllowances({
+        userId: USER,
+        items: [{ kind: "aiProcessing", units: 1 }],
+        client: db.tx as never,
+      }),
+    ).toEqual({ granted: true });
+    expect(db.periods()[0].planAtStart).toBe("trial");
   });
 });
