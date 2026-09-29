@@ -1,6 +1,6 @@
 import "server-only";
 
-import { prisma } from "@/lib/prisma";
+import { type DbClient, prisma } from "@/lib/prisma";
 import { isPaidPlan } from "@/lib/billing/events";
 import { computeEntitlement } from "@/lib/entitlements/index";
 import type { SubscriptionRecord } from "@/lib/entitlements/types";
@@ -170,8 +170,9 @@ function trialWindowOf(record: SubscriptionColumns): UsageWindow | null {
  */
 async function readSubscriptionColumns(
   userId: string,
+  client: DbClient = prisma,
 ): Promise<SubscriptionColumns | null> {
-  return prisma.subscription.findUnique({
+  return client.subscription.findUnique({
     where: { userId },
     select: RECORD_FIELDS,
   });
@@ -274,8 +275,13 @@ function paidWindowOf(
 export async function resolveUsageWriteWindow(
   userId: string,
   now: Date,
+  // **Optional, and only so a caller can ask inside its own transaction.**
+  // Observation passes nothing and reads exactly as it did; spending an
+  // allowance asks here under the account's lock, so the window it writes to is
+  // decided from the same row the lock is holding still.
+  client: DbClient = prisma,
 ): Promise<UsageWriteWindow> {
-  const record = await readSubscriptionColumns(userId);
+  const record = await readSubscriptionColumns(userId, client);
 
   if (record === null) {
     return {

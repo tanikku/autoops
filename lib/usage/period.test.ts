@@ -23,7 +23,9 @@ vi.mock("@/lib/prisma", () => ({
   prisma: { usagePeriod: { findUnique, create } },
 }));
 
-const { openOrGetUsagePeriod } = await import("@/lib/usage/period");
+const { openOrGetUsagePeriod, openOrGetUsagePeriodLocked } = await import(
+  "@/lib/usage/period"
+);
 
 const USER = "google-sub-1";
 const START = new Date("2026-09-20T00:00:00.000Z");
@@ -228,5 +230,58 @@ describe("a plan the catalogue does not know", () => {
     ).rejects.toThrow();
 
     expect(create).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Opening a period inside a transaction that holds the account's lock.
+ *
+ * **It uses the client it is given and catches nothing.** Inside a
+ * transaction a unique violation has already aborted everything, so reading
+ * again would only fail; the lock is what keeps it from happening, and when it
+ * happens anyway the caller that owns the transaction decides what to do.
+ */
+describe("openOrGetUsagePeriodLocked", () => {
+  const txFindUnique = vi.fn();
+  const txCreate = vi.fn();
+  const tx = { usagePeriod: { findUnique: txFindUnique, create: txCreate } };
+
+  beforeEach(() => {
+    txFindUnique.mockReset();
+    txCreate.mockReset();
+  });
+
+  it("returns the period that is already open, through the given client", async () => {
+    txFindUnique.mockResolvedValue(stored([{ kind: "aiProcessing", used: 3, limit: 150 }]));
+
+    const period = await openOrGetUsagePeriodLocked(tx as never, WINDOW);
+
+    expect(period.id).toBe("usage-period-1");
+    expect(txCreate).not.toHaveBeenCalled();
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+
+  it("opens one with the plan's three counters when none exists", async () => {
+    txFindUnique.mockResolvedValue(null);
+    txCreate.mockResolvedValue(stored([]));
+
+    await openOrGetUsagePeriodLocked(tx as never, WINDOW);
+
+    expect(txCreate.mock.calls[0][0].data.counters.create).toEqual([
+      { kind: "aiProcessing", used: 0, limit: 150 },
+      { kind: "manualRun", used: 0, limit: 100 },
+      { kind: "discovery", used: 0, limit: 60 },
+    ]);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("lets a unique violation through rather than reading again", async () => {
+    txFindUnique.mockResolvedValue(null);
+    txCreate.mockRejectedValue(uniqueViolation());
+
+    await expect(openOrGetUsagePeriodLocked(tx as never, WINDOW)).rejects.toMatchObject({
+      code: "P2002",
+    });
+    expect(txFindUnique).toHaveBeenCalledTimes(1);
   });
 });

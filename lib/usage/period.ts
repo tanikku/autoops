@@ -1,6 +1,6 @@
 import "server-only";
 
-import { prisma } from "@/lib/prisma";
+import { type DbClient, prisma } from "@/lib/prisma";
 import { getPlanDefinition } from "@/lib/plans";
 import { usageKinds, type UsageKind } from "@/lib/usage/types";
 
@@ -187,4 +187,60 @@ export async function openOrGetUsagePeriod(
   }
 
   return toState(raced);
+}
+
+/**
+ * Opens a usage period, or finds the one already open, inside a transaction
+ * that holds the account's lock.
+ *
+ * **Why this is not `openOrGetUsagePeriod`.** That function recovers from two
+ * first uses racing by catching the unique violation and reading again — which
+ * is right on its own connection and wrong inside a transaction: PostgreSQL
+ * aborts a transaction at the first failed statement, so there is no "again" to
+ * read with. Here the account's lock does the serialising instead. Everything
+ * that opens a period while holding it — spending an allowance, starting a
+ * trial, reconciliation — waits its turn, so the read below sees what the one
+ * before it created.
+ *
+ * **The one thing the lock does not cover is observation**, which opens periods
+ * without it. A collision with that surfaces here as a unique violation, and it
+ * is left to surface: the transaction is already over, and the caller that owns
+ * it decides whether to begin again. Nothing is caught.
+ */
+export async function openOrGetUsagePeriodLocked(
+  client: DbClient,
+  window: UsagePeriodWindow,
+): Promise<UsagePeriodState> {
+  const existing = await client.usagePeriod.findUnique({
+    where: {
+      userId_periodStart: {
+        userId: window.userId,
+        periodStart: window.periodStart,
+      },
+    },
+    select: PERIOD_SELECT,
+  });
+
+  if (existing !== null) {
+    return toState(existing);
+  }
+
+  const created = await client.usagePeriod.create({
+    data: {
+      userId: window.userId,
+      periodStart: window.periodStart,
+      periodEnd: window.periodEnd,
+      planAtStart: window.plan,
+      counters: {
+        create: usageKinds.map((kind) => ({
+          kind,
+          used: 0,
+          limit: planLimitFor(window.plan, kind),
+        })),
+      },
+    },
+    select: PERIOD_SELECT,
+  });
+
+  return toState(created);
 }

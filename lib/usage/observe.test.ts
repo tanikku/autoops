@@ -1032,3 +1032,38 @@ describe("what the paid branch must not touch", () => {
     });
   });
 });
+
+/**
+ * Asking where a unit goes from inside somebody else's transaction.
+ *
+ * **Observation passes no client and reads exactly as it did.** Spending an
+ * allowance asks under the account's lock, so it has to be able to read the
+ * row through the transaction that holds it.
+ */
+describe("resolveUsageWriteWindow — through a given client", () => {
+  it("reads the subscription through that client, not the module's", async () => {
+    const txFindUnique = vi.fn().mockResolvedValue(null);
+    subscriptionFindUnique.mockReset();
+
+    expect(
+      await resolveUsageWriteWindow(USER, SEPTEMBER, {
+        subscription: { findUnique: txFindUnique },
+      } as never),
+    ).toEqual({
+      kind: "period",
+      periodStart: SEPTEMBER_START,
+      periodEnd: OCTOBER_START,
+      plan: OBSERVATION_PLAN,
+    });
+    expect(txFindUnique).toHaveBeenCalledTimes(1);
+    expect(subscriptionFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("still reads through the module's client when given none", async () => {
+    subscriptionFindUnique.mockReset().mockResolvedValue(null);
+
+    await resolveUsageWriteWindow(USER, SEPTEMBER);
+
+    expect(subscriptionFindUnique).toHaveBeenCalledTimes(1);
+  });
+});
