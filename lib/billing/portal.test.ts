@@ -297,6 +297,7 @@ describe("whether the pricing screen offers it", () => {
     state,
     purchased,
     entitled: true,
+    adminGrantedBeta: false,
   });
 
   it.each(["active", "grace", "canceled_active"])("offers it for a bought plan in %s", (state) => {

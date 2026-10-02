@@ -1148,6 +1148,15 @@ describe("a purchase during a trial", () => {
     expect(buttonProps.map((props) => props.enabled)).toEqual([true, true, true]);
   });
 
+  it("keeps the buttons closed for an ended trial outside the rollout", async () => {
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(false);
+
+    const html = await render(onPlan("trial", "trial_expired", false, false));
+
+    expect(html).not.toContain(NOTICE_EN);
+    expect(buttonProps.map((props) => props.enabled)).toEqual([false, false, false]);
+  });
+
   /** The rollout switch is not bypassed: no sentence, and the buttons stay closed. */
   it("adds nothing for a trialing account outside the rollout", async () => {
     mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(false);
@@ -1169,19 +1178,29 @@ describe("a purchase during a trial", () => {
     expect(portalProps).toHaveLength(1);
   });
 
+  /**
+   * **The Closed Beta allowance is not sold to, whatever the rollout list
+   * says.** No purchase button can be pressed and no trial sentence is shown;
+   * the action refuses it as well.
+   */
   it.each([true, false])(
-    "leaves an admin beta account as it was (rollout %s)",
+    "offers no purchase to an admin beta account (rollout %s)",
     async (inRollout) => {
       mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(inRollout);
 
-      const html = await render(onPlan("beta", "active", false));
+      const html = await render({
+        current: {
+          kind: "on-plan",
+          plan: "beta",
+          state: "active",
+          purchased: false,
+          entitled: true,
+          adminGrantedBeta: true,
+        },
+      });
 
       expect(html).not.toContain(NOTICE_EN);
-      expect(buttonProps.map((props) => props.enabled)).toEqual([
-        inRollout,
-        inRollout,
-        inRollout,
-      ]);
+      expect(buttonProps.map((props) => props.enabled)).toEqual([false, false, false]);
     },
   );
 });

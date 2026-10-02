@@ -5,6 +5,7 @@ import {
   checkoutAttemptPlans,
 } from "@/lib/billing/checkout-attempt";
 import { computeEntitlement } from "@/lib/entitlements/index";
+import { isAdminGrantedBeta } from "@/lib/entitlements/trial";
 import { type PlanDefinition, getPlanDefinition } from "@/lib/plans";
 import { prisma } from "@/lib/prisma";
 
@@ -58,6 +59,8 @@ export type CurrentPlanView =
       readonly purchased: boolean;
       /** Whether it entitles anything at this instant. */
       readonly entitled: boolean;
+      /** The Closed Beta allowance, which is not sold to while the beta runs. */
+      readonly adminGrantedBeta: boolean;
     }
   /** Stored in a shape this version cannot read. Shown as unavailable. */
   | { readonly kind: "unreadable" };
@@ -200,6 +203,7 @@ function readCurrent(
       // provider.
       purchased: row.source === "stripe",
       entitled: entitlement.entitled,
+      adminGrantedBeta: isAdminGrantedBeta(row),
     };
   } catch {
     // A state this version does not know was written by one that knew more.

@@ -148,6 +148,19 @@ describe("what the account is on", () => {
       state: "active",
       purchased: false,
       entitled: true,
+      adminGrantedBeta: true,
+    });
+  });
+
+  /** Read from the row's own plan and source, never from what a screen shows. */
+  it("marks the granted beta allowance, and nothing else, as admin-granted", async () => {
+    expect((await readPricingView(USER)).current).toMatchObject({
+      adminGrantedBeta: true,
+    });
+
+    subscriptionFindUnique.mockResolvedValue(paid());
+    expect((await readPricingView(USER)).current).toMatchObject({
+      adminGrantedBeta: false,
     });
   });
 
@@ -208,6 +221,7 @@ describe("whether a purchase may be offered", () => {
         state: "active",
         purchased: false,
         entitled: true,
+        adminGrantedBeta: true,
       },
       true,
     ],
@@ -219,6 +233,7 @@ describe("whether a purchase may be offered", () => {
         state: "trialing",
         purchased: false,
         entitled: true,
+        adminGrantedBeta: false,
       },
       true,
     ],
@@ -230,6 +245,7 @@ describe("whether a purchase may be offered", () => {
         state: "inactive",
         purchased: true,
         entitled: false,
+        adminGrantedBeta: false,
       },
       true,
     ],
@@ -241,6 +257,7 @@ describe("whether a purchase may be offered", () => {
         state: "active",
         purchased: true,
         entitled: true,
+        adminGrantedBeta: false,
       },
       false,
     ],
@@ -252,6 +269,7 @@ describe("whether a purchase may be offered", () => {
         state: "grace",
         purchased: true,
         entitled: true,
+        adminGrantedBeta: false,
       },
       false,
     ],
@@ -263,6 +281,7 @@ describe("whether a purchase may be offered", () => {
         state: "canceled_active",
         purchased: true,
         entitled: true,
+        adminGrantedBeta: false,
       },
       false,
     ],
@@ -284,6 +303,7 @@ describe("whether a purchase may be offered", () => {
         state: "active",
         purchased: false,
         entitled: true,
+        adminGrantedBeta: true,
       }),
     ).toBe(true);
   });

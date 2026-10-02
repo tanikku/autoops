@@ -8,6 +8,7 @@ import {
   markCheckoutAttemptOpen,
 } from "@/lib/billing/checkout-attempt";
 import { computeEntitlement } from "@/lib/entitlements/index";
+import { isAdminGrantedBeta } from "@/lib/entitlements/trial";
 import { getPlanDefinition } from "@/lib/plans";
 import { type DbClient, prisma } from "@/lib/prisma";
 
@@ -224,7 +225,9 @@ type Eligibility =
       readonly verifyWithProvider: boolean;
     }
   | { readonly kind: "manage"; readonly reason: BillingManagementReason }
-  | { readonly kind: "malformed"; readonly reason: MalformedReason };
+  | { readonly kind: "malformed"; readonly reason: MalformedReason }
+  /** Not sold to during the Closed Beta, whatever the rollout list says. */
+  | { readonly kind: "closed"; readonly reason: "admin-granted-beta" };
 
 /** Paid states, by the provider — the ones a checkout must not add to. */
 const ENTITLING_PAID_STATES: Record<string, BillingManagementReason> = {
@@ -252,6 +255,13 @@ function readEligibility(
 ): Eligibility {
   if (row === null) {
     return { kind: "may-buy", providerCustomerId: null, verifyWithProvider: false };
+  }
+
+  // **An account on the Closed Beta allowance is not offered a purchase**, live
+  // or expired, and the rollout list does not change that. Asked from the row's
+  // own plan and source, before anything is created or anybody is asked.
+  if (isAdminGrantedBeta(row)) {
+    return { kind: "closed", reason: "admin-granted-beta" };
   }
 
   let state: string;
@@ -407,6 +417,10 @@ export async function startCheckout(
 
   if (eligibility.kind === "malformed") {
     return { outcome: "malformed-config", reason: eligibility.reason };
+  }
+
+  if (eligibility.kind === "closed") {
+    return { outcome: "unavailable", reason: eligibility.reason };
   }
 
   // **Counted here, not taken from the page that asked.** Between rendering a

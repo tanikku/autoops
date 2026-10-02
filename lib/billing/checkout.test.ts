@@ -57,9 +57,34 @@ const findLiveSubscription = vi.fn();
 
 const provider = { createSession, readSession, findLiveSubscription };
 
-/** A subscription row, defaulting to the granted beta allowance. */
+/**
+ * A subscription row, defaulting to a running trial — an account that may buy.
+ *
+ * **Not the Closed Beta allowance.** That account is not sold to while the beta
+ * runs; see `adminBetaRow` and the cases that refuse it.
+ */
 function subscriptionRow(overrides: Record<string, unknown> = {}) {
   return {
+    plan: "trial",
+    state: "trialing",
+    source: "trial",
+    trialStartedAt: new Date("2026-09-20T00:00:00.000Z"),
+    trialEndsAt: new Date("2026-10-04T00:00:00.000Z"),
+    trialConsumedAt: new Date("2026-09-20T00:00:00.000Z"),
+    trialForfeitedAt: null,
+    currentPeriodStart: null,
+    currentPeriodEnd: null,
+    notificationWorkerId: null,
+    expiresAt: null,
+    providerCustomerId: null,
+    providerSubscriptionId: null,
+    ...overrides,
+  };
+}
+
+/** The Closed Beta allowance, as the grant runner writes it. */
+function adminBetaRow(overrides: Record<string, unknown> = {}) {
+  return subscriptionRow({
     plan: "beta",
     state: "active",
     source: "admin",
@@ -67,14 +92,9 @@ function subscriptionRow(overrides: Record<string, unknown> = {}) {
     trialEndsAt: null,
     trialConsumedAt: null,
     trialForfeitedAt: new Date("2026-09-25T15:51:15.150Z"),
-    currentPeriodStart: null,
-    currentPeriodEnd: null,
-    notificationWorkerId: null,
     expiresAt: new Date("2026-12-31T23:59:59.000Z"),
-    providerCustomerId: null,
-    providerSubscriptionId: null,
     ...overrides,
-  };
+  });
 }
 
 /** A paid row, as reconciliation writes one. */
@@ -305,8 +325,32 @@ describe("who may", () => {
     expect(JSON.stringify(createSession.mock.calls[0][0])).not.toContain("trial");
   });
 
-  it("lets the granted beta allowance buy", async () => {
+  it("lets an account whose trial has ended buy", async () => {
+    subscriptionFindUnique.mockResolvedValue(
+      subscriptionRow({ trialEndsAt: new Date("2026-09-26T00:00:00.000Z") }),
+    );
+
     expect(await start()).toMatchObject({ outcome: "checkout-ready" });
+  });
+
+  /**
+   * **The Closed Beta allowance is not sold to**, live or expired, and nothing
+   * is created or asked on its behalf: no attempt, no provider lookup, no
+   * session.
+   */
+  it.each([
+    ["while it runs", adminBetaRow()],
+    ["after it has expired", adminBetaRow({ expiresAt: new Date("2026-09-01T00:00:00.000Z") })],
+  ])("refuses the granted beta allowance %s", async (_label, row) => {
+    subscriptionFindUnique.mockResolvedValue(row);
+
+    expect(await start()).toEqual({
+      outcome: "unavailable",
+      reason: "admin-granted-beta",
+    });
+    expect(createSession).not.toHaveBeenCalled();
+    expect(findLiveSubscription).not.toHaveBeenCalled();
+    expect(attemptCreate).not.toHaveBeenCalled();
   });
 
   /** Cancellation must not be permanent. */
@@ -932,6 +976,7 @@ describe("what this module is not", () => {
     expect(imports).toEqual([
       "@/lib/billing/checkout-attempt",
       "@/lib/entitlements/index",
+      "@/lib/entitlements/trial",
       "@/lib/plans",
       "@/lib/prisma",
     ]);

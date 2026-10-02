@@ -158,7 +158,13 @@ export default async function BillingPage() {
   // **The authenticated id, never anything a request supplied.** What crosses
   // into the browser from this is one boolean; the list it was decided from stays
   // in the environment of the server that read it.
-  const checkoutEnabled = isSandboxCheckoutEnabledForUser(userId);
+  // **The Closed Beta allowance is not sold to, whatever the rollout list
+  // says.** The action refuses it too; this only keeps a button it would refuse
+  // from looking pressable.
+  const adminGrantedBeta =
+    view.current.kind === "on-plan" && view.current.adminGrantedBeta;
+  const checkoutEnabled =
+    isSandboxCheckoutEnabledForUser(userId) && !adminGrantedBeta;
   // **The same rollout switch opens the portal.** The accounts that have bought
   // anything while checkout is proved are the accounts on that list; everybody
   // else who has something to manage keeps the sentence they had, with the

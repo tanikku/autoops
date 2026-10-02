@@ -996,3 +996,24 @@ describe("which files the check considers", () => {
     expect(callers.filter((file) => file.includes(".test."))).toEqual([]);
   });
 });
+
+/**
+ * **The Closed Beta allowance, called directly from inside the rollout.** The
+ * orchestration refuses it before anything is created or any provider is asked
+ * (see `lib/billing/checkout.test.ts`); here the refusal reaches the caller as
+ * the ordinary "unavailable", naming no reason.
+ */
+describe("an admin beta account inside the rollout", () => {
+  it("is refused as unavailable, without saying why", async () => {
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(true);
+    mocks.startCheckout.mockResolvedValue({
+      outcome: "unavailable",
+      reason: "admin-granted-beta",
+    });
+
+    const result = await startCheckoutAction({ plan: "lite" });
+
+    expect(result).toEqual({ outcome: "unavailable" });
+    expect(JSON.stringify(result)).not.toContain("admin");
+  });
+});
