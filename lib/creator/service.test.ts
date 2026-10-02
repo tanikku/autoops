@@ -83,6 +83,23 @@ const tx = {
   creatorMemoryEvidence: { createMany: evidenceCreateMany },
 };
 
+// The AI processing allowance is granted unless a case says otherwise; what it
+// does against a database is `lib/usage/consume.ts`'s own suite.
+const allowance = vi.hoisted(() => ({
+  reserveAiProcessing: vi.fn<
+    (userId: string) => Promise<"exhausted" | "unavailable" | null>
+  >(async () => null),
+}));
+
+vi.mock("@/lib/usage/ai-allowance", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/usage/ai-allowance")>()),
+  reserveAiProcessing: allowance.reserveAiProcessing,
+}));
+
+beforeEach(() => {
+  allowance.reserveAiProcessing.mockReset();
+});
+
 vi.mock("@/lib/usage/observe", () => ({
   recordUsageObservation,
 }));
@@ -116,6 +133,7 @@ const {
 } = await import("@/lib/creator/service");
 
 const { isCreatorDecisionNotFound } = await import("@/lib/creator/repository");
+const { aiAllowanceRefusalOf } = await import("@/lib/usage/ai-allowance");
 
 const USER = "google-sub-1";
 
@@ -1319,9 +1337,9 @@ describe("the summary of older answers", () => {
 
       await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
 
-      expect(
-        recordUsageObservation.mock.calls.map((call: unknown[]) => String(call[1])),
-      ).toEqual(["aiProcessing", "aiProcessing"]);
+      // Each taken before its own call; neither counted again afterwards.
+      expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(2);
+      expect(recordUsageObservation).not.toHaveBeenCalled();
     });
 
     /**
@@ -1336,7 +1354,7 @@ describe("the summary of older answers", () => {
 
       await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
 
-      expect(recordUsageObservation).toHaveBeenCalledTimes(2);
+      expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(2);
     });
 
     /** A synthesis nobody was eligible for asks nobody, and costs nothing. */
@@ -1346,7 +1364,45 @@ describe("the summary of older answers", () => {
 
       await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
 
-      expect(recordUsageObservation).toHaveBeenCalledTimes(1);
+      expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * **A refused synthesis loses nothing.** No summary and no membership is
+     * written, so every answer in the batch is still outstanding for a later
+     * analysis — and the analysis itself still goes ahead on what was stored.
+     */
+    it.each(["exhausted", "unavailable"] as const)(
+      "asks no model and keeps the batch outstanding when the allowance is %s",
+      async (refusal) => {
+        agedOutFeedback();
+        // The synthesis asks first; the analysis after it is granted.
+        allowance.reserveAiProcessing.mockResolvedValueOnce(refusal);
+        const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
+        const { synthesizer, requests: synthesised } = fakeSynthesizer();
+
+        await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
+
+        expect(synthesised).toHaveLength(0);
+        expect(memoryCreate).not.toHaveBeenCalled();
+        expect(memoryUpdateMany).not.toHaveBeenCalled();
+        expect(evidenceCreateMany).not.toHaveBeenCalled();
+        expect(memoryRows()).toBe(0);
+        expect(requests).toHaveLength(1);
+        expect(contentItemCreate).toHaveBeenCalled();
+      },
+    );
+
+    it("keeps the batch outstanding when the allowance cannot be read", async () => {
+      agedOutFeedback();
+      allowance.reserveAiProcessing.mockRejectedValueOnce(new Error("connection lost"));
+      const { analyzer } = fakeAnalyzer(threeRecommendations);
+      const { synthesizer, requests: synthesised } = fakeSynthesizer();
+
+      await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
+
+      expect(synthesised).toHaveLength(0);
+      expect(evidenceCreateMany).not.toHaveBeenCalled();
     });
 
     /**
@@ -1754,8 +1810,9 @@ describe("counting the Creator calls against the month", () => {
 
     await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer);
 
-    expect(observed()).toEqual(["aiProcessing"]);
-    expect(recordUsageObservation.mock.calls[0][0]).toBe(USER);
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledWith(USER);
+    expect(observed()).toEqual([]);
   });
 
   it("counts a call that was made and then failed", async () => {
@@ -1775,7 +1832,8 @@ describe("counting the Creator calls against the month", () => {
       analyzeCreatorText(USER, { title: null, body: "b" }, analyzer),
     ).rejects.toBeInstanceOf(ProviderError);
 
-    expect(observed()).toEqual(["aiProcessing"]);
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
+    expect(observed()).toEqual([]);
   });
 
   /** A body refused before anything was sent cost nothing. */
@@ -1786,6 +1844,7 @@ describe("counting the Creator calls against the month", () => {
       analyzeCreatorText(USER, { title: null, body: "   " }, analyzer),
     ).rejects.toSatisfy(isEmptyCreatorContent);
 
+    expect(allowance.reserveAiProcessing).not.toHaveBeenCalled();
     expect(recordUsageObservation).not.toHaveBeenCalled();
   });
 
@@ -1800,5 +1859,44 @@ describe("counting the Creator calls against the month", () => {
     await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer);
 
     expect(contentItemCreate).toHaveBeenCalled();
+  });
+});
+
+/**
+ * **A refused analysis asks no model and writes nothing.** The refusal leaves
+ * as an error the action turns into the allowance's own message.
+ */
+describe("an analysis the AI processing allowance refused", () => {
+  it.each(["exhausted", "unavailable"] as const)(
+    "asks no model and writes nothing when the allowance is %s",
+    async (refusal) => {
+      allowance.reserveAiProcessing.mockResolvedValueOnce(refusal);
+      const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
+
+      const error = await analyzeCreatorText(
+        USER,
+        { title: null, body: "b" },
+        analyzer,
+      ).catch((caught: unknown) => caught);
+
+      expect(aiAllowanceRefusalOf(error)).toBe(refusal);
+      expect(requests).toHaveLength(0);
+      expect(contentItemCreate).not.toHaveBeenCalled();
+      expect(usageCreate).not.toHaveBeenCalled();
+    },
+  );
+
+  it("takes the unit only after the request is known to fit", async () => {
+    const { analyzer } = fakeAnalyzer(threeRecommendations);
+
+    await expect(
+      analyzeCreatorText(
+        USER,
+        { title: null, body: "x".repeat(creatorAnalysisLimits.contentBody + 1) },
+        analyzer,
+      ),
+    ).rejects.toThrow();
+
+    expect(allowance.reserveAiProcessing).not.toHaveBeenCalled();
   });
 });

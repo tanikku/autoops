@@ -656,3 +656,32 @@ describe("the time a tick may spend starting work", () => {
     expect(MAX_TICK_EXECUTION_MS).toBe(240_000);
   });
 });
+
+/**
+ * **A run the AI processing allowance refused is an ordinary finished run here.**
+ * `runRoutine` records it as `failed` and returns it, so the tick neither
+ * counts it as a failure nor asks again: the slot was claimed — and the
+ * schedule moved forward — before the run was handed off, exactly as for any
+ * other run.
+ */
+describe("a scheduled run the AI processing allowance refused", () => {
+  it("moves the schedule forward once and does not try again this tick", async () => {
+    mocks.getDueWorkers.mockResolvedValue([due("worker-1")]);
+    mocks.enqueueRoutine.mockResolvedValue({
+      status: "failed",
+      errorMessage: "AI processing limit reached.",
+    });
+
+    const result = await dispatchDueWorkers(NOW);
+
+    expect(result).toEqual({ dispatched: ["worker-1"], failed: 0 });
+    expect(mocks.enqueueRoutine).toHaveBeenCalledTimes(1);
+    expect(mocks.claimRoutineSlot).toHaveBeenCalledTimes(1);
+    expect(mocks.claimRoutineSlot.mock.calls[0][2]).toEqual(
+      new Date("2026-08-11T09:00:00.000Z"),
+    );
+    expect(mocks.claimRoutineSlot.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.enqueueRoutine.mock.invocationCallOrder[0],
+    );
+  });
+});

@@ -680,6 +680,10 @@ export const ja: Record<TranslationKey, string> = {
   "run.action.alreadyRunning": "「{name}」は実行中です。",
   "run.action.entitlementBlocked":
     "現在の利用状態では実行できません。Plansでプランの状態を確認してください。",
+  "ai.allowance.exhausted":
+    "AI 処理の利用上限に達しました。Plansで利用枠を確認してください。",
+  "ai.allowance.unavailable":
+    "現在の利用状態では AI 処理を利用できません。Plansでプランの状態を確認してください。",
   "run.action.userBusy":
     "別の実行がまだ進行中です。完了してからもう一度お試しください。",
   "run.action.rateLimited":

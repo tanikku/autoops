@@ -37,6 +37,23 @@ const mocks = vi.hoisted(() => ({
   providerMode: vi.fn(),
 }));
 
+// The AI processing allowance is granted unless a case says otherwise; what it
+// does against a database is `lib/usage/consume.ts`'s own suite.
+const allowance = vi.hoisted(() => ({
+  reserveAiProcessing: vi.fn<
+    (userId: string) => Promise<"exhausted" | "unavailable" | null>
+  >(async () => null),
+}));
+
+vi.mock("@/lib/usage/ai-allowance", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/usage/ai-allowance")>()),
+  reserveAiProcessing: allowance.reserveAiProcessing,
+}));
+
+beforeEach(() => {
+  allowance.reserveAiProcessing.mockReset();
+});
+
 vi.mock("@/lib/execution-lease", async () => {
   const actual =
     await vi.importActual<typeof import("@/lib/execution-lease")>(
@@ -204,6 +221,8 @@ function aiResult(
 }
 
 const { ProviderError } = await import("@/lib/ai/provider");
+const { AI_ALLOWANCE_EXHAUSTED_MESSAGE, AI_ALLOWANCE_UNAVAILABLE_MESSAGE } =
+  await import("@/lib/usage/ai-allowance");
 
 const LEASE = { token: "token-a", expiresAt: new Date("2026-08-17T12:15:00Z") };
 
@@ -1425,110 +1444,127 @@ describe("a website run — what it records about its call", () => {
 });
 
 /**
- * Counting a website worker's call against the account's month.
+ * The AI processing allowance a website worker's call is measured by.
  *
  * **The path where a run and a call come apart.** Most website runs never ask a
  * model: a first check has nothing to compare against and a page that has not
- * moved has nothing to describe. Counting the run rather than the call would
- * make a month of quiet pages look like a month of model use.
+ * moved has nothing to describe. Every refusal decided before a request is
+ * built — the stand-in, an unusable instruction, a request too large — is free
+ * too. The unit is taken only once the request is certainly going to be sent.
  */
-describe("a website run — counting it against the month", () => {
+describe("a website run — the AI processing allowance", () => {
   const STALE = {
     ...matchingSnapshot(),
     normalizedContent: "Careers Not hiring",
     contentHash: "0".repeat(64),
   };
 
-  /** Every kind observed during this run. */
-  function observed() {
-    return mocks.recordUsageObservation.mock.calls.map((call: unknown[]) =>
-      String(call[1]),
-    );
-  }
-
   function changed() {
     mocks.getWebsiteSnapshot.mockResolvedValue(STALE);
   }
 
-  it("counts nothing on a first check", async () => {
+  it("takes nothing on a first check", async () => {
     mocks.getWebsiteSnapshot.mockResolvedValue(null);
 
     await runRoutine("worker-1");
 
-    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
+    expect(allowance.reserveAiProcessing).not.toHaveBeenCalled();
   });
 
-  it("counts nothing when the page had not moved", async () => {
+  it("takes nothing when the page had not moved", async () => {
     mocks.getWebsiteSnapshot.mockResolvedValue(matchingSnapshot());
 
     await runRoutine("worker-1");
 
+    expect(allowance.reserveAiProcessing).not.toHaveBeenCalled();
+  });
+
+  it("takes one unit before the model is asked when the page changed", async () => {
+    changed();
+
+    await runRoutine("worker-1");
+
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledWith("user-1");
+    expect(allowance.reserveAiProcessing.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.execute.mock.invocationCallOrder[0],
+    );
     expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
   });
 
-  it("counts one unit when the page changed and a model answered", async () => {
+  it.each([
+    ["the answer was unusable", () => mocks.execute.mockResolvedValue(aiResult(""))],
+    [
+      "the call was made and then failed",
+      () =>
+        mocks.execute.mockRejectedValue(
+          new ProviderError("timeout", "took too long", {
+            attempt: { provider: "anthropic", model: "claude-opus-5", usage: null },
+          }),
+        ),
+    ],
+  ])("takes exactly one unit when %s", async (_name, arrange) => {
     changed();
+    arrange();
 
     await runRoutine("worker-1");
 
-    expect(observed()).toEqual(["aiProcessing"]);
-    expect(mocks.recordUsageObservation.mock.calls[0][0]).toBe("user-1");
-  });
-
-  /** The call happened even though the run did not survive it. */
-  it("counts the call when the answer was unusable", async () => {
-    changed();
-    mocks.execute.mockResolvedValue(aiResult(""));
-
-    await runRoutine("worker-1");
-
-    expect(observed()).toEqual(["aiProcessing"]);
-  });
-
-  it("counts a call that was made and then failed", async () => {
-    changed();
-    mocks.execute.mockRejectedValue(
-      new ProviderError("timeout", "took too long", {
-        attempt: { provider: "anthropic", model: "claude-opus-5", usage: null },
-      }),
-    );
-
-    await runRoutine("worker-1");
-
-    expect(observed()).toEqual(["aiProcessing"]);
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
+    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
   });
 
   /** The stand-in is turned away before anything is sent. */
-  it("counts nothing when the stand-in was refused", async () => {
+  it("takes nothing when the stand-in was refused", async () => {
     changed();
     mocks.providerMode.mockReturnValue("dummy");
 
     await runRoutine("worker-1");
 
-    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
+    expect(allowance.reserveAiProcessing).not.toHaveBeenCalled();
   });
 
-  it("counts exactly once per call", async () => {
+  it("takes nothing when the instruction cannot be used", async () => {
     changed();
-
-    await runRoutine("worker-1");
-
-    expect(mocks.recordUsageObservation).toHaveBeenCalledTimes(1);
-  });
-
-  /** Observation must not change what it observes. */
-  it("still completes the run when the month cannot be counted", async () => {
-    changed();
-    mocks.recordUsageObservation.mockResolvedValue({
-      recorded: false,
-      reason: "unavailable",
+    mocks.findUniqueOrThrow.mockResolvedValue({
+      userId: "user-1",
+      prompt: "   ",
+      kind: "website",
     });
 
     await runRoutine("worker-1");
 
-    expect(written()).toMatchObject({
-      status: "completed",
-      output: "a summary",
-    });
+    expect(allowance.reserveAiProcessing).not.toHaveBeenCalled();
+    expect(mocks.execute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["exhausted", AI_ALLOWANCE_EXHAUSTED_MESSAGE],
+    ["unavailable", AI_ALLOWANCE_UNAVAILABLE_MESSAGE],
+  ] as const)(
+    "asks no model and keeps the change when the allowance is %s",
+    async (refusal, message) => {
+      changed();
+      allowance.reserveAiProcessing.mockResolvedValueOnce(refusal);
+
+      const run = await runRoutine("worker-1");
+
+      expect(mocks.execute).not.toHaveBeenCalled();
+      expect(run.status).toBe("failed");
+      expect(written().errorMessage).toBe(message);
+      // The next run with allowance finds the same change.
+      expectChangeNotConsumed();
+    },
+  );
+
+  it("asks no model and keeps the change when the allowance cannot be read", async () => {
+    changed();
+    allowance.reserveAiProcessing.mockRejectedValueOnce(new Error("connection lost"));
+
+    const run = await runRoutine("worker-1");
+
+    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(run.status).toBe("failed");
+    expect(written().errorMessage).toBe("Website change processing failed.");
+    expectChangeNotConsumed();
   });
 });

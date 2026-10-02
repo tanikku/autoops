@@ -84,6 +84,7 @@ const { EmptyCreatorContentError, InvalidCreatorFeedbackError } = await import(
   "@/lib/creator/service"
 );
 const { ProviderError } = await import("@/lib/ai/provider");
+const { AiAllowanceRefusedError } = await import("@/lib/usage/ai-allowance");
 
 const USER = "google-sub-1";
 const SECRET_BODY = "UNPUBLISHED-BODY-abc123";
@@ -518,6 +519,16 @@ describe("what comes back", () => {
       "the service refusing an oversized request",
       new CreatorAnalysisRequestTooLargeError("content.body", 40_000, 40_001),
       en["creator.analysis.tooLong"],
+    ],
+    [
+      "the AI processing allowance being spent",
+      new AiAllowanceRefusedError("exhausted"),
+      en["ai.allowance.exhausted"],
+    ],
+    [
+      "the AI processing allowance being unavailable",
+      new AiAllowanceRefusedError("unavailable"),
+      en["ai.allowance.unavailable"],
     ],
   ])("turns %s into a safe message", async (_name, thrown, expected) => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});

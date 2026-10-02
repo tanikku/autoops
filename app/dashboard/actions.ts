@@ -16,6 +16,7 @@ import { deleteRoutine, getRoutine } from "@/lib/routines";
 import { isRunPersistenceError } from "@/lib/runs";
 import { DEFAULT_LANGUAGE, t } from "@/lib/i18n";
 import { requireUserId } from "@/lib/session";
+import { aiAllowanceRefusalOfRun } from "@/lib/usage/ai-allowance";
 import { recordUsageObservation } from "@/lib/usage/observe";
 import { getUserLanguage } from "@/lib/users";
 import type { ActionResult } from "@/types";
@@ -293,6 +294,23 @@ export async function runRoutineAction(
   // and Home shows the newest runs.
   revalidatePath("/dashboard/workers");
   revalidatePath("/dashboard");
+
+  // **Refused by the AI processing allowance, not by anything that went
+  // wrong.** The run is `failed` only because a run has no other way to
+  // finish; the person is told about the allowance rather than the worker.
+  const refusal = aiAllowanceRefusalOfRun(run);
+
+  if (refusal !== null) {
+    return {
+      status: "error",
+      message: t(
+        language,
+        refusal === "exhausted"
+          ? "ai.allowance.exhausted"
+          : "ai.allowance.unavailable",
+      ),
+    };
+  }
 
   // A failed run is recorded rather than thrown, so the absence of an
   // exception no longer means the worker succeeded.

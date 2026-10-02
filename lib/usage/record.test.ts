@@ -507,19 +507,14 @@ describe("when the bridge cannot write", () => {
 });
 
 /**
- * Counting AI processing against the account's month.
+ * The AI processing counter, which these bridges no longer move.
  *
- * **The count lives here because the judgement already did.** The two bridges
- * above have exactly one job between them: telling a real provider call from
- * every refusal that never reached one. Six features call them, and asking each
- * one to draw that line again would be six chances to draw it differently — so
- * the counter moves where the event is written, and nowhere else.
- *
- * **The two writes are independent on purpose.** They are meant to be
- * reconcilable against each other, which they cannot be if one can only fail
- * together with the other.
+ * **The unit was taken before the request was sent** — see
+ * `reserveAiProcessing` — and that is the one place it is counted. Moving the
+ * counter again here, after the call, would charge every call twice. What is
+ * left here is the ledger: what a call actually used.
  */
-describe("counting AI processing", () => {
+describe("the AI processing counter", () => {
   const anthropicResult = {
     provider: "anthropic" as const,
     model: "claude-opus-5",
@@ -531,11 +526,6 @@ describe("counting AI processing", () => {
     },
   };
 
-  /** The argument of the only counter update. */
-  function counted() {
-    return usageUpdateMany.mock.calls[0][0];
-  }
-
   it.each([
     "prompt",
     "website",
@@ -543,26 +533,20 @@ describe("counting AI processing", () => {
     "draft",
     "creator-analysis",
     "creator-memory",
-  ] as const)("counts one unit for a real call from %o", async (feature) => {
+  ] as const)("writes the ledger and moves no counter for a real call from %o", async (feature) => {
     await recordAIExecution(
       { userId: USER, feature, runId: null },
       anthropicResult,
       OCCURRED_AT,
     );
 
-    expect(usageUpdateMany).toHaveBeenCalledTimes(1);
-    expect(counted()).toEqual({
-      where: { periodId: "usage-period-1", kind: "aiProcessing" },
-      data: { used: { increment: 1 } },
-    });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(usageUpdateMany).not.toHaveBeenCalled();
+    expect(usagePeriodFindUnique).not.toHaveBeenCalled();
+    expect(usagePeriodCreate).not.toHaveBeenCalled();
   });
 
-  /**
-   * **A call that was made was billable however it ended.** A transport failure
-   * cost whatever it cost, and a month that only counted the successful ones
-   * would describe a cheaper month than the real one.
-   */
-  it("counts a call that was made and then failed", async () => {
+  it("writes the ledger and moves no counter for a call that was made and then failed", async () => {
     await recordAIFailure(
       { userId: USER, feature: "prompt", runId: "run-1" },
       new ProviderError("timeout", "took too long", {
@@ -571,14 +555,10 @@ describe("counting AI processing", () => {
       OCCURRED_AT,
     );
 
-    expect(usageUpdateMany).toHaveBeenCalledTimes(1);
-    expect(counted().where.kind).toBe("aiProcessing");
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(usageUpdateMany).not.toHaveBeenCalled();
   });
 
-  /**
-   * **Every one of these cost nothing**, so counting them would describe a
-   * month that never happened.
-   */
   it("counts nothing for the stand-in provider", async () => {
     await recordAIExecution(
       { userId: USER, feature: "prompt", runId: "run-1" },
@@ -586,6 +566,7 @@ describe("counting AI processing", () => {
       OCCURRED_AT,
     );
 
+    expect(create).not.toHaveBeenCalled();
     expect(usageUpdateMany).not.toHaveBeenCalled();
   });
 
@@ -600,83 +581,18 @@ describe("counting AI processing", () => {
       OCCURRED_AT,
     );
 
+    expect(create).not.toHaveBeenCalled();
     expect(usageUpdateMany).not.toHaveBeenCalled();
   });
 
-  /** One call, one unit — never two because two things were written. */
-  it("counts once per call, not once per write", async () => {
-    await recordAIExecution(
-      { userId: USER, feature: "prompt", runId: "run-1" },
-      anthropicResult,
-      OCCURRED_AT,
-    );
-
-    expect(create).toHaveBeenCalledTimes(1);
-    expect(usageUpdateMany).toHaveBeenCalledTimes(1);
-  });
-
-  it("opens the month lazily, on the first thing counted", async () => {
-    usagePeriodFindUnique.mockResolvedValue(null);
-
-    await recordAIExecution(
-      { userId: USER, feature: "draft", runId: null },
-      anthropicResult,
-      OCCURRED_AT,
-    );
-
-    expect(usagePeriodCreate.mock.calls[0][0].data).toMatchObject({
-      userId: USER,
-      planAtStart: "beta",
-    });
-  });
-});
-
-/**
- * **Neither write may take the other down**, because the two tables are meant
- * to be reconciled against each other. A month whose counter moved only when
- * the token row also landed would agree with that row by construction and prove
- * nothing.
- */
-describe("when one of the two writes fails", () => {
-  const anthropicResult = {
-    provider: "anthropic" as const,
-    model: "claude-opus-5",
-    usage: UNKNOWN_PROVIDER_USAGE,
-  };
-
-  it("still counts when the token row cannot be written", async () => {
+  /** And the ledger failing still reaches no caller: it is bookkeeping. */
+  it("does not throw when the token row cannot be written", async () => {
     create.mockRejectedValue(new Error("connection lost"));
-
-    await recordAIExecution(
-      { userId: USER, feature: "prompt", runId: "run-1" },
-      anthropicResult,
-      OCCURRED_AT,
-    );
-
-    expect(usageUpdateMany).toHaveBeenCalledTimes(1);
-  });
-
-  it("still writes the token row when the counter cannot move", async () => {
-    usageUpdateMany.mockRejectedValue(new Error("connection lost"));
-
-    await recordAIExecution(
-      { userId: USER, feature: "prompt", runId: "run-1" },
-      anthropicResult,
-      OCCURRED_AT,
-    );
-
-    expect(create).toHaveBeenCalledTimes(1);
-  });
-
-  /** And neither reaches the caller: both are bookkeeping. */
-  it("does not throw when both fail", async () => {
-    create.mockRejectedValue(new Error("connection lost"));
-    usageUpdateMany.mockRejectedValue(new Error("connection lost"));
 
     await expect(
       recordAIExecution(
         { userId: USER, feature: "prompt", runId: "run-1" },
-        anthropicResult,
+        { ...anthropicResult, usage: UNKNOWN_PROVIDER_USAGE },
         OCCURRED_AT,
       ),
     ).resolves.toBeUndefined();

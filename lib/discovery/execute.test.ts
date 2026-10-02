@@ -37,6 +37,23 @@ const mocks = vi.hoisted(() => ({
   recordUsageObservation: vi.fn(),
 }));
 
+// The AI processing allowance is granted unless a case says otherwise; what it
+// does against a database is `lib/usage/consume.ts`'s own suite.
+const allowance = vi.hoisted(() => ({
+  reserveAiProcessing: vi.fn<
+    (userId: string) => Promise<"exhausted" | "unavailable" | null>
+  >(async () => null),
+}));
+
+vi.mock("@/lib/usage/ai-allowance", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/usage/ai-allowance")>()),
+  reserveAiProcessing: allowance.reserveAiProcessing,
+}));
+
+beforeEach(() => {
+  allowance.reserveAiProcessing.mockReset();
+});
+
 vi.mock("@/lib/discovery/repository", () => ({
   getDiscoverySource: mocks.getSource,
   findSeenKeys: mocks.findSeenKeys,
@@ -100,6 +117,8 @@ vi.mock("@/lib/prisma", () => ({
 
 const { executeDiscovery } = await import("@/lib/discovery/execute");
 const { runRoutine } = await import("@/lib/runs");
+const { AI_ALLOWANCE_EXHAUSTED_MESSAGE, AI_ALLOWANCE_UNAVAILABLE_MESSAGE } =
+  await import("@/lib/usage/ai-allowance");
 const { DISCOVERY_NO_SELECTION_OUTPUT } = await import("@/lib/run-display");
 const { DiscoveryProviderError } = await import("@/lib/discovery/provider");
 const { InvalidDiscoverySelectionError } = await import(
@@ -892,7 +911,9 @@ describe("a discovery run — counting it against the month", () => {
 
     await runRoutine(ROUTINE_ID);
 
-    expect(observed()).toEqual(["discovery", "aiProcessing"]);
+    // The run is observed here; the AI processing was taken before the call.
+    expect(observed()).toEqual(["discovery"]);
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
     expect(mocks.recordUsageObservation.mock.calls[0][0]).toBe(USER_ID);
   });
 
@@ -926,7 +947,9 @@ describe("a discovery run — counting it against the month", () => {
 
     await runRoutine(ROUTINE_ID);
 
-    expect(observed()).toEqual(["discovery", "aiProcessing"]);
+    // The run is observed here; the AI processing was taken before the call.
+    expect(observed()).toEqual(["discovery"]);
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
   });
 
   it("counts the run when the selection failed", async () => {
@@ -949,8 +972,9 @@ describe("a discovery run — counting it against the month", () => {
     await runRoutine(ROUTINE_ID);
 
     expect(observed().filter((kind) => kind === "discovery")).toHaveLength(1);
-    expect(observed().filter((kind) => kind === "aiProcessing")).toHaveLength(1);
-    expect(mocks.recordUsageObservation).toHaveBeenCalledTimes(2);
+    expect(observed().filter((kind) => kind === "aiProcessing")).toHaveLength(0);
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
+    expect(mocks.recordUsageObservation).toHaveBeenCalledTimes(1);
   });
 
   /**
@@ -1067,7 +1091,9 @@ describe("when a discovery run starts consuming", () => {
 
     await runRoutine(ROUTINE_ID);
 
-    expect(observed()).toEqual(["discovery", "aiProcessing"]);
+    // The run is observed here; the AI processing was taken before the call.
+    expect(observed()).toEqual(["discovery"]);
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
   });
 
   /** The run is counted once, before a search that may run long. */
@@ -1089,7 +1115,8 @@ describe("when a discovery run starts consuming", () => {
     await runRoutine(ROUTINE_ID);
 
     expect(observed().filter((kind) => kind === "discovery")).toHaveLength(1);
-    expect(observed().filter((kind) => kind === "aiProcessing")).toHaveLength(1);
+    expect(observed().filter((kind) => kind === "aiProcessing")).toHaveLength(0);
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
   });
 
   /** Observation must not change what it observes. */
@@ -1108,5 +1135,99 @@ describe("when a discovery run starts consuming", () => {
       mocks.runUpdate.mock.calls.length - 1
     ][0].data;
     expect(lastWrite).toMatchObject({ status: "completed" });
+  });
+});
+
+/**
+ * The AI processing allowance a discovery run's one call is measured by.
+ *
+ * **Taken only once a model will certainly be asked.** Most discovery runs never
+ * ask one, and every way a run ends before the selection — no source, a source
+ * this deployment cannot reach, a search that failed, nothing new to choose
+ * from — spends nothing.
+ */
+describe("a discovery run — the AI processing allowance", () => {
+  it("takes one unit for the owner before the model is asked", async () => {
+    available([candidate("a")]);
+    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
+
+    await executeDiscovery(ROUTINE_ID, USER_ID, { aiProvider });
+
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledWith(USER_ID);
+    expect(allowance.reserveAiProcessing.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.select.mock.invocationCallOrder[0],
+    );
+  });
+
+  it.each([
+    ["the worker has no search configured", () => mocks.getSource.mockResolvedValue(null)],
+    ["the search found nothing", () => available([])],
+    [
+      "everything found was recommended before",
+      () => {
+        available([candidate("a")]);
+        mocks.findSeenKeys.mockResolvedValue(new Set(["youtube:a"]));
+      },
+    ],
+  ])("takes nothing when %s", async (_name, arrange) => {
+    arrange();
+
+    await executeDiscovery(ROUTINE_ID, USER_ID, { aiProvider });
+
+    expect(allowance.reserveAiProcessing).not.toHaveBeenCalled();
+  });
+
+  it("takes nothing for the stand-in", async () => {
+    available([candidate("a")]);
+    mocks.select.mockResolvedValue(chosenBy([]));
+
+    await executeDiscovery(ROUTINE_ID, USER_ID, {
+      aiProvider: { ...aiProvider, mode: "dummy" as const },
+    });
+
+    expect(allowance.reserveAiProcessing).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["exhausted", AI_ALLOWANCE_EXHAUSTED_MESSAGE],
+    ["unavailable", AI_ALLOWANCE_UNAVAILABLE_MESSAGE],
+  ] as const)("asks no model when the allowance is %s", async (refusal, message) => {
+    available([candidate("a")]);
+    allowance.reserveAiProcessing.mockResolvedValueOnce(refusal);
+
+    const result = await executeDiscovery(ROUTINE_ID, USER_ID, { aiProvider });
+
+    expect(mocks.select).not.toHaveBeenCalled();
+    expect(result).toEqual({ status: "failed", errorMessage: message, call: null });
+  });
+
+  it("asks no model when the allowance cannot be read", async () => {
+    available([candidate("a")]);
+    allowance.reserveAiProcessing.mockRejectedValueOnce(new Error("connection lost"));
+
+    const result = await executeDiscovery(ROUTINE_ID, USER_ID, { aiProvider });
+
+    expect(mocks.select).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ status: "failed", call: null });
+  });
+
+  /** A refusal is not a failure anybody is emailed about. */
+  it("finishes the run and sends nothing when the allowance refused", async () => {
+    mocks.routineFind.mockResolvedValue({
+      userId: USER_ID,
+      name: "Recommendations",
+      prompt: "",
+      kind: "discovery",
+      emailNotificationsEnabled: true,
+    });
+    available([candidate("a")]);
+    allowance.reserveAiProcessing.mockResolvedValueOnce("exhausted");
+
+    const finished = await runRoutine(ROUTINE_ID);
+
+    expect(finished.status).toBe("failed");
+    expect(finished.errorMessage).toBe(AI_ALLOWANCE_EXHAUSTED_MESSAGE);
+    expect(mocks.notify).not.toHaveBeenCalled();
   });
 });

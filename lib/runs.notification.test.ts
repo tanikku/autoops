@@ -39,6 +39,23 @@ const mocks = vi.hoisted(() => ({
   send: vi.fn(),
 }));
 
+// The AI processing allowance is granted unless a case says otherwise; what it
+// does against a database is `lib/usage/consume.ts`'s own suite.
+const allowance = vi.hoisted(() => ({
+  reserveAiProcessing: vi.fn<
+    (userId: string) => Promise<"exhausted" | "unavailable" | null>
+  >(async () => null),
+}));
+
+vi.mock("@/lib/usage/ai-allowance", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/usage/ai-allowance")>()),
+  reserveAiProcessing: allowance.reserveAiProcessing,
+}));
+
+beforeEach(() => {
+  allowance.reserveAiProcessing.mockReset();
+});
+
 vi.mock("@/lib/execution-lease", async () => {
   const actual =
     await vi.importActual<typeof import("@/lib/execution-lease")>(
@@ -407,6 +424,49 @@ describe("a prompt worker", () => {
       RunPersistenceError,
     );
     expect(mocks.send).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * **A run the AI processing allowance refused tells nobody.** It is recorded as
+ * `failed` because a run has no other way to finish, but nothing went wrong:
+ * the account is out of allowance, and an email on every cadence until the
+ * period turns over would be noise about something the owner already knows how
+ * to see.
+ */
+describe("a run the AI processing allowance refused", () => {
+  it.each(["exhausted", "unavailable"] as const)(
+    "sends nothing for a prompt worker refused as %s",
+    async (refusal) => {
+      mocks.findUniqueOrThrow.mockResolvedValue(worker({ kind: "prompt" }));
+      allowance.reserveAiProcessing.mockResolvedValueOnce(refusal);
+
+      await runRoutine("worker-1");
+
+      expect(mocks.execute).not.toHaveBeenCalled();
+      expect(mocks.send).not.toHaveBeenCalled();
+    },
+  );
+
+  it("sends nothing for a website worker whose change was refused", async () => {
+    mocks.getWebsiteSnapshot.mockResolvedValue(changedSnapshot());
+    allowance.reserveAiProcessing.mockResolvedValueOnce("exhausted");
+
+    await runRoutine("worker-1");
+
+    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  /** Only the refusal is quiet: a model that failed is still a failure. */
+  it("still emails a prompt run whose model failed after the unit was taken", async () => {
+    mocks.findUniqueOrThrow.mockResolvedValue(worker({ kind: "prompt" }));
+    mocks.execute.mockRejectedValue(new Error("the model refused"));
+
+    await runRoutine("worker-1");
+
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(subject()).toBe('[Koqentra] "Careers page" failed');
   });
 });
 

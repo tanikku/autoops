@@ -1212,6 +1212,15 @@ Notes for the report:
   "run.action.entitlementBlocked":
     "This run isn't available with your current plan status. Check Plans to continue.",
   /**
+   * Refusals from the AI processing allowance, shared by every place that asks
+   * a model on the account's behalf: a worker run, a draft and a Creator
+   * analysis. Not the hourly limits, which say that waiting works.
+   */
+  "ai.allowance.exhausted":
+    "You've reached your AI processing limit for this period. Check Plans for your allowance.",
+  "ai.allowance.unavailable":
+    "AI processing isn't available with your current plan status. Check Plans to continue.",
+  /**
    * The account already has a hand-started run going — a different worker's,
    * or this one would have said `alreadyRunning` instead.
    *

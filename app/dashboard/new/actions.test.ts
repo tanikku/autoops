@@ -35,6 +35,23 @@ const mocks = vi.hoisted(() => ({
   redirect: vi.fn(),
 }));
 
+// The AI processing allowance is granted unless a case says otherwise; what it
+// does against a database is `lib/usage/consume.ts`'s own suite.
+const allowance = vi.hoisted(() => ({
+  reserveAiProcessing: vi.fn<
+    (userId: string) => Promise<"exhausted" | "unavailable" | null>
+  >(async () => null),
+}));
+
+vi.mock("@/lib/usage/ai-allowance", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/usage/ai-allowance")>()),
+  reserveAiProcessing: allowance.reserveAiProcessing,
+}));
+
+beforeEach(() => {
+  allowance.reserveAiProcessing.mockReset();
+});
+
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 vi.mock("@/auth", () => ({ auth: mocks.auth }));
@@ -114,6 +131,7 @@ const { createRoutineAction, generateWorkerDraftAction } = await import(
   "@/app/dashboard/new/actions"
 );
 const { ProviderError } = await import("@/lib/ai/provider");
+const { t } = await import("@/lib/i18n");
 // The limits belong to the quota module; these read them rather than restating
 // them, so raising one does not leave these testing nothing.
 const { TOTAL_WORKER_LIMIT } = await import(
@@ -1856,39 +1874,40 @@ describe("generateWorkerDraftAction — what it records about its call", () => {
 });
 
 /**
- * Counting a draft against the account's month.
+ * The AI processing allowance a draft is measured by.
  *
- * **Drafting is AI processing with no run behind it**, which is why it had no
- * cost anybody could see until now. What is fixed here is that the same unit a
- * worker spends is spent by a form — and that every refusal in front of the
- * provider still costs nothing.
+ * **Drafting is AI processing with no run behind it.** The same unit a worker
+ * spends is taken by a form, immediately before the request is sent — after the
+ * hourly allowance, so a request that limit turns away has spent nothing — and
+ * every refusal in front of the provider still costs nothing.
  */
-describe("generateWorkerDraftAction — counting the call against the month", () => {
+describe("generateWorkerDraftAction — the AI processing allowance", () => {
   function ask(request: string) {
     const data = new FormData();
     data.set("request", request);
     return generateWorkerDraftAction(null, data);
   }
 
-  /** Every kind observed during this request. */
-  function observed() {
-    return mocks.recordUsageObservation.mock.calls.map((call: unknown[]) =>
-      String(call[1]),
-    );
-  }
-
-  it("counts one unit of AI processing for a real call", async () => {
+  it("takes one unit for the account before the model is asked", async () => {
     mocks.generate.mockResolvedValue(
       draftGeneration({ status: "unsupported", reason: "no" }),
     );
 
     await ask("watch a page");
 
-    expect(observed()).toEqual(["aiProcessing"]);
-    expect(mocks.recordUsageObservation.mock.calls[0][0]).toBe("google-sub-1");
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledWith("google-sub-1");
+    expect(mocks.consumeAiDraftQuota.mock.invocationCallOrder[0]).toBeLessThan(
+      allowance.reserveAiProcessing.mock.invocationCallOrder[0],
+    );
+    expect(allowance.reserveAiProcessing.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.generate.mock.invocationCallOrder[0],
+    );
+    // Not counted a second time after the call.
+    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
   });
 
-  it("counts a call that was made and then failed", async () => {
+  it("takes exactly one unit for a call that was made and then failed", async () => {
     mocks.generate.mockRejectedValue(
       new ProviderError("timeout", "took too long", {
         attempt: { provider: "anthropic", model: "claude-opus-5", usage: null },
@@ -1897,47 +1916,60 @@ describe("generateWorkerDraftAction — counting the call against the month", ()
 
     await ask("watch a page");
 
-    expect(observed()).toEqual(["aiProcessing"]);
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
+    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
   });
 
   it.each([
     ["an empty request", ""],
     ["a request past the limit", "x".repeat(MAX_WORKER_DRAFT_REQUEST_CHARS + 1)],
-  ])("counts nothing for %s", async (_label, request) => {
+  ])("takes nothing for %s", async (_label, request) => {
     await ask(request);
 
-    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
+    expect(allowance.reserveAiProcessing).not.toHaveBeenCalled();
   });
 
-  it("counts nothing when the allowance is spent", async () => {
+  it("takes nothing when no AI is configured", async () => {
+    mocks.createWorkerDraftGenerator.mockReturnValue(null);
+
+    await ask("watch a page");
+
+    expect(allowance.reserveAiProcessing).not.toHaveBeenCalled();
+  });
+
+  it("takes nothing when the hourly allowance is spent", async () => {
     mocks.consumeAiDraftQuota.mockResolvedValue(false);
 
     await ask("watch a page");
 
-    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
+    expect(allowance.reserveAiProcessing).not.toHaveBeenCalled();
   });
 
-  it("counts exactly once per call", async () => {
-    mocks.generate.mockResolvedValue(
-      draftGeneration({ status: "unsupported", reason: "no" }),
-    );
+  it.each([
+    ["exhausted", "ai.allowance.exhausted"],
+    ["unavailable", "ai.allowance.unavailable"],
+  ] as const)(
+    "asks no model and says so when the allowance is %s",
+    async (refusal, key) => {
+      allowance.reserveAiProcessing.mockResolvedValueOnce(refusal);
 
-    await ask("watch a page");
+      const result = await ask("watch a page");
 
-    expect(mocks.recordUsageObservation).toHaveBeenCalledTimes(1);
-  });
+      expect(mocks.generate).not.toHaveBeenCalled();
+      expect(result).toEqual({ status: "error", message: t("en", key) });
+    },
+  );
 
-  /** Observation must not change what it observes. */
-  it("still returns the draft when the month cannot be counted", async () => {
-    mocks.recordUsageObservation.mockResolvedValue({
-      recorded: false,
-      reason: "unavailable",
+  it("asks no model when the allowance cannot be read", async () => {
+    allowance.reserveAiProcessing.mockRejectedValueOnce(new Error("connection lost"));
+
+    const result = await ask("watch a page");
+
+    expect(mocks.generate).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      status: "error",
+      message: t("en", "worker.draft.failed"),
     });
-    mocks.generate.mockResolvedValue(
-      draftGeneration({ status: "unsupported", reason: "Koqentra cannot." }),
-    );
-
-    expect(await ask("watch a page")).toMatchObject({ status: "unsupported" });
   });
 });
 

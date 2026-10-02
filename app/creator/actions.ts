@@ -33,6 +33,7 @@ import {
 import { t, type TranslationKey } from "@/lib/i18n";
 import { consumeCreatorAnalysisQuota } from "@/lib/rate-limit";
 import { requireProvisionedUserId, requireUserId } from "@/lib/session";
+import { aiAllowanceRefusalOf } from "@/lib/usage/ai-allowance";
 import { getUserLanguage } from "@/lib/users";
 import { type ActionResult, isCreatorFeedbackAction } from "@/types";
 
@@ -71,6 +72,8 @@ const ANALYSIS_MESSAGE_KEYS = {
   unreadable: "creator.analysis.unreadable",
   failed: "creator.analysis.failed",
   done: "creator.analysis.done",
+  allowanceExhausted: "ai.allowance.exhausted",
+  allowanceUnavailable: "ai.allowance.unavailable",
 } as const satisfies Record<string, TranslationKey>;
 
 /**
@@ -406,6 +409,14 @@ function urlFailureResult(language: string, error: unknown): ActionResult {
  * place for either.
  */
 function analysisFailure(error: unknown): keyof typeof ANALYSIS_MESSAGE_KEYS {
+  // An ordinary answer rather than a failure: nothing was sent and nothing is
+  // logged as an error.
+  const refusal = aiAllowanceRefusalOf(error);
+
+  if (refusal !== null) {
+    return refusal === "exhausted" ? "allowanceExhausted" : "allowanceUnavailable";
+  }
+
   // Both of these are the outside edge catching what the service already
   // refuses. They arrive when the two disagree about a boundary, which is worth
   // a message rather than a crash.

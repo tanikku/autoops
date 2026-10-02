@@ -38,6 +38,11 @@ import {
   type ProviderCallMetadata,
   providerErrorKind,
 } from "@/lib/ai/provider";
+import {
+  type AiAllowanceRefusal,
+  AiAllowanceRefusedError,
+  reserveAiProcessing,
+} from "@/lib/usage/ai-allowance";
 import { recordAIExecution, recordAIFailure } from "@/lib/usage/record";
 import type { CreatorFeedbackAction } from "@/types";
 
@@ -192,6 +197,15 @@ async function analyzeCreatorContent(
   // **Before the call, not after a 413.** The limits belong to
   // `lib/creator/analyzer.ts`; nothing here restates a number it owns.
   assertCreatorAnalysisRequestWithinLimits(request);
+
+  // **After every check that refuses the request for free, and immediately
+  // before it is sent.** A refusal writes nothing, exactly as a failed call
+  // does not.
+  const refusal = await reserveAiProcessing(userId);
+
+  if (refusal !== null) {
+    throw new AiAllowanceRefusedError(refusal);
+  }
 
   let analysis: CreatorAnalysis;
   try {
@@ -529,6 +543,22 @@ async function refreshCreatorMemory({
     // Even the oldest outstanding answer is too large to send on its own, and
     // summarising past it would produce a summary claiming to cover it.
     logMemoryAnomaly("batch-does-not-fit");
+    return null;
+  }
+
+  // **Spent only for a batch that will be sent.** A refusal writes nothing — no
+  // summary and no memberships — so every answer in the batch is still
+  // outstanding, and a later analysis with allowance picks it up.
+  let refusal: AiAllowanceRefusal | null;
+  try {
+    refusal = await reserveAiProcessing(userId);
+  } catch (error) {
+    logMemoryAnomaly("allowance-read-failed", error);
+    return null;
+  }
+
+  if (refusal !== null) {
+    console.warn(`[creator] memory synthesis skipped — allowance ${refusal}`);
     return null;
   }
 

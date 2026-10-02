@@ -146,6 +146,41 @@ describe("runRoutineAction", () => {
   });
 
   /**
+   * **Refused by the AI processing allowance, not failed.** The run row says
+   * so in its own fixed words, and the person is told about the allowance
+   * rather than that the worker broke.
+   */
+  it.each([
+    [
+      "AI processing limit reached.",
+      "You've reached your AI processing limit for this period. Check Plans for your allowance.",
+    ],
+    [
+      "AI processing is not available for this account.",
+      "AI processing isn't available with your current plan status. Check Plans to continue.",
+    ],
+  ])("reports a run refused with %o as the allowance", async (errorMessage, message) => {
+    mocks.enqueueRoutine.mockResolvedValue({ status: "failed", errorMessage });
+
+    expect(await runRoutineAction(null, form("worker-1"))).toEqual({
+      status: "error",
+      message,
+    });
+  });
+
+  it("still reports an ordinary failure as a failure", async () => {
+    mocks.enqueueRoutine.mockResolvedValue({
+      status: "failed",
+      errorMessage: "the model took too long",
+    });
+
+    expect(await runRoutineAction(null, form("worker-1"))).toEqual({
+      status: "error",
+      message: '"Daily digest" failed to run.',
+    });
+  });
+
+  /**
    * Already running is not a failure, and the wording has to say which it is:
    * "failed to run" would send someone looking for a fault there isn't.
    */

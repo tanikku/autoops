@@ -24,6 +24,10 @@ import {
   type WorkerQuotaRejection,
 } from "@/lib/worker-quota";
 import { requireProvisionedUserId, requireUserId } from "@/lib/session";
+import {
+  type AiAllowanceRefusal,
+  reserveAiProcessing,
+} from "@/lib/usage/ai-allowance";
 import { recordAIExecution, recordAIFailure } from "@/lib/usage/record";
 import { getUserLanguage, getUserTimezone } from "@/lib/users";
 import { isWatcherError } from "@/lib/watcher/errors";
@@ -439,6 +443,8 @@ const DRAFT_MESSAGE_KEYS = {
   unreadable: "worker.draft.unreadable",
   limitReached: "worker.draft.limitReached",
   failed: "worker.draft.failed",
+  allowanceExhausted: "ai.allowance.exhausted",
+  allowanceUnavailable: "ai.allowance.unavailable",
 } as const satisfies Record<string, TranslationKey>;
 
 /**
@@ -554,6 +560,28 @@ export async function generateWorkerDraftAction(
     // an hour than the allowance holds. Nothing is logged as an error, because
     // nothing went wrong.
     return { status: "error", message: draftMessage(language, "limitReached") };
+  }
+
+  // **After the hourly allowance, immediately before the request is sent.** The
+  // other way round, a request refused by the hour would already have spent AI
+  // processing it never used. Failing to read it fails closed, exactly as the
+  // hourly allowance does above.
+  let refusal: AiAllowanceRefusal | null;
+  try {
+    refusal = await reserveAiProcessing(provisionedUserId);
+  } catch (error) {
+    console.error("[draft] the AI processing allowance could not be read", error);
+    return { status: "error", message: draftMessage(language, "failed") };
+  }
+
+  if (refusal !== null) {
+    return {
+      status: "error",
+      message: draftMessage(
+        language,
+        refusal === "exhausted" ? "allowanceExhausted" : "allowanceUnavailable",
+      ),
+    };
   }
 
   try {

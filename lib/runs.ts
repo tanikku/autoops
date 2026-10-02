@@ -38,6 +38,12 @@ import {
   MAX_WEBSITE_AI_REQUEST_CHARS,
   websiteRequestSize,
 } from "@/lib/watcher/website-request";
+import {
+  type AiAllowanceRefusal,
+  aiAllowanceRefusalOfRun,
+  aiAllowanceRunMessage,
+  reserveAiProcessing,
+} from "@/lib/usage/ai-allowance";
 import { recordAIExecution, recordAIFailure } from "@/lib/usage/record";
 import { workerFieldLimits } from "@/lib/worker-input";
 import {
@@ -726,6 +732,13 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
   //
   // **Nothing here can change the run.** `notifyRunOutcome` returns a promise
   // that always resolves, whatever the provider did.
+  // **A run the allowance refused is not a failure anybody is emailed about.**
+  // It is `failed` only because a run has no other way to finish; nothing went
+  // wrong, and the next scheduled run tries again on its own cadence.
+  if (aiAllowanceRefusalOfRun(outcome.run) !== null) {
+    outcome = { ...outcome, notification: null };
+  }
+
   if (routine.emailNotificationsEnabled && outcome.notification !== null) {
     // **Read only when the message will carry it.** A changed page is the one
     // notification whose reader's next move is the page itself, so the address
@@ -873,9 +886,16 @@ async function executePrompt(
   // success used to be in here too, which meant a database that refused it
   // sent a working run down the failure path. What can fail here is the
   // prompt and the model, and both of those are results a run can have.
-  let result: AIExecutionResult;
+  let call:
+    | { readonly sent: true; readonly result: AIExecutionResult }
+    | { readonly sent: false; readonly refusal: AiAllowanceRefusal };
   try {
     const prompt = renderPrompt(routinePrompt, promptVariables());
+
+    // After the prompt is rendered and immediately before it is sent: a prompt
+    // that cannot be rendered never takes a unit.
+    const refusal = await reserveAiProcessingFor(routineId, userId);
+
     // **No `system`.** A prompt worker's instruction and its material are the
     // same text, exactly as they have always been — the field exists for the
     // caller that has two separate things to send.
@@ -884,10 +904,16 @@ async function executePrompt(
     // caller already names its own; this one was the last taking whatever the
     // provider happened to allow, which was longer than the tick it runs
     // inside. See `PROMPT_AI_TIMEOUT_MS`.
-    result = await provider.execute({
-      user: prompt,
-      timeoutMs: PROMPT_AI_TIMEOUT_MS,
-    });
+    call =
+      refusal === null
+        ? {
+            sent: true,
+            result: await provider.execute({
+              user: prompt,
+              timeoutMs: PROMPT_AI_TIMEOUT_MS,
+            }),
+          }
+        : { sent: false, refusal };
   } catch (error) {
     // **Before the failure is recorded, and it cannot change it.** A call
     // that was made was billable whether or not it answered, and
@@ -913,6 +939,15 @@ async function executePrompt(
       notification: "failed",
     };
   }
+
+  if (!call.sent) {
+    return {
+      run: await recordFailure(run.id, aiAllowanceRunMessage(call.refusal)),
+      notification: null,
+    };
+  }
+
+  const { result } = call;
 
   // **Outside the transaction that records the run, and before it.** A row
   // about what a call used is not part of what a run produced, and putting
@@ -1264,7 +1299,21 @@ async function processWebsiteChange(
   // **Every refusal above this line is free.** A stand-in provider, an
   // unusable instruction and an oversized request all end the run before
   // anything is sent, so none of them is recorded as a call — which is why
-  // the recording lives here rather than at the top of the function.
+  // the recording lives here rather than at the top of the function, and why
+  // the allowance is taken here and not before them.
+  let refusal: AiAllowanceRefusal | null;
+  try {
+    refusal = await reserveAiProcessingFor(routineId, userId);
+  } catch {
+    return failWithoutAdvancing(CHANGE_PROCESSING_FAILED);
+  }
+
+  // The baseline stays where it was, so the same change is found again once
+  // there is allowance to describe it.
+  if (refusal !== null) {
+    return failWithoutAdvancing(aiAllowanceRunMessage(refusal));
+  }
+
   let result: AIExecutionResult;
   try {
     result = await provider.execute(request);
@@ -1550,6 +1599,40 @@ function finalizationFailureMessage(error: unknown): string {
   return isWebsiteStateConflict(error)
     ? STATE_CHANGED_DURING_RUN
     : "Execution failed.";
+}
+
+/**
+ * Takes one unit of AI processing for a call this run is about to send.
+ *
+ * **The stand-in costs nothing**, so it takes nothing — it sends no request,
+ * exactly as its calls are never recorded as calls.
+ *
+ * **A database that will not answer stops the call.** Not knowing whether
+ * there is allowance is not knowing there is some; what the run stores is a
+ * fixed sentence, because the driver's own message names tables and is not
+ * written for the person reading the run.
+ */
+async function reserveAiProcessingFor(
+  routineId: string,
+  userId: string,
+): Promise<AiAllowanceRefusal | null> {
+  if (provider.mode !== "real") {
+    return null;
+  }
+
+  let refusal: AiAllowanceRefusal | null;
+  try {
+    refusal = await reserveAiProcessing(userId);
+  } catch (error) {
+    console.error("[worker] AI processing allowance could not be read", routineId, error);
+    throw new Error("Execution failed.");
+  }
+
+  if (refusal !== null) {
+    console.warn(`[worker] AI processing allowance refused — reason=${refusal}`, routineId);
+  }
+
+  return refusal;
 }
 
 /** The provider's own wording, which is what a failed run has always stored. */

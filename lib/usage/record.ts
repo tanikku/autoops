@@ -5,7 +5,6 @@ import {
   providerAttemptOf,
 } from "@/lib/ai/provider";
 import { prisma } from "@/lib/prisma";
-import { recordUsageObservation } from "@/lib/usage/observe";
 import {
   type ProviderUsageEventInput,
   UNKNOWN_PROVIDER_USAGE,
@@ -88,6 +87,10 @@ export type AICallContext = {
  * came from nothing that could be billed, and this is where that is decided.
  *
  * Best-effort, like everything else in this file: see `recordProviderUsage`.
+ *
+ * **The ledger only.** The AI processing allowance was taken before the call
+ * was sent (`reserveAiProcessing`), and counting it again here would charge one
+ * call twice.
  */
 export async function recordAIExecution(
   context: AICallContext,
@@ -110,8 +113,6 @@ export async function recordAIExecution(
     outcome: "ok",
     runId: context.runId,
   });
-
-  await observeAIProcessing(context, occurredAt);
 }
 
 /**
@@ -149,30 +150,4 @@ export async function recordAIFailure(
     outcome: "error",
     runId: context.runId,
   });
-
-  await observeAIProcessing(context, occurredAt);
-}
-
-/**
- * Counts one unit of AI processing against the account's month.
- *
- * **Placed here because here is where "a request was made" is already decided.**
- * The two functions above have exactly one job between them — telling a real
- * provider call from every refusal that never reached one — and duplicating that
- * judgement at six call sites would be six chances to draw the line differently.
- * A stand-in and a pre-provider refusal return before this is reached.
- *
- * **Independent of the event row, deliberately.** Neither write is inside the
- * other's `try`, so a failure to record the tokens does not silently skip the
- * count, and a failure to count does not hide the tokens. The two tables are
- * meant to be reconcilable against each other, which they cannot be if one can
- * only fail together with the other.
- *
- * **Never blocks.** `recordUsageObservation` reports rather than throws.
- */
-async function observeAIProcessing(
-  context: AICallContext,
-  occurredAt: Date,
-): Promise<void> {
-  await recordUsageObservation(context.userId, "aiProcessing", 1, occurredAt);
 }

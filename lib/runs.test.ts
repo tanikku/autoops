@@ -24,6 +24,23 @@ const mocks = vi.hoisted(() => ({
   requireEntitlement: vi.fn(),
 }));
 
+// The AI processing allowance is granted unless a case says otherwise; what it
+// does against a database is `lib/usage/consume.ts`'s own suite.
+const allowance = vi.hoisted(() => ({
+  reserveAiProcessing: vi.fn<
+    (userId: string) => Promise<"exhausted" | "unavailable" | null>
+  >(async () => null),
+}));
+
+vi.mock("@/lib/usage/ai-allowance", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/usage/ai-allowance")>()),
+  reserveAiProcessing: allowance.reserveAiProcessing,
+}));
+
+beforeEach(() => {
+  allowance.reserveAiProcessing.mockReset();
+});
+
 // **The decision is stood in for; the refusal is the real one.** Which states
 // may run is `lib/entitlements/worker-execution.test.ts`; what these fix is
 // what `runRoutine` does with each answer.
@@ -83,6 +100,8 @@ const { ExecutionEntitlementBlockedError } = await import(
   "@/lib/entitlements/worker-execution"
 );
 const { ProviderError } = await import("@/lib/ai/provider");
+const { AI_ALLOWANCE_EXHAUSTED_MESSAGE, AI_ALLOWANCE_UNAVAILABLE_MESSAGE } =
+  await import("@/lib/usage/ai-allowance");
 // Imported for one comparison, and only here: the two constants belong to
 // different modules on purpose — the dispatcher must not know what a prompt
 // worker asks a model for, and execution must not import the dispatcher that
@@ -803,29 +822,31 @@ describe("runRoutine — when the usage row cannot be written", () => {
 });
 
 /**
- * Counting a prompt worker's call against the account's month.
+ * The AI processing allowance a prompt worker's call is measured by.
  *
- * **The count follows the call, not the run.** A prompt worker asks a model
- * exactly once, so the two happen to coincide here — the paths where they do
- * not are `lib/runs.website.test.ts` and `lib/discovery/execute.test.ts`.
+ * **Taken immediately before the call, and only there.** A prompt worker asks a
+ * model exactly once, so the unit and the call coincide; the bookkeeping after
+ * the call writes the ledger and moves no counter, so nothing is counted twice.
  */
-describe("runRoutine — counting a prompt run against the month", () => {
-  /** Every kind observed during this run. */
-  function observed() {
-    return mocks.recordUsageObservation.mock.calls.map((call: unknown[]) =>
-      String(call[1]),
-    );
-  }
-
-  it("counts one unit of AI processing for a real call", async () => {
+describe("runRoutine — the AI processing allowance for a prompt run", () => {
+  it("takes one unit for the worker's owner before the model is asked", async () => {
     await runRoutine("worker-1");
 
-    expect(observed()).toEqual(["aiProcessing"]);
-    expect(mocks.recordUsageObservation.mock.calls[0][0]).toBe("user-1");
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledWith("user-1");
+    expect(allowance.reserveAiProcessing.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.execute.mock.invocationCallOrder[0],
+    );
   });
 
-  /** A call that was made was billable however it ended. */
-  it("counts a call that was made and then failed", async () => {
+  it("counts nothing again after the call", async () => {
+    await runRoutine("worker-1");
+
+    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
+  });
+
+  /** A call that was made was billable however it ended: the unit stays taken. */
+  it("takes exactly one unit for a call that was made and then failed", async () => {
     mocks.execute.mockRejectedValue(
       new ProviderError("timeout", "took too long", {
         attempt: { provider: "anthropic", model: "claude-opus-5", usage: null },
@@ -834,50 +855,51 @@ describe("runRoutine — counting a prompt run against the month", () => {
 
     await runRoutine("worker-1");
 
-    expect(observed()).toEqual(["aiProcessing"]);
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
+    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
   });
 
-  it("counts nothing when the provider was never reached", async () => {
+  /** Spent on the way in and never given back, whatever happens after. */
+  it("does not give the unit back when something unexpected stops the call", async () => {
     mocks.execute.mockRejectedValue(new Error("refused before sending"));
 
     await runRoutine("worker-1");
 
-    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
+    expect(written()).toMatchObject({ status: "failed" });
   });
 
-  /** Nothing was sent and nothing was charged. */
-  it("counts nothing for the stand-in provider", async () => {
-    mocks.execute.mockResolvedValue({
-      text: "Execution completed successfully.",
-      provider: "dummy",
-      model: "stand-in",
-      usage: null,
+  it.each([
+    ["exhausted", AI_ALLOWANCE_EXHAUSTED_MESSAGE],
+    ["unavailable", AI_ALLOWANCE_UNAVAILABLE_MESSAGE],
+  ] as const)(
+    "asks no model and finishes the row when the allowance is %s",
+    async (refusal, message) => {
+      allowance.reserveAiProcessing.mockResolvedValueOnce(refusal);
+
+      const run = await runRoutine("worker-1");
+
+      expect(mocks.execute).not.toHaveBeenCalled();
+      expect(mocks.usageCreate).not.toHaveBeenCalled();
+      // Finished rather than left `running`, and saying why in its own words.
+      expect(written()).toMatchObject({ status: "failed", errorMessage: message });
+      expect(run.status).toBe("failed");
+      expect(mocks.release).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("asks no model when the allowance cannot be read, and stores no driver wording", async () => {
+    allowance.reserveAiProcessing.mockRejectedValueOnce(
+      new Error('relation "UsageCounter" does not exist'),
+    );
+
+    await runRoutine("worker-1");
+
+    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(written()).toMatchObject({
+      status: "failed",
+      errorMessage: "Execution failed.",
     });
-
-    await runRoutine("worker-1");
-
-    expect(mocks.recordUsageObservation).not.toHaveBeenCalled();
-  });
-
-  it("counts exactly once per call", async () => {
-    await runRoutine("worker-1");
-
-    expect(mocks.recordUsageObservation).toHaveBeenCalledTimes(1);
-  });
-
-  /**
-   * **Observation must not change what it observes.** A run that worked stays
-   * worked when the month could not be counted.
-   */
-  it("still completes the run when the month cannot be counted", async () => {
-    mocks.recordUsageObservation.mockResolvedValue({
-      recorded: false,
-      reason: "unavailable",
-    });
-
-    await runRoutine("worker-1");
-
-    expect(written()).toMatchObject({ status: "completed", output: "done" });
   });
 });
 

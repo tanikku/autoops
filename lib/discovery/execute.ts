@@ -13,6 +13,11 @@ import {
 } from "@/lib/discovery/select";
 import type { DiscoveryCandidate, DiscoverySelection } from "@/lib/discovery/types";
 import { DISCOVERY_NO_SELECTION_OUTPUT } from "@/lib/run-display";
+import {
+  type AiAllowanceRefusal,
+  aiAllowanceRunMessage,
+  reserveAiProcessing,
+} from "@/lib/usage/ai-allowance";
 import { recordUsageObservation } from "@/lib/usage/observe";
 
 /**
@@ -252,6 +257,29 @@ export async function executeDiscovery(
     // Everything found has been recommended before. A finished run with nothing
     // to say, and **no model is asked**: there is nothing to choose from.
     return completedWithNothing();
+  }
+
+  // **Taken only once a model will certainly be asked.** A source that is
+  // missing, a search that failed and a search with nothing new all end above
+  // without sending anything, so none of them spends AI processing. The
+  // stand-in sends nothing either.
+  if (deps.aiProvider.mode === "real") {
+    let refusal: AiAllowanceRefusal | null;
+    try {
+      refusal = await reserveAiProcessing(userId);
+    } catch (error) {
+      console.error("[worker] AI processing allowance could not be read", routineId, error);
+      return { status: "failed", errorMessage: SELECTION_FAILED, call: null };
+    }
+
+    if (refusal !== null) {
+      console.warn(`[worker] AI processing allowance refused — reason=${refusal}`, routineId);
+      return {
+        status: "failed",
+        errorMessage: aiAllowanceRunMessage(refusal),
+        call: null,
+      };
+    }
   }
 
   let selection: DiscoverySelectionResult;
