@@ -40,7 +40,7 @@ import {
 } from "@/lib/watcher/website-request";
 import {
   type AiAllowanceRefusal,
-  aiAllowanceRefusalOfRun,
+  allowanceRefusalOfRun,
   aiAllowanceRunMessage,
   reserveAiProcessing,
 } from "@/lib/usage/ai-allowance";
@@ -735,7 +735,7 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
   // **A run the allowance refused is not a failure anybody is emailed about.**
   // It is `failed` only because a run has no other way to finish; nothing went
   // wrong, and the next scheduled run tries again on its own cadence.
-  if (aiAllowanceRefusalOfRun(outcome.run) !== null) {
+  if (allowanceRefusalOfRun(outcome.run) !== null) {
     outcome = { ...outcome, notification: null };
   }
 

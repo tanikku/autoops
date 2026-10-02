@@ -67,6 +67,26 @@ const STATE_COPY: Readonly<Record<EntitlementState, StateCopy>> = {
   expired: "pricing.current.expired",
 };
 
+/** The four allowances on every card, in the order the cards list them. */
+const ALLOWANCE_GUIDE = [
+  {
+    title: "pricing.allowanceGuide.activeWorkers.title",
+    body: "pricing.allowanceGuide.activeWorkers.body",
+  },
+  {
+    title: "pricing.allowanceGuide.aiProcessing.title",
+    body: "pricing.allowanceGuide.aiProcessing.body",
+  },
+  {
+    title: "pricing.allowanceGuide.manualRun.title",
+    body: "pricing.allowanceGuide.manualRun.body",
+  },
+  {
+    title: "pricing.allowanceGuide.discovery.title",
+    body: "pricing.allowanceGuide.discovery.body",
+  },
+] as const satisfies readonly { title: TranslationKey; body: TranslationKey }[];
+
 /**
  * One sentence saying what the account has.
  *
@@ -207,6 +227,22 @@ export default async function BillingPage() {
               language={language}
               checkoutEnabled={checkoutEnabled}
             />
+            {/* What each line on the cards counts, said once beneath them. */}
+            <section className="mt-10 border-t border-border pt-8">
+              <h2 className="text-lg font-medium tracking-tight">
+                {t(language, "pricing.allowanceGuide.heading")}
+              </h2>
+              <dl className="mt-4 max-w-2xl space-y-4 text-sm">
+                {ALLOWANCE_GUIDE.map((entry) => (
+                  <div key={entry.title}>
+                    <dt className="font-medium">{t(language, entry.title)}</dt>
+                    <dd className="mt-1 text-muted-foreground">
+                      {t(language, entry.body)}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
           </>
         ) : (
           /* **Somebody already paying is not shown a plan to buy.** Offering one

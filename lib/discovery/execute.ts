@@ -16,9 +16,10 @@ import { DISCOVERY_NO_SELECTION_OUTPUT } from "@/lib/run-display";
 import {
   type AiAllowanceRefusal,
   aiAllowanceRunMessage,
+  discoveryAllowanceRunMessage,
   reserveAiProcessing,
+  reserveDiscoveryRun,
 } from "@/lib/usage/ai-allowance";
-import { recordUsageObservation } from "@/lib/usage/observe";
 
 /**
  * What a discovery worker does between taking the lease and recording what
@@ -208,8 +209,27 @@ export async function executeDiscovery(
   // any of this, which is a persistence detail rather than a statement about
   // what the account used.
   //
-  // Observation only: it cannot refuse and it cannot throw.
-  await recordUsageObservation(userId, "discovery");
+  // **Enforced, at the same point it was always counted.** A run past the
+  // period's allowance searches nothing and asks no model.
+  let discoveryRefusal: AiAllowanceRefusal | null;
+  try {
+    discoveryRefusal = await reserveDiscoveryRun(userId);
+  } catch (error) {
+    console.error("[worker] recommendation allowance could not be read", routineId, error);
+    return { status: "failed", errorMessage: SEARCH_FAILED, call: null };
+  }
+
+  if (discoveryRefusal !== null) {
+    console.warn(
+      `[worker] recommendation allowance refused — reason=${discoveryRefusal}`,
+      routineId,
+    );
+    return {
+      status: "failed",
+      errorMessage: discoveryAllowanceRunMessage(discoveryRefusal),
+      call: null,
+    };
+  }
 
   let candidates: DiscoveryCandidate[];
   try {

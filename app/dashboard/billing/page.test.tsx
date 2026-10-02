@@ -172,13 +172,15 @@ describe("the three plans", () => {
     const html = await render();
 
     // Lite
-    expect(html).toContain("2 active Workers");
-    expect(html).toContain("30 AI runs a month");
+    expect(html).toContain("Workers active at once: 2");
+    expect(html).toContain("AI processing: 30 a month");
+    expect(html).toContain("Manual runs: 20 a month");
+    expect(html).toContain("Recommendation runs: 10 a month");
     expect(html).toContain("7 days of run history");
     expect(html).toContain("Email from one Worker");
     // Standard and Pro
-    expect(html).toContain("8 active Workers");
-    expect(html).toContain("15 active Workers");
+    expect(html).toContain("Workers active at once: 8");
+    expect(html).toContain("Workers active at once: 15");
     expect(html).toContain("Email from every Worker");
   });
 
@@ -1182,4 +1184,71 @@ describe("a purchase during a trial", () => {
       ]);
     },
   );
+});
+
+/**
+ * What each line on the cards counts, said once beneath them.
+ *
+ * **Shown wherever the plans are**, in both languages, and in the order the
+ * cards list the allowances.
+ */
+describe("about your allowances", () => {
+  it("explains all four in English", async () => {
+    const html = await render();
+
+    expect(html).toContain("About your allowances");
+    expect(html).toContain("Paused and draft workers do not count");
+    expect(html).toContain("up to 20 workers in total");
+    expect(html).toContain("not the same as the number of worker runs");
+    expect(html).toContain("Scheduled runs do not use this allowance");
+    expect(html).toContain("also uses a manual run");
+    expect(html).toContain("also uses AI processing");
+  });
+
+  it("explains all four in Japanese, with the same names as the cards", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+
+    const html = await render();
+
+    expect(html).toContain("利用枠について");
+    for (const name of ["同時に稼働できるWorker数", "AI処理", "手動実行", "おすすめ探し"]) {
+      expect(html).toContain(name);
+    }
+    expect(html).toContain("停止中・下書きのWorkerは含みません");
+    expect(html).toContain("Workerの実行回数とは一致しません");
+    expect(html).toContain("定期実行による実行はこの枠には含みません");
+    expect(html).toContain("『手動実行』の枠も使用します");
+    expect(html).not.toContain("ディスカバリー");
+    expect(html).not.toContain("AI 実行");
+  });
+
+  it("orders the explanations as the cards order the allowances", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+
+    const html = await render();
+    const guide = html.slice(html.indexOf("利用枠について"));
+
+    const positions = ["同時に稼働できるWorker数", "AI処理", "手動実行", "おすすめ探し"].map(
+      (name) => guide.indexOf(`<dt class="font-medium">${name}</dt>`),
+    );
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  });
+
+  it("keeps the trial purchase notice alongside it", async () => {
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(true);
+
+    const html = await render(onPlan("trial", "trialing", false));
+
+    expect(html).toContain("ends the free trial at that point");
+    expect(html).toContain("About your allowances");
+  });
+
+  it("is not shown to an account that already pays", async () => {
+    mocks.mayOfferPurchase.mockReturnValue(false);
+
+    const html = await render(onPlan("lite", "active", true));
+
+    expect(html).not.toContain("About your allowances");
+  });
 });

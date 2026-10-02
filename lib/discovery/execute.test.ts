@@ -43,15 +43,25 @@ const allowance = vi.hoisted(() => ({
   reserveAiProcessing: vi.fn<
     (userId: string) => Promise<"exhausted" | "unavailable" | null>
   >(async () => null),
+  // **Recorded where the run was always counted.** The period allowance is now
+  // taken rather than observed; the counting tests below read the same record.
+  reserveDiscoveryRun: vi.fn<
+    (userId: string) => Promise<"exhausted" | "unavailable" | null>
+  >(async (userId) => {
+    mocks.recordUsageObservation(userId, "discovery");
+    return null;
+  }),
 }));
 
 vi.mock("@/lib/usage/ai-allowance", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/usage/ai-allowance")>()),
   reserveAiProcessing: allowance.reserveAiProcessing,
+  reserveDiscoveryRun: allowance.reserveDiscoveryRun,
 }));
 
 beforeEach(() => {
   allowance.reserveAiProcessing.mockReset();
+  allowance.reserveDiscoveryRun.mockReset();
 });
 
 vi.mock("@/lib/discovery/repository", () => ({
@@ -978,24 +988,25 @@ describe("a discovery run — counting it against the month", () => {
   });
 
   /**
-   * **Observation must not change what it observes.** What was chosen is still
-   * chosen when the month could not be counted.
+   * **The period allowance is enforced where it was counted.** A run past it
+   * leaves a finished row saying so, and nothing else.
    */
-  it("still finishes the run when the month cannot be counted", async () => {
+  it("searches nothing and asks no model when the period allowance is spent", async () => {
     available([candidate("a")]);
-    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
-    mocks.recordUsageObservation.mockResolvedValue({
-      recorded: false,
-      reason: "unavailable",
-    });
+    allowance.reserveDiscoveryRun.mockResolvedValueOnce("exhausted");
 
     await runRoutine(ROUTINE_ID);
 
-    expect(mocks.recordSeenItems).toHaveBeenCalledTimes(1);
+    expect(mocks.search).not.toHaveBeenCalled();
+    expect(mocks.select).not.toHaveBeenCalled();
+    expect(allowance.reserveAiProcessing).not.toHaveBeenCalled();
     const lastWrite = mocks.runUpdate.mock.calls[
       mocks.runUpdate.mock.calls.length - 1
     ][0].data;
-    expect(lastWrite).toMatchObject({ status: "completed" });
+    expect(lastWrite).toMatchObject({
+      status: "failed",
+      errorMessage: "Recommendation run limit reached.",
+    });
   });
 });
 
@@ -1119,22 +1130,23 @@ describe("when a discovery run starts consuming", () => {
     expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
   });
 
-  /** Observation must not change what it observes. */
-  it("still finishes the run when the month cannot be counted", async () => {
+  /** Enforced, not only observed. */
+  it("searches nothing and asks no model when the period allowance is spent", async () => {
     available([candidate("a")]);
-    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
-    mocks.recordUsageObservation.mockResolvedValue({
-      recorded: false,
-      reason: "unavailable",
-    });
+    allowance.reserveDiscoveryRun.mockResolvedValueOnce("exhausted");
 
     await runRoutine(ROUTINE_ID);
 
-    expect(mocks.recordSeenItems).toHaveBeenCalledTimes(1);
+    expect(mocks.search).not.toHaveBeenCalled();
+    expect(mocks.select).not.toHaveBeenCalled();
+    expect(allowance.reserveAiProcessing).not.toHaveBeenCalled();
     const lastWrite = mocks.runUpdate.mock.calls[
       mocks.runUpdate.mock.calls.length - 1
     ][0].data;
-    expect(lastWrite).toMatchObject({ status: "completed" });
+    expect(lastWrite).toMatchObject({
+      status: "failed",
+      errorMessage: "Recommendation run limit reached.",
+    });
   });
 });
 
@@ -1228,6 +1240,80 @@ describe("a discovery run — the AI processing allowance", () => {
 
     expect(finished.status).toBe("failed");
     expect(finished.errorMessage).toBe(AI_ALLOWANCE_EXHAUSTED_MESSAGE);
+    expect(mocks.notify).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The period allowance for recommendation runs.
+ *
+ * **Taken where a run was always counted**: once its search is known to exist,
+ * before the search, for manual and scheduled runs alike. A run past the
+ * allowance searches nothing, asks no model, and is not a failure anybody is
+ * emailed about.
+ */
+describe("a discovery run — the period allowance", () => {
+  it("takes one recommendation run for the owner before the search", async () => {
+    available([candidate("a")]);
+    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
+
+    await executeDiscovery(ROUTINE_ID, USER_ID, { aiProvider });
+
+    expect(allowance.reserveDiscoveryRun).toHaveBeenCalledTimes(1);
+    expect(allowance.reserveDiscoveryRun).toHaveBeenCalledWith(USER_ID);
+    expect(allowance.reserveDiscoveryRun.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.search.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("takes nothing when the worker has no search configured", async () => {
+    mocks.getSource.mockResolvedValue(null);
+
+    await executeDiscovery(ROUTINE_ID, USER_ID, { aiProvider });
+
+    expect(allowance.reserveDiscoveryRun).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["exhausted", "Recommendation run limit reached."],
+    ["unavailable", "Recommendations are not available for this account."],
+  ] as const)("searches nothing when the allowance is %s", async (refusal, message) => {
+    available([candidate("a")]);
+    allowance.reserveDiscoveryRun.mockResolvedValueOnce(refusal);
+
+    const result = await executeDiscovery(ROUTINE_ID, USER_ID, { aiProvider });
+
+    expect(result).toEqual({ status: "failed", errorMessage: message, call: null });
+    expect(mocks.search).not.toHaveBeenCalled();
+    expect(mocks.select).not.toHaveBeenCalled();
+    expect(allowance.reserveAiProcessing).not.toHaveBeenCalled();
+  });
+
+  it("searches nothing when the allowance cannot be read", async () => {
+    available([candidate("a")]);
+    allowance.reserveDiscoveryRun.mockRejectedValueOnce(new Error("connection lost"));
+
+    const result = await executeDiscovery(ROUTINE_ID, USER_ID, { aiProvider });
+
+    expect(result).toMatchObject({ status: "failed", call: null });
+    expect(mocks.search).not.toHaveBeenCalled();
+  });
+
+  it("finishes the run and sends nothing when the allowance refused", async () => {
+    mocks.routineFind.mockResolvedValue({
+      userId: USER_ID,
+      name: "Recommendations",
+      prompt: "",
+      kind: "discovery",
+      emailNotificationsEnabled: true,
+    });
+    available([candidate("a")]);
+    allowance.reserveDiscoveryRun.mockResolvedValueOnce("exhausted");
+
+    const finished = await runRoutine(ROUTINE_ID);
+
+    expect(finished.status).toBe("failed");
+    expect(finished.errorMessage).toBe("Recommendation run limit reached.");
     expect(mocks.notify).not.toHaveBeenCalled();
   });
 });

@@ -53,11 +53,6 @@ describe("the dictionaries", () => {
         // "long-form" describes a shape rather than naming a place.
         "creator.channel.x",
         "creator.channel.reddit",
-        // The feature's own name, as the dashboard and the hire form already
-        // write it. A Japanese reader looking for their Discovery Worker is
-        // looking for "Discovery"; translating only the usage label would
-        // leave one screen calling it something no other screen does.
-        "trial.usage.discovery",
         // The plans' own names. A plan is called Lite on an invoice, in the
         // provider's dashboard and in every conversation about it, so a
         // Japanese rendering would be a fourth name for the same thing. Trial
@@ -67,10 +62,6 @@ describe("the dictionaries", () => {
         "pricing.plan.standard",
         "pricing.plan.pro",
         "pricing.plan.beta",
-        // The product's own term for a worker that is running, as the workers
-        // list and the usage screens already write it. A Japanese reader looking
-        // at their Active Workers is looking for "Active".
-        "dashboard.home.activeWorkers",
       ].sort(),
     );
   });

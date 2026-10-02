@@ -250,6 +250,18 @@ describe("the two things it offers to do", () => {
     expect(html).toContain(t("ja", "dashboard.home.openCreator"));
     expect(html).toContain(t("ja", "dashboard.home.createWorker"));
   });
+
+  /** The Plans page's names, not a third set of words for the same counters. */
+  it("names the counters as Plans does", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+
+    const html = await render();
+
+    expect(html).toContain("同時に稼働できるWorker数");
+    expect(html).toContain("AI処理");
+    expect(html).not.toContain("Active Workers");
+    expect(html).not.toContain("AI 実行");
+  });
 });
 
 describe("the three numbers", () => {

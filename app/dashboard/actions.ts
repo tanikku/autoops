@@ -16,8 +16,11 @@ import { deleteRoutine, getRoutine } from "@/lib/routines";
 import { isRunPersistenceError } from "@/lib/runs";
 import { DEFAULT_LANGUAGE, t } from "@/lib/i18n";
 import { requireUserId } from "@/lib/session";
-import { aiAllowanceRefusalOfRun } from "@/lib/usage/ai-allowance";
-import { recordUsageObservation } from "@/lib/usage/observe";
+import {
+  type AiAllowanceRefusal,
+  allowanceRefusalOfRun,
+  reserveManualRun,
+} from "@/lib/usage/ai-allowance";
 import { getUserLanguage } from "@/lib/users";
 import type { ActionResult } from "@/types";
 
@@ -229,9 +232,32 @@ export async function runRoutineAction(
     // does not matter: a page that had not moved and a provider that failed
     // both still spent the operation somebody asked for.
     //
-    // **Observation only.** It cannot refuse and it cannot throw; a month's
-    // counters are not something a button press may fail on.
-    await recordUsageObservation(userId, "manualRun");
+    // **Enforced here, where it was always counted.** A period that is spent
+    // starts nothing; an account that may not run at all is told so in the
+    // words the run itself would have used. Not knowing whether there is room
+    // fails closed, the same as the hourly allowances above.
+    let manualRefusal: AiAllowanceRefusal | null;
+    try {
+      manualRefusal = await reserveManualRun(userId);
+    } catch (error) {
+      console.error("[worker] manual run allowance could not be read", error);
+      return {
+        status: "error",
+        message: t(language, "run.action.couldNotStart", { name: routine.name }),
+      };
+    }
+
+    if (manualRefusal !== null) {
+      return {
+        status: "error",
+        message: t(
+          language,
+          manualRefusal === "exhausted"
+            ? "run.action.manualRunLimitReached"
+            : "run.action.entitlementBlocked",
+        ),
+      };
+    }
 
     run = await enqueueRoutine(routineId);
   } catch (error) {
@@ -295,19 +321,23 @@ export async function runRoutineAction(
   revalidatePath("/dashboard/workers");
   revalidatePath("/dashboard");
 
-  // **Refused by the AI processing allowance, not by anything that went
-  // wrong.** The run is `failed` only because a run has no other way to
-  // finish; the person is told about the allowance rather than the worker.
-  const refusal = aiAllowanceRefusalOfRun(run);
+  // **Refused by an allowance, not by anything that went wrong.** The run is
+  // `failed` only because a run has no other way to finish; the person is
+  // told about the allowance rather than the worker.
+  const refusal = allowanceRefusalOfRun(run);
 
   if (refusal !== null) {
     return {
       status: "error",
       message: t(
         language,
-        refusal === "exhausted"
-          ? "ai.allowance.exhausted"
-          : "ai.allowance.unavailable",
+        refusal.kind === "discovery"
+          ? refusal.refusal === "exhausted"
+            ? "run.action.discoveryLimitReached"
+            : "run.action.entitlementBlocked"
+          : refusal.refusal === "exhausted"
+            ? "ai.allowance.exhausted"
+            : "ai.allowance.unavailable",
       ),
     };
   }

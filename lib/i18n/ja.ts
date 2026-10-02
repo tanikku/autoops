@@ -34,8 +34,8 @@ export const ja: Record<TranslationKey, string> = {
   "dashboard.home.openCreator": "Creator を開く",
   "dashboard.home.createWorker": "Worker を作成",
   "dashboard.home.overview": "概要",
-  "dashboard.home.activeWorkers": "Active Workers",
-  "dashboard.home.aiRuns": "AI 実行",
+  "dashboard.home.activeWorkers": "同時に稼働できるWorker数",
+  "dashboard.home.aiRuns": "AI処理",
   "dashboard.home.currentUsagePeriod": "現在の利用期間",
   "dashboard.home.currentPlan": "現在のプラン",
   "dashboard.home.noPlan": "プランなし",
@@ -680,6 +680,10 @@ export const ja: Record<TranslationKey, string> = {
   "run.action.alreadyRunning": "「{name}」は実行中です。",
   "run.action.entitlementBlocked":
     "現在の利用状態では実行できません。Plansでプランの状態を確認してください。",
+  "run.action.manualRunLimitReached":
+    "この期間の手動実行の上限に達しました。Plansで利用枠を確認してください。",
+  "run.action.discoveryLimitReached":
+    "この期間のおすすめ探しの上限に達しました。Plansで利用枠を確認してください。",
   "ai.allowance.exhausted":
     "AI 処理の利用上限に達しました。Plansで利用枠を確認してください。",
   "ai.allowance.unavailable":
@@ -761,9 +765,9 @@ export const ja: Record<TranslationKey, string> = {
   "trial.title": "トライアル",
   "trial.daysRemaining": "残り {days}日",
   "trial.usage.aiProcessing": "AI処理",
-  "trial.usage.activeWorkers": "Worker",
+  "trial.usage.activeWorkers": "同時に稼働できるWorker数",
   "trial.usage.manualRun": "手動実行",
-  "trial.usage.discovery": "Discovery",
+  "trial.usage.discovery": "おすすめ探し",
   "trial.status.approaching": "上限に近づいています",
   "trial.status.reached": "上限に達しています",
   "trial.status.over": "上限を超えています",
@@ -819,10 +823,10 @@ export const ja: Record<TranslationKey, string> = {
   "pricing.plan.pro": "Pro",
   "pricing.plan.beta": "Beta",
   "pricing.price.monthly": "月額 {amount} 円",
-  "pricing.allowance.activeWorkers": "同時に Active な Worker {limit} 件",
-  "pricing.allowance.aiProcessing": "AI 実行 月 {limit} 回",
+  "pricing.allowance.activeWorkers": "同時に稼働できるWorker数 {limit} 件",
+  "pricing.allowance.aiProcessing": "AI処理 月 {limit} 回",
   "pricing.allowance.manualRun": "手動実行 月 {limit} 回",
-  "pricing.allowance.discovery": "ディスカバリー実行 月 {limit} 回",
+  "pricing.allowance.discovery": "おすすめ探し 月 {limit} 回",
   "pricing.allowance.emailOneWorker": "1 つの Worker からメール通知",
   "pricing.allowance.emailAllWorkers": "すべての Worker からメール通知",
   "pricing.allowance.historyDays": "実行履歴 {days} 日分",
@@ -864,6 +868,19 @@ export const ja: Record<TranslationKey, string> = {
   "checkout.return.goToPlans": "プランを確認",
   "pricing.checkoutInProgress":
     "お支払い手続きが進行中です。お支払いが完了している場合、この画面への反映まで数分かかることがあります。",
+  "pricing.allowanceGuide.heading": "利用枠について",
+  "pricing.allowanceGuide.activeWorkers.title": "同時に稼働できるWorker数",
+  "pricing.allowanceGuide.activeWorkers.body":
+    "同時に有効化できるWorkerの数です。停止中・下書きのWorkerは含みません。保存できるWorkerは合計20件までです。",
+  "pricing.allowanceGuide.aiProcessing.title": "AI処理",
+  "pricing.allowanceGuide.aiProcessing.body":
+    "AIへの生成・要約・分析などの依頼回数です。Workerの実行回数とは一致しません。Web監視は変化があった場合、おすすめ探しは新しい候補があった場合など、実際にAI処理が必要なときに消費します。Creatorなど一部の操作では、1回の操作で複数回分を使用する場合があります。",
+  "pricing.allowanceGuide.manualRun.title": "手動実行",
+  "pricing.allowanceGuide.manualRun.body":
+    "Workerを手動で実行できる回数です。定期実行による実行はこの枠には含みません。",
+  "pricing.allowanceGuide.discovery.title": "おすすめ探し",
+  "pricing.allowanceGuide.discovery.body":
+    "『おすすめを探す』Workerを実行できる回数です。手動実行した場合は『手動実行』の枠も使用します。また、新しい候補についてAIによる選定を行った場合は『AI処理』の枠も使用します。",
   "pricing.trialPurchaseNotice":
     "トライアル期間中に有料プランを始めると、その時点で無料トライアルは終了します。残りのトライアル期間は引き継がれず、有料プランの利用枠は 0 から始まります。",
   "pricing.guardrail.atLimit.title": "このプランの上限ちょうどになります",

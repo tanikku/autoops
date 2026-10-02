@@ -55,7 +55,7 @@ export const en = {
    * something with a screen of its own, so the words say what they are rather
    * than summarising a state the page is not the authority on.
    *
-   * **"AI runs", never "AI runs this month".** The counters behind it cover the
+   * **"AI processing", never "AI processing this month".** The counters behind it cover the
    * account's current usage period, which begins when the account first used
    * something in it — so a monthly total is exactly what the number is not for
    * an account whose period started late. `currentUsagePeriod` says what it is
@@ -68,8 +68,8 @@ export const en = {
   "dashboard.home.openCreator": "Open Creator",
   "dashboard.home.createWorker": "Create a Worker",
   "dashboard.home.overview": "Overview",
-  "dashboard.home.activeWorkers": "Active Workers",
-  "dashboard.home.aiRuns": "AI runs",
+  "dashboard.home.activeWorkers": "Workers active at once",
+  "dashboard.home.aiRuns": "AI processing",
   "dashboard.home.currentUsagePeriod": "Current usage period",
   "dashboard.home.currentPlan": "Current plan",
   /**
@@ -1216,6 +1216,10 @@ Notes for the report:
    * a model on the account's behalf: a worker run, a draft and a Creator
    * analysis. Not the hourly limits, which say that waiting works.
    */
+  "run.action.manualRunLimitReached":
+    "You've reached this period's manual run limit. Check Plans for your allowance.",
+  "run.action.discoveryLimitReached":
+    "You've reached this period's recommendation run limit. Check Plans for your allowance.",
   "ai.allowance.exhausted":
     "You've reached your AI processing limit for this period. Check Plans for your allowance.",
   "ai.allowance.unavailable":
@@ -1372,9 +1376,9 @@ Notes for the report:
   "trial.title": "Trial",
   "trial.daysRemaining": "{days} days left",
   "trial.usage.aiProcessing": "AI processing",
-  "trial.usage.activeWorkers": "Workers",
+  "trial.usage.activeWorkers": "Workers active at once",
   "trial.usage.manualRun": "Manual runs",
-  "trial.usage.discovery": "Discovery",
+  "trial.usage.discovery": "Recommendations",
   "trial.status.approaching": "Approaching the limit",
   "trial.status.reached": "Limit reached",
   "trial.status.over": "Over the limit",
@@ -1505,10 +1509,10 @@ Notes for the report:
   "pricing.plan.pro": "Pro",
   "pricing.plan.beta": "Beta",
   "pricing.price.monthly": "¥{amount} / month",
-  "pricing.allowance.activeWorkers": "{limit} active Workers",
-  "pricing.allowance.aiProcessing": "{limit} AI runs a month",
-  "pricing.allowance.manualRun": "{limit} hand-started runs a month",
-  "pricing.allowance.discovery": "{limit} discovery runs a month",
+  "pricing.allowance.activeWorkers": "Workers active at once: {limit}",
+  "pricing.allowance.aiProcessing": "AI processing: {limit} a month",
+  "pricing.allowance.manualRun": "Manual runs: {limit} a month",
+  "pricing.allowance.discovery": "Recommendation runs: {limit} a month",
   "pricing.allowance.emailOneWorker": "Email from one Worker",
   "pricing.allowance.emailAllWorkers": "Email from every Worker",
   "pricing.allowance.historyDays": "{days} days of run history",
@@ -1619,6 +1623,19 @@ Notes for the report:
    * purchase does to the trial is decided in `lib/billing` and is not
    * restated anywhere else on the page.
    */
+  "pricing.allowanceGuide.heading": "About your allowances",
+  "pricing.allowanceGuide.activeWorkers.title": "Workers active at once",
+  "pricing.allowanceGuide.activeWorkers.body":
+    "How many workers can be switched on at the same time. Paused and draft workers do not count. You can keep up to 20 workers in total.",
+  "pricing.allowanceGuide.aiProcessing.title": "AI processing",
+  "pricing.allowanceGuide.aiProcessing.body":
+    "How many times an AI is asked to generate, summarize or analyze something for you. This is not the same as the number of worker runs: a page watch uses it only when the page changed, and a recommendation search only when there are new candidates to choose from. Some actions, such as a Creator analysis, can use more than one at a time.",
+  "pricing.allowanceGuide.manualRun.title": "Manual runs",
+  "pricing.allowanceGuide.manualRun.body":
+    "How many times you can run a worker by hand. Scheduled runs do not use this allowance.",
+  "pricing.allowanceGuide.discovery.title": "Recommendation runs",
+  "pricing.allowanceGuide.discovery.body":
+    "How many times a \"Find recommendations\" worker can run. Running one by hand also uses a manual run, and choosing among new candidates with AI also uses AI processing.",
   "pricing.trialPurchaseNotice":
     "Starting a paid plan during your trial ends the free trial at that point. The remaining trial days are not carried over, and the paid plan's allowance starts from zero.",
   "pricing.guardrail.atLimit.title": "You would be at this plan's limit",

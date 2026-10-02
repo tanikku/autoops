@@ -22,7 +22,10 @@ const {
   aiAllowanceRefusalOf,
   aiAllowanceRefusalOfRun,
   aiAllowanceRunMessage,
+  allowanceRefusalOfRun,
   reserveAiProcessing,
+  reserveDiscoveryRun,
+  reserveManualRun,
 } = await import("@/lib/usage/ai-allowance");
 
 beforeEach(() => {
@@ -106,5 +109,66 @@ describe("a refusal recorded on a run", () => {
     [{ status: "running", errorMessage: null }],
   ])("is null for any other outcome (%o)", (run) => {
     expect(aiAllowanceRefusalOfRun(run)).toBeNull();
+  });
+});
+
+describe("the period allowances for runs", () => {
+  it("asks for one manual run", async () => {
+    await reserveManualRun("user-1");
+
+    expect(spendAllowances).toHaveBeenCalledWith({
+      userId: "user-1",
+      items: [{ kind: "manualRun", units: 1 }],
+    });
+  });
+
+  it("asks for one recommendation run", async () => {
+    await reserveDiscoveryRun("user-1");
+
+    expect(spendAllowances).toHaveBeenCalledWith({
+      userId: "user-1",
+      items: [{ kind: "discovery", units: 1 }],
+    });
+  });
+
+  it.each([
+    [{ granted: true }, null],
+    [{ granted: false, reason: "exhausted", kind: "manualRun", scope: "period" }, "exhausted"],
+    [{ granted: false, reason: "not-entitled" }, "unavailable"],
+    [{ granted: false, reason: "not-counted" }, "unavailable"],
+  ])("answers %o as %o", async (result, expected) => {
+    spendAllowances.mockResolvedValue(result);
+
+    expect(await reserveManualRun("user-1")).toBe(expected);
+    expect(await reserveDiscoveryRun("user-1")).toBe(expected);
+  });
+});
+
+describe("which allowance refused a run", () => {
+  it.each([
+    ["AI processing limit reached.", { kind: "aiProcessing", refusal: "exhausted" }],
+    [
+      "AI processing is not available for this account.",
+      { kind: "aiProcessing", refusal: "unavailable" },
+    ],
+    ["Recommendation run limit reached.", { kind: "discovery", refusal: "exhausted" }],
+    [
+      "Recommendations are not available for this account.",
+      { kind: "discovery", refusal: "unavailable" },
+    ],
+  ])("reads %o", (errorMessage, expected) => {
+    expect(allowanceRefusalOfRun({ status: "failed", errorMessage })).toEqual(expected);
+  });
+
+  it("is null for any other outcome", () => {
+    expect(
+      allowanceRefusalOfRun({ status: "failed", errorMessage: "the model took too long" }),
+    ).toBeNull();
+    expect(
+      allowanceRefusalOfRun({
+        status: "completed",
+        errorMessage: "Recommendation run limit reached.",
+      }),
+    ).toBeNull();
   });
 });

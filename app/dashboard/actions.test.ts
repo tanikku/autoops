@@ -31,6 +31,28 @@ const mocks = vi.hoisted(() => ({
   recordUsageObservation: vi.fn(),
 }));
 
+// The period allowance for a manual run is granted unless a case says otherwise;
+// what it does against a database is `lib/usage/consume.ts`'s own suite.
+const allowance = vi.hoisted(() => ({
+  // **Recorded where the run was always counted.** The period allowance is now
+  // taken rather than observed; the counting tests below read the same record.
+  reserveManualRun: vi.fn<
+    (userId: string) => Promise<"exhausted" | "unavailable" | null>
+  >(async (userId) => {
+    mocks.recordUsageObservation(userId, "manualRun");
+    return null;
+  }),
+}));
+
+vi.mock("@/lib/usage/ai-allowance", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/usage/ai-allowance")>()),
+  reserveManualRun: allowance.reserveManualRun,
+}));
+
+beforeEach(() => {
+  allowance.reserveManualRun.mockReset();
+});
+
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("@/lib/session", () => ({ requireUserId: mocks.requireUserId }));
 vi.mock("@/lib/usage/observe", () => ({
@@ -1266,19 +1288,72 @@ describe("runRoutineAction — counting the run against the month", () => {
   });
 
   /**
-   * **Observation must not change what it observes.** A month's counters are
-   * not something a button press may fail on.
+   * **Enforced, not only observed.** A spent period starts nothing and says so;
+   * an account that may not run is told so in the run's own words; not knowing
+   * fails closed. None of them is an unexpected error.
    */
-  it("starts the run even when the month cannot be counted", async () => {
-    mocks.recordUsageObservation.mockResolvedValue({
-      recorded: false,
-      reason: "unavailable",
-    });
+  it("starts nothing when the period's manual runs are spent", async () => {
+    allowance.reserveManualRun.mockResolvedValueOnce("exhausted");
 
     const state = await runRoutineAction(null, form("worker-1"));
 
-    expect(mocks.enqueueRoutine).toHaveBeenCalledTimes(1);
-    expect(state?.status).toBe("success");
+    expect(mocks.enqueueRoutine).not.toHaveBeenCalled();
+    expect(state).toEqual({
+      status: "error",
+      message:
+        "You've reached this period's manual run limit. Check Plans for your allowance.",
+    });
+  });
+
+  it("says the account may not run when the allowance is unavailable", async () => {
+    allowance.reserveManualRun.mockResolvedValueOnce("unavailable");
+
+    const state = await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.enqueueRoutine).not.toHaveBeenCalled();
+    expect(state?.message).toBe(
+      "This run isn't available with your current plan status. Check Plans to continue.",
+    );
+  });
+
+  it("starts nothing when the allowance cannot be read", async () => {
+    allowance.reserveManualRun.mockRejectedValueOnce(new Error("connection lost"));
+
+    const state = await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.enqueueRoutine).not.toHaveBeenCalled();
+    expect(state?.status).toBe("error");
+  });
+
+  /** The hourly limit is a separate rule and still answers first. */
+  it("leaves the hourly limit as it was, ahead of the period allowance", async () => {
+    mocks.consumeManualRunQuota.mockResolvedValue(false);
+
+    const state = await runRoutineAction(null, form("worker-1"));
+
+    expect(allowance.reserveManualRun).not.toHaveBeenCalled();
+    expect(state?.message).toBe("Manual run limit reached. Try again later.");
+  });
+
+  it("releases the slot when the period allowance refuses", async () => {
+    allowance.reserveManualRun.mockResolvedValueOnce("exhausted");
+
+    await runRoutineAction(null, form("worker-1"));
+
+    expect(mocks.releaseManualRunSlot).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a recommendation run refused by its period allowance as such", async () => {
+    mocks.enqueueRoutine.mockResolvedValue({
+      status: "failed",
+      errorMessage: "Recommendation run limit reached.",
+    });
+
+    expect(await runRoutineAction(null, form("worker-1"))).toEqual({
+      status: "error",
+      message:
+        "You've reached this period's recommendation run limit. Check Plans for your allowance.",
+    });
   });
 });
 

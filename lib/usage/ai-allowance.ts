@@ -35,9 +35,44 @@ export type AiAllowanceRefusal =
 export async function reserveAiProcessing(
   userId: string,
 ): Promise<AiAllowanceRefusal | null> {
+  return reserveOne(userId, "aiProcessing");
+}
+
+/**
+ * Takes one manual run from the account's period, or says why it cannot.
+ *
+ * **Taken where the run was accepted, as it was always counted.** A run that
+ * then fails, or is refused by its AI allowance, has still spent it. Separate
+ * from the hourly limit in `lib/rate-limit.ts`, which bounds bursts.
+ */
+export async function reserveManualRun(
+  userId: string,
+): Promise<AiAllowanceRefusal | null> {
+  return reserveOne(userId, "manualRun");
+}
+
+/**
+ * Takes one recommendation run from the account's period, or says why it
+ * cannot. Counted where a discovery run was always counted — once its search is
+ * known to exist, before the search — for manual and scheduled runs alike.
+ */
+export async function reserveDiscoveryRun(
+  userId: string,
+): Promise<AiAllowanceRefusal | null> {
+  return reserveOne(userId, "discovery");
+}
+
+/**
+ * **The one place production spends an allowance.** Every kind goes through
+ * the same atomic primitive, so a limit means the same thing for each of them.
+ */
+async function reserveOne(
+  userId: string,
+  kind: "aiProcessing" | "manualRun" | "discovery",
+): Promise<AiAllowanceRefusal | null> {
   const result = await spendAllowances({
     userId,
-    items: [{ kind: "aiProcessing", units: 1 }],
+    items: [{ kind, units: 1 }],
   });
 
   if (result.granted) {
@@ -95,5 +130,41 @@ export function aiAllowanceRefusalOfRun(run: {
 
   return run.errorMessage === AI_ALLOWANCE_UNAVAILABLE_MESSAGE
     ? "unavailable"
+    : null;
+}
+
+/** What a recommendation run refused by its period allowance says for itself. */
+export const DISCOVERY_ALLOWANCE_EXHAUSTED_MESSAGE =
+  "Recommendation run limit reached.";
+export const DISCOVERY_ALLOWANCE_UNAVAILABLE_MESSAGE =
+  "Recommendations are not available for this account.";
+
+export function discoveryAllowanceRunMessage(refusal: AiAllowanceRefusal): string {
+  return refusal === "exhausted"
+    ? DISCOVERY_ALLOWANCE_EXHAUSTED_MESSAGE
+    : DISCOVERY_ALLOWANCE_UNAVAILABLE_MESSAGE;
+}
+
+/** Which allowance refused a finished run, and how — or null for any other outcome. */
+export function allowanceRefusalOfRun(run: {
+  readonly status: string;
+  readonly errorMessage: string | null;
+}): { readonly kind: "aiProcessing" | "discovery"; readonly refusal: AiAllowanceRefusal } | null {
+  const ai = aiAllowanceRefusalOfRun(run);
+
+  if (ai !== null) {
+    return { kind: "aiProcessing", refusal: ai };
+  }
+
+  if (run.status !== "failed") {
+    return null;
+  }
+
+  if (run.errorMessage === DISCOVERY_ALLOWANCE_EXHAUSTED_MESSAGE) {
+    return { kind: "discovery", refusal: "exhausted" };
+  }
+
+  return run.errorMessage === DISCOVERY_ALLOWANCE_UNAVAILABLE_MESSAGE
+    ? { kind: "discovery", refusal: "unavailable" }
     : null;
 }

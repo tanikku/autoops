@@ -92,6 +92,25 @@ describe("a trial in its ordinary state", () => {
     expect(renderedText(activeView(), "ja")).toContain("AI処理");
   });
 
+  /** The same four names the Plans page uses, so no screen calls them otherwise. */
+  it("uses the Plans page's names for all four allowances", () => {
+    const en = renderedText(activeView());
+    const ja = renderedText(activeView(), "ja");
+
+    for (const name of [
+      "Workers active at once",
+      "AI processing",
+      "Manual runs",
+      "Recommendations",
+    ]) {
+      expect(en).toContain(name);
+    }
+    for (const name of ["同時に稼働できるWorker数", "AI処理", "手動実行", "おすすめ探し"]) {
+      expect(ja).toContain(name);
+    }
+    expect(ja).not.toContain("Discovery");
+  });
+
   it("warns about nothing while everything is well under its limit", () => {
     const text = renderedText(activeView());
 
