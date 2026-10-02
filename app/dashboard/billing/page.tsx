@@ -145,6 +145,14 @@ export default async function BillingPage() {
   // button beside it disabled the way an unopened checkout button is.
   const portalOffered = mayOpenBillingPortal(view.current);
   const portalEnabled = portalOffered && checkoutEnabled;
+  // **Only where a purchase would end a running trial, and only where one can be
+  // started.** An ended trial has nothing left to lose, and an account the
+  // rollout has not reached is shown no new sentence about a button it cannot
+  // press.
+  const trialPurchaseNotice =
+    checkoutEnabled &&
+    view.current.kind === "on-plan" &&
+    view.current.state === "trialing";
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -187,12 +195,19 @@ export default async function BillingPage() {
         </section>
 
         {offerPurchase ? (
-          <PlanCards
-            plans={view.plans}
-            activeWorkers={view.activeWorkers}
-            language={language}
-            checkoutEnabled={checkoutEnabled}
-          />
+          <>
+            {trialPurchaseNotice ? (
+              <p className="mt-10 max-w-2xl rounded-md border border-border px-4 py-3 text-sm">
+                {t(language, "pricing.trialPurchaseNotice")}
+              </p>
+            ) : null}
+            <PlanCards
+              plans={view.plans}
+              activeWorkers={view.activeWorkers}
+              language={language}
+              checkoutEnabled={checkoutEnabled}
+            />
+          </>
         ) : (
           /* **Somebody already paying is not shown a plan to buy.** Offering one
              would be offering them a second subscription; what they need is the

@@ -1098,3 +1098,88 @@ describe("the layout", () => {
     expect(buttonProps).toHaveLength(3);
   });
 });
+
+/**
+ * What a purchase does to a trial, said before the purchase.
+ *
+ * **Only to an account whose trial is running and who may buy.** Buying during a
+ * trial ends it, does not carry the remaining days, and starts the paid
+ * allowance from zero; an ended trial has nothing left to lose, an account that
+ * already pays is not offered a plan, and an account outside the rollout cannot
+ * press the button the sentence would be about.
+ */
+describe("a purchase during a trial", () => {
+  // Up to the first apostrophe: the rendered markup escapes it.
+  const NOTICE_EN =
+    "Starting a paid plan during your trial ends the free trial at that point. The remaining trial days are not carried over, and the paid plan";
+
+  it("says what buying does to the running trial, above enabled buttons", async () => {
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(true);
+
+    const html = await render(onPlan("trial", "trialing", false));
+
+    expect(html).toContain(NOTICE_EN);
+    expect(html).toContain("ends the free trial");
+    expect(html).toContain("not carried over");
+    expect(html).toContain("starts from zero");
+    expect(buttonProps).toHaveLength(3);
+    expect(buttonProps.map((props) => props.enabled)).toEqual([true, true, true]);
+  });
+
+  it("says it in Japanese to a Japanese account", async () => {
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(true);
+    mocks.getUserLanguage.mockResolvedValue("ja");
+
+    const html = await render(onPlan("trial", "trialing", false));
+
+    expect(html).toContain("その時点で無料トライアルは終了します");
+    expect(html).toContain("残りのトライアル期間は引き継がれず");
+    expect(html).toContain("0 から始まります");
+  });
+
+  it("says nothing about a trial that has already ended, and still offers the plans", async () => {
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(true);
+
+    const html = await render(onPlan("trial", "trial_expired", false, false));
+
+    expect(html).not.toContain(NOTICE_EN);
+    expect(buttonProps.map((props) => props.enabled)).toEqual([true, true, true]);
+  });
+
+  /** The rollout switch is not bypassed: no sentence, and the buttons stay closed. */
+  it("adds nothing for a trialing account outside the rollout", async () => {
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(false);
+
+    const html = await render(onPlan("trial", "trialing", false));
+
+    expect(html).not.toContain(NOTICE_EN);
+    expect(buttonProps.map((props) => props.enabled)).toEqual([false, false, false]);
+  });
+
+  it("says nothing to an account that already pays, and keeps the portal", async () => {
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(true);
+    mocks.mayOfferPurchase.mockReturnValue(false);
+
+    const html = await render(onPlan("lite", "active", true));
+
+    expect(html).not.toContain(NOTICE_EN);
+    expect(buttonProps).toHaveLength(0);
+    expect(portalProps).toHaveLength(1);
+  });
+
+  it.each([true, false])(
+    "leaves an admin beta account as it was (rollout %s)",
+    async (inRollout) => {
+      mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(inRollout);
+
+      const html = await render(onPlan("beta", "active", false));
+
+      expect(html).not.toContain(NOTICE_EN);
+      expect(buttonProps.map((props) => props.enabled)).toEqual([
+        inRollout,
+        inRollout,
+        inRollout,
+      ]);
+    },
+  );
+});

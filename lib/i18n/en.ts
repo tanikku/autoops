@@ -1614,6 +1614,13 @@ Notes for the report:
    */
   "pricing.checkoutInProgress":
     "A checkout of yours is still open. If you have just paid, your plan can take a few minutes to appear here.",
+  /**
+   * Shown above the plans only to an account in its trial that may buy. What a
+   * purchase does to the trial is decided in `lib/billing` and is not
+   * restated anywhere else on the page.
+   */
+  "pricing.trialPurchaseNotice":
+    "Starting a paid plan during your trial ends the free trial at that point. The remaining trial days are not carried over, and the paid plan's allowance starts from zero.",
   "pricing.guardrail.atLimit.title": "You would be at this plan's limit",
   "pricing.guardrail.atLimit.body":
     "{active} of your Workers are active and this plan allows {limit}. They keep running. To make another Worker active — including one that is paused — you would first have to pause one.",

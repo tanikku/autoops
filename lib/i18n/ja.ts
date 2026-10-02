@@ -864,6 +864,8 @@ export const ja: Record<TranslationKey, string> = {
   "checkout.return.goToPlans": "プランを確認",
   "pricing.checkoutInProgress":
     "お支払い手続きが進行中です。お支払いが完了している場合、この画面への反映まで数分かかることがあります。",
+  "pricing.trialPurchaseNotice":
+    "トライアル期間中に有料プランを始めると、その時点で無料トライアルは終了します。残りのトライアル期間は引き継がれず、有料プランの利用枠は 0 から始まります。",
   "pricing.guardrail.atLimit.title": "このプランの上限ちょうどになります",
   "pricing.guardrail.atLimit.body":
     "現在 Active な Worker は {active} 件で、このプランの上限は {limit} 件です。いま動いている Worker はそのまま動き続けます。新しく Active にする場合（一時停止中のものを戻す場合も含みます）は、先にどれかを一時停止する必要があります。",
