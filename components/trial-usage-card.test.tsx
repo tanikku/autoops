@@ -101,7 +101,7 @@ describe("a trial in its ordinary state", () => {
       "Workers active at once",
       "AI processing",
       "Manual runs",
-      "Recommendations",
+      "Recommendation runs",
     ]) {
       expect(en).toContain(name);
     }

@@ -1378,7 +1378,7 @@ Notes for the report:
   "trial.usage.aiProcessing": "AI processing",
   "trial.usage.activeWorkers": "Workers active at once",
   "trial.usage.manualRun": "Manual runs",
-  "trial.usage.discovery": "Recommendations",
+  "trial.usage.discovery": "Recommendation runs",
   "trial.status.approaching": "Approaching the limit",
   "trial.status.reached": "Limit reached",
   "trial.status.over": "Over the limit",
