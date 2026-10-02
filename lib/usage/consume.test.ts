@@ -888,14 +888,59 @@ describe("spendAllowances — inside a caller's transaction", () => {
 });
 
 describe("spendAllowances — what it does not do", () => {
-  it("has no caller yet", async () => {
-    const { execSync } = await import("node:child_process");
-    const found = execSync(
-      "git grep -l 'spendAllowances' -- app lib components ':!lib/usage/consume.ts' ':!lib/usage/consume.test.ts' || true",
-      { encoding: "utf8" },
-    ).trim();
+  /**
+   * **Production spends through one adapter.** Every path that asks a model
+   * takes its unit through `reserveAiProcessing` (`lib/usage/ai-allowance.ts`);
+   * a second direct caller would be a second answer to what an allowance
+   * refusal means.
+   *
+   * `execFileSync` rather than a shell: the pathspecs are passed as arguments,
+   * so the search means the same on every platform.
+   */
+  it("is called in production code only by the AI processing adapter", async () => {
+    const { execFileSync } = await import("node:child_process");
+    let found = "";
 
-    expect(found).toBe("");
+    try {
+      found = execFileSync(
+        "git",
+        [
+          "grep",
+          "-l",
+          "spendAllowances",
+          "--",
+          "app",
+          "lib",
+          "components",
+          ":(exclude)lib/usage/consume.ts",
+          ":(exclude,glob)**/*.test.ts",
+          ":(exclude,glob)**/*.test.tsx",
+        ],
+        { encoding: "utf8" },
+      );
+    } catch (error) {
+      // `git grep` exits 1 when nothing matches; anything else is a real failure.
+      if ((error as { status?: number }).status !== 1) {
+        throw error;
+      }
+    }
+
+    expect(found.trim().split("\n").filter(Boolean)).toEqual([
+      "lib/usage/ai-allowance.ts",
+    ]);
+  });
+
+  it.each([
+    "lib/runs.ts",
+    "lib/discovery/execute.ts",
+    "lib/creator/service.ts",
+    "app/dashboard/new/actions.ts",
+  ])("is reached from %s through reserveAiProcessing", async (path) => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(path, "utf8");
+
+    expect(source).toContain("reserveAiProcessing");
+    expect(source).not.toContain("spendAllowances");
   });
 
   it("keeps no copy of any plan's numbers", async () => {
