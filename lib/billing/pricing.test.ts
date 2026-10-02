@@ -223,7 +223,7 @@ describe("whether a purchase may be offered", () => {
         entitled: true,
         adminGrantedBeta: true,
       },
-      true,
+      false,
     ],
     [
       "a trial",
@@ -291,22 +291,24 @@ describe("whether a purchase may be offered", () => {
   });
 
   /**
-   * **A granted allowance in a paid-looking state is still offered a plan.** The
-   * three refusals are about a subscription somebody pays for; a grant is not
-   * one, and the account has to be able to buy when it ends.
+   * **The Closed Beta allowance is not offered a plan** while the beta runs,
+   * live or expired — the same refusal `startCheckout` makes.
    */
-  it("still offers a plan to a granted allowance that is active", () => {
-    expect(
-      mayOfferPurchase({
-        kind: "on-plan",
-        plan: "beta",
-        state: "active",
-        purchased: false,
-        entitled: true,
-        adminGrantedBeta: true,
-      }),
-    ).toBe(true);
-  });
+  it.each(["active", "expired"])(
+    "offers no plan to the granted beta allowance in %s",
+    (state) => {
+      expect(
+        mayOfferPurchase({
+          kind: "on-plan",
+          plan: "beta",
+          state,
+          purchased: false,
+          entitled: state === "active",
+          adminGrantedBeta: true,
+        }),
+      ).toBe(false);
+    },
+  );
 });
 
 /**
@@ -364,11 +366,13 @@ describe("whether a checkout is unfinished", () => {
 
   /** It says nothing about what may be bought: that answer is unchanged. */
   it("does not change whether a purchase may be offered", async () => {
+    const without = mayOfferPurchase((await readPricingView(USER)).current);
+
     checkoutAttemptFindUnique.mockResolvedValue(attempt());
 
     const view = await readPricingView(USER);
 
-    expect(mayOfferPurchase(view.current)).toBe(true);
+    expect(mayOfferPurchase(view.current)).toBe(without);
   });
 
   /** Whatever plan the attempt was for, this is one boolean. */

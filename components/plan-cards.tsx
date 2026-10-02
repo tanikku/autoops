@@ -189,12 +189,19 @@ export function PlanCards({
   activeWorkers,
   language,
   checkoutEnabled,
+  purchasable = true,
 }: {
   plans: readonly PricedPlan[];
   activeWorkers: number;
   language: string;
   /** Whether this account may start a checkout at all. Decided on the server. */
   checkoutEnabled: boolean;
+  /**
+   * Whether these plans are on sale to this account at all. When not, the
+   * cards are a price list: no purchase button is rendered, not even a
+   * disabled one.
+   */
+  purchasable?: boolean;
 }) {
   return (
     /* Three across from `lg`, one column on a phone. The middle card carries a
@@ -232,11 +239,13 @@ export function PlanCards({
                 no price, no customer: the action takes who is asking from the
                 session, so there is nothing here that could make it act for
                 somebody else. */}
-            <CheckoutPlanButton
-              plan={plan.id}
-              enabled={checkoutEnabled}
-              labels={checkoutLabels(plan, language)}
-            />
+            {purchasable ? (
+              <CheckoutPlanButton
+                plan={plan.id}
+                enabled={checkoutEnabled}
+                labels={checkoutLabels(plan, language)}
+              />
+            ) : null}
           </CardContent>
         </Card>
       ))}

@@ -158,13 +158,13 @@ export default async function BillingPage() {
   // **The authenticated id, never anything a request supplied.** What crosses
   // into the browser from this is one boolean; the list it was decided from stays
   // in the environment of the server that read it.
-  // **The Closed Beta allowance is not sold to, whatever the rollout list
-  // says.** The action refuses it too; this only keeps a button it would refuse
-  // from looking pressable.
-  const adminGrantedBeta =
-    view.current.kind === "on-plan" && view.current.adminGrantedBeta;
-  const checkoutEnabled =
-    isSandboxCheckoutEnabledForUser(userId) && !adminGrantedBeta;
+  const checkoutEnabled = isSandboxCheckoutEnabledForUser(userId);
+  // **The Closed Beta allowance sees the plans but is offered none of them.**
+  // `mayOfferPurchase` already answers no for it, and the action refuses it
+  // too; the cards stay so the prices and allowances can still be read.
+  const showPlans =
+    offerPurchase ||
+    (view.current.kind === "on-plan" && view.current.adminGrantedBeta);
   // **The same rollout switch opens the portal.** The accounts that have bought
   // anything while checkout is proved are the accounts on that list; everybody
   // else who has something to manage keeps the sentence they had, with the
@@ -176,6 +176,7 @@ export default async function BillingPage() {
   // rollout has not reached is shown no new sentence about a button it cannot
   // press.
   const trialPurchaseNotice =
+    offerPurchase &&
     checkoutEnabled &&
     view.current.kind === "on-plan" &&
     view.current.state === "trialing";
@@ -220,7 +221,7 @@ export default async function BillingPage() {
           ) : null}
         </section>
 
-        {offerPurchase ? (
+        {showPlans ? (
           <>
             {trialPurchaseNotice ? (
               <p className="mt-10 max-w-2xl rounded-md border border-border px-4 py-3 text-sm">
@@ -232,6 +233,7 @@ export default async function BillingPage() {
               activeWorkers={view.activeWorkers}
               language={language}
               checkoutEnabled={checkoutEnabled}
+              purchasable={offerPurchase}
             />
             {/* What each line on the cards counts, said once beneath them. */}
             <section className="mt-10 border-t border-border pt-8">

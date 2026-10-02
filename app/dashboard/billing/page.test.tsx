@@ -1180,13 +1180,15 @@ describe("a purchase during a trial", () => {
 
   /**
    * **The Closed Beta allowance is not sold to, whatever the rollout list
-   * says.** No purchase button can be pressed and no trial sentence is shown;
-   * the action refuses it as well.
+   * says.** It still reads the plans and what they allow, but no purchase
+   * button is rendered at all — not even a disabled one — and no trial
+   * sentence is shown. The action refuses it as well.
    */
   it.each([true, false])(
-    "offers no purchase to an admin beta account (rollout %s)",
+    "shows an admin beta account the plans without a purchase (rollout %s)",
     async (inRollout) => {
       mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(inRollout);
+      mocks.mayOfferPurchase.mockReturnValue(false);
 
       const html = await render({
         current: {
@@ -1200,7 +1202,14 @@ describe("a purchase during a trial", () => {
       });
 
       expect(html).not.toContain(NOTICE_EN);
-      expect(buttonProps.map((props) => props.enabled)).toEqual([false, false, false]);
+      expect(buttonProps).toHaveLength(0);
+      // The price list and its explanation are still there to read.
+      expect(html).toContain("780");
+      expect(html).toContain("Workers active at once: 2");
+      expect(html).toContain("About your allowances");
+      // Not the paid account's "manage your subscription" section.
+      expect(html).not.toContain("Managing your subscription");
+      expect(portalProps).toHaveLength(0);
     },
   );
 });

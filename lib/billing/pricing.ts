@@ -220,6 +220,9 @@ function readCurrent(
  * of what they paid for does not need a plan to buy — they need the provider's
  * own portal, and offering a purchase would be offering them a second
  * subscription. The same three states `startCheckout` refuses.
+ *
+ * **Nor is the Closed Beta allowance sold to** while the beta runs, whatever
+ * the rollout list says — the same refusal `startCheckout` makes.
  */
 export function mayOfferPurchase(current: CurrentPlanView): boolean {
   if (current.kind === "unreadable") {
@@ -228,6 +231,10 @@ export function mayOfferPurchase(current: CurrentPlanView): boolean {
 
   if (current.kind === "none") {
     return true;
+  }
+
+  if (current.adminGrantedBeta) {
+    return false;
   }
 
   return !(
