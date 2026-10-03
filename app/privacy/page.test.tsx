@@ -78,7 +78,7 @@ describe("which language the notice is written in", () => {
     const text = await render();
 
     expect(text).toContain("Privacy");
-    expect(text).toContain("Koqentra is in Closed Beta");
+    expect(text).toContain("Koqentra is currently offered by invitation.");
     expect(mocks.getUserLanguage).not.toHaveBeenCalled();
   });
 
@@ -88,7 +88,7 @@ describe("which language the notice is written in", () => {
     const text = await render();
 
     expect(text).toContain("プライバシー");
-    expect(text).toContain("Koqentraはクローズドベータです");
+    expect(text).toContain("Koqentraは現在、招待制で提供しています。");
     expect(mocks.getUserLanguage).toHaveBeenCalledTimes(1);
     expect(mocks.getUserLanguage).toHaveBeenCalledWith("user-ja");
   });
@@ -98,7 +98,7 @@ describe("which language the notice is written in", () => {
 
     const text = await render();
 
-    expect(text).toContain("Koqentra is in Closed Beta");
+    expect(text).toContain("Koqentra is currently offered by invitation.");
     expect(text).not.toContain("プライバシー");
   });
 
@@ -206,7 +206,7 @@ describe("English notice", () => {
   it("keeps the selling claim without claiming no profile is built", async () => {
     const text = await render();
 
-    expect(text).toContain("does not sell it");
+    expect(text).toContain("does not sell this information");
     expect(text).not.toContain("build a profile of you");
   });
 
@@ -655,5 +655,72 @@ describe("what the tab says", () => {
 
     signedInWith("user-ja", "ja");
     expect((await generateMetadata()).title).toContain("Koqentra");
+  });
+});
+
+/**
+ * What selling changes in this notice.
+ *
+ * **Every service Koqentra hands data to is named**, payments are described
+ * without claiming more than the code does, and the closed-beta "may stop
+ * without notice" wording, which a paid service cannot keep, is gone.
+ */
+describe("the notice for a paid service", () => {
+  it("names each service Koqentra relies on, in English", async () => {
+    signedOut();
+    const body = await render();
+
+    for (const name of ["Google", "Anthropic", "Claude API", "Stripe", "Resend", "Railway"]) {
+      expect(body).toContain(name);
+    }
+    expect(body).toContain("YouTube Data API");
+  });
+
+  it("names each service Koqentra relies on, in Japanese", async () => {
+    signedInWith("user-1", "ja");
+    const body = await render();
+
+    for (const name of ["Google", "Anthropic", "Claude API", "Stripe", "Resend", "Railway"]) {
+      expect(body).toContain(name);
+    }
+    expect(body).toContain("利用している外部サービス");
+  });
+
+  it("says card numbers never reach Koqentra", async () => {
+    signedOut();
+    expect(await render()).toContain("Koqentra does not receive or store your card number");
+
+    signedInWith("user-1", "ja");
+    expect(await render()).toContain("Koqentraがカード番号を受け取ったり保存したりすることはありません");
+  });
+
+  it("states security, access requests and cookies, without advertising tracking", async () => {
+    signedOut();
+    const body = await render();
+
+    expect(body).toContain("reasonable measures");
+    expect(body).toContain("corrected or deleted");
+    expect(body).toContain("does not use cookies or tracking for advertising");
+  });
+
+  it("has no closed-beta wording that a paid service cannot keep", async () => {
+    signedOut();
+    const en = await render();
+    signedInWith("user-1", "ja");
+    const ja = await render();
+
+    expect(en).not.toContain("without notice");
+    expect(en).not.toContain("Koqentra is in Closed Beta");
+    expect(en).not.toContain("being tried out rather than operated");
+    expect(ja).not.toContain("予告なく");
+    expect(ja).not.toContain("クローズドベータです");
+    expect(ja).not.toContain("試用段階");
+  });
+
+  it("keeps the support contact", async () => {
+    signedOut();
+    const markup = renderToStaticMarkup(await PrivacyPage());
+
+    expect(markup).toContain('href="mailto:support@example.test');
   });
 });

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { BillingPortalButton } from "@/components/billing-portal-button";
 import { DashboardNav } from "@/components/dashboard-nav";
 import { PlanCards } from "@/components/plan-cards";
@@ -288,6 +289,17 @@ export default async function BillingPage() {
             ) : null}
           </section>
         )}
+
+        {/* What buying is subject to, reachable from where buying happens. */}
+        <p className="mt-10 border-t border-border pt-6 text-sm text-muted-foreground">
+          <Link href="/terms" className="underline underline-offset-4">
+            {t(language, "pricing.legal.terms")}
+          </Link>
+          {" · "}
+          <Link href="/legal" className="underline underline-offset-4">
+            {t(language, "pricing.legal.notice")}
+          </Link>
+        </p>
       </main>
     </div>
   );

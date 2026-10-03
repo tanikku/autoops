@@ -881,6 +881,8 @@ export const ja: Record<TranslationKey, string> = {
   "pricing.allowanceGuide.discovery.title": "おすすめ探し",
   "pricing.allowanceGuide.discovery.body":
     "『おすすめを探す』Workerを実行できる回数です。手動実行した場合は『手動実行』の枠も使用します。また、新しい候補についてAIによる選定を行った場合は『AI処理』の枠も使用します。",
+  "pricing.legal.terms": "利用規約",
+  "pricing.legal.notice": "特定商取引法に基づく表記",
   "pricing.trialPurchaseNotice":
     "トライアル期間中に有料プランを始めると、その時点で無料トライアルは終了します。残りのトライアル期間は引き継がれず、有料プランの利用枠は 0 から始まります。",
   "pricing.guardrail.atLimit.title": "このプランの上限ちょうどになります",

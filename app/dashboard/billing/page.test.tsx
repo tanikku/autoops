@@ -916,6 +916,7 @@ describe("what the page does not do", () => {
 
     expect(imports).toEqual([
       "next",
+      "next/link",
       "@/components/billing-portal-button",
       "@/components/dashboard-nav",
       "@/components/plan-cards",
@@ -1278,5 +1279,42 @@ describe("about your allowances", () => {
     const html = await render(onPlan("lite", "active", true));
 
     expect(html).not.toContain("About your allowances");
+  });
+});
+
+describe("what buying is subject to", () => {
+  it("links the terms and the legal notice", async () => {
+    const html = await render();
+
+    expect(html).toContain('href="/terms"');
+    expect(html).toContain('href="/legal"');
+    expect(html).toContain("Terms of Service");
+  });
+
+  it("names them in Japanese for a Japanese account", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+
+    const html = await render();
+
+    expect(html).toContain("利用規約");
+    expect(html).toContain("特定商取引法に基づく表記");
+  });
+
+  it("keeps the links for an account that already pays", async () => {
+    mocks.mayOfferPurchase.mockReturnValue(false);
+
+    const html = await render({
+      current: {
+        kind: "on-plan",
+        plan: "lite",
+        state: "active",
+        purchased: true,
+        entitled: true,
+        adminGrantedBeta: false,
+      },
+    });
+
+    expect(html).toContain('href="/terms"');
+    expect(html).toContain('href="/legal"');
   });
 });

@@ -135,7 +135,15 @@ export default async function Home({
       <footer className="mx-auto w-full max-w-6xl px-6 py-8 text-center text-sm text-muted-foreground sm:px-10">
         © {new Date().getFullYear()} Koqentra · Closed Beta ·{" "}
         <Link href="/privacy" className="underline-offset-4 hover:underline">
-          Privacy
+          Privacy Policy
+        </Link>{" "}
+        ·{" "}
+        <Link href="/terms" className="underline-offset-4 hover:underline">
+          Terms of Service
+        </Link>{" "}
+        ·{" "}
+        <Link href="/legal" className="underline-offset-4 hover:underline">
+          特定商取引法に基づく表記
         </Link>
       </footer>
     </div>

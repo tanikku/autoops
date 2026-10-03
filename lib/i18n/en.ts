@@ -1636,6 +1636,8 @@ Notes for the report:
   "pricing.allowanceGuide.discovery.title": "Recommendation runs",
   "pricing.allowanceGuide.discovery.body":
     "How many times a \"Find recommendations\" worker can run. Running one by hand also uses a manual run, and choosing among new candidates with AI also uses AI processing.",
+  "pricing.legal.terms": "Terms of Service",
+  "pricing.legal.notice": "Legal notice (特定商取引法に基づく表記)",
   "pricing.trialPurchaseNotice":
     "Starting a paid plan during your trial ends the free trial at that point. The remaining trial days are not carried over, and the paid plan's allowance starts from zero.",
   "pricing.guardrail.atLimit.title": "You would be at this plan's limit",

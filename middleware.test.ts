@@ -33,6 +33,9 @@ describe("the protected routes", () => {
     expect(config.matcher).not.toContain("/");
     expect(config.matcher).not.toContain("/privacy");
     expect(config.matcher).not.toContain("/privacy/:path*");
+    for (const path of ["/terms", "/terms/:path*", "/legal", "/legal/:path*"]) {
+      expect(config.matcher).not.toContain(path);
+    }
   });
 
   it("guards exactly those two areas", () => {

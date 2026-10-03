@@ -248,6 +248,17 @@ describe("what the page keeps", () => {
   it("keeps the beta footer", async () => {
     expect(await text()).toContain("Closed Beta");
   });
+
+  /** The three documents a visitor may need before signing in or buying. */
+  it("links the privacy policy, the terms and the legal notice", async () => {
+    const html = await render();
+
+    expect(html).toContain('href="/privacy"');
+    expect(html).toContain('href="/terms"');
+    expect(html).toContain('href="/legal"');
+    expect(await text()).toContain("Terms of Service");
+    expect(await text()).toContain("特定商取引法に基づく表記");
+  });
 });
 
 /**

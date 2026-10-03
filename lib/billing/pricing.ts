@@ -102,7 +102,7 @@ export type PricingView = {
  * **Not marked tax-inclusive or exclusive**, because that has not been decided —
  * and a screen that guessed would be making a claim about somebody's invoice.
  */
-const MONTHLY_YEN: Readonly<Record<CheckoutAttemptPlan, number>> = {
+export const MONTHLY_YEN: Readonly<Record<CheckoutAttemptPlan, number>> = {
   lite: 780,
   standard: 1480,
   pro: 2480,

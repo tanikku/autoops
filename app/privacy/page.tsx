@@ -83,12 +83,18 @@ type PrivacyCopy = {
   creatorMemory: Passage;
   creatorUrl: Passage;
   creatorDoesNot: Passage;
+  webAccess: Passage;
+  payment: Passage;
+  thirdParties: Passage;
   storage: Passage;
   run: Passage;
   logs: Passage;
   retention: Passage;
   deleteWorker: Passage;
   deleteAccount: Passage;
+  security: Passage;
+  rights: Passage;
+  cookies: Passage;
   availability: Passage;
   aiOutput: Passage;
   contact: Passage;
@@ -118,13 +124,8 @@ const PRIVACY_COPY = {
     metadataDescription:
       "What Koqentra stores, where it goes, and what it does not do.",
     closedBeta: {
-      title: "Koqentra is in Closed Beta",
-      body: (
-        <p>
-          Access is by invitation. The service is being tried out rather than
-          operated, and it may change or stop without notice.
-        </p>
-      ),
+      title: "Access",
+      body: <p>Koqentra is currently offered by invitation.</p>,
     },
     signIn: {
       title: "What we receive when you sign in",
@@ -140,33 +141,55 @@ const PRIVACY_COPY = {
     provide: {
       title: "What you provide",
       body: (
-        <p>
-          A worker is a name, an optional description, and a prompt. You also
-          choose a timezone for your account, which decides both how times are
-          displayed and when scheduled workers run.
-        </p>
+        <>
+          <p>
+            A worker is a name, an optional description, and a prompt. A worker
+            that watches a page also holds the public address you gave it, and
+            one that finds recommendations holds the search terms you gave it.
+            You also choose a timezone for your account, which decides both how
+            times are displayed and when scheduled workers run.
+          </p>
+          <p>
+            What you send to Creator is described below. When you contact us by
+            email, we receive what you write and the address you write from.
+          </p>
+        </>
       ),
     },
     use: {
       title: "How it is used",
       body: (
-        <p>
-          To run your workers, to work out when a scheduled one is next due, and
-          to show you the result. Koqentra uses this information to provide these
-          features and does not sell it.
-        </p>
+        <>
+          <p>
+            To provide the service: to sign you in, to run your workers and work
+            out when a scheduled one is next due, to process requests with AI,
+            to send the notifications you turn on, to manage your plan and
+            payments, to prevent misuse, to investigate faults, to improve the
+            service, and to answer your enquiries.
+          </p>
+          <p>Koqentra does not sell this information.</p>
+        </>
       ),
     },
     ai: {
       title: "AI processing",
       body: (
-        <p>
-          Running a worker sends its prompt — the whole of it, with{" "}
-          <code>{"{{today}}"}</code> and <code>{"{{now}}"}</code> already filled
-          in — to Anthropic, which produces the result. Koqentra does not retry:
-          a request that fails is recorded as a failure and the worker waits for
-          its next turn.
-        </p>
+        <>
+          <p>
+            Running a worker sends its prompt — the whole of it, with{" "}
+            <code>{"{{today}}"}</code> and <code>{"{{now}}"}</code> already filled
+            in — to Anthropic&rsquo;s Claude API, which produces the result.
+            Koqentra does not retry: a request that fails is recorded as a
+            failure and the worker waits for its next turn.
+          </p>
+          <p>
+            The Claude API is also used to summarize a change found on a watched
+            page (it receives the worker&rsquo;s instructions and the page&rsquo;s
+            text before and after the change), to choose among new recommendation candidates (it receives the
+            search terms and the candidates found), and to draft a worker from
+            your description (it receives the description you typed).
+          </p>
+        </>
       ),
     },
     email: {
@@ -328,6 +351,55 @@ const PRIVACY_COPY = {
         </>
       ),
     },
+    webAccess: {
+      title: "Watching pages and finding recommendations",
+      body: (
+        <>
+          <p>
+            A worker that watches a page makes an ordinary HTTP request to the
+            public address you gave it from Koqentra&rsquo;s own server, in the
+            same way as described above for Creator, and stores the page&rsquo;s
+            text so that the next run can tell whether it changed.
+          </p>
+          <p>
+            A worker that finds recommendations sends its search terms to the
+            YouTube Data API, provided by Google, and stores which items it has
+            already recommended so that it does not recommend them again.
+          </p>
+        </>
+      ),
+    },
+    payment: {
+      title: "Payments",
+      body: (
+        <>
+          <p>
+            Paid plans are bought and managed through Stripe. You enter your
+            payment details on Stripe&rsquo;s own pages (Stripe Checkout and the
+            Stripe Billing Portal); <strong>Koqentra does not receive or store
+            your card number</strong>.
+          </p>
+          <p>
+            To connect a subscription to your account, Koqentra sends Stripe your
+            Koqentra account identifier, and stores the identifiers Stripe issues
+            for you as a customer and for your subscription, together with your
+            plan, its state and its billing period.
+          </p>
+        </>
+      ),
+    },
+    thirdParties: {
+      title: "Services Koqentra relies on",
+      body: (
+        <ul className="list-disc pl-5">
+          <li>Google — sign-in, and searches for recommendation workers (YouTube Data API)</li>
+          <li>Anthropic — AI processing through the Claude API</li>
+          <li>Stripe — payments for paid plans</li>
+          <li>Resend — sending email notifications</li>
+          <li>Railway — hosting the application and its database</li>
+        </ul>
+      ),
+    },
     storage: {
       title: "Where it is stored",
       body: (
@@ -377,6 +449,11 @@ const PRIVACY_COPY = {
             does not touch it: the two are separate, and a worker knows nothing
             about it.
           </p>
+          <p>
+            Other information, including records about your plan and payments,
+            is kept for as long as it is needed to provide the service, or as
+            required by law, by contract, or for operating the service.
+          </p>
         </>
       ),
     },
@@ -406,12 +483,42 @@ const PRIVACY_COPY = {
         </p>
       ),
     },
+    security: {
+      title: "Keeping it safe",
+      body: (
+        <p>
+          Koqentra takes reasonable measures to protect the information it
+          holds against loss, misuse and unauthorized access.
+        </p>
+      ),
+    },
+    rights: {
+      title: "Access, correction and deletion",
+      body: (
+        <p>
+          To ask what Koqentra holds about you, or to ask for it to be corrected
+          or deleted, contact us at the address below. Requests are handled by
+          hand, since some of them have no in-product way to be carried out.
+        </p>
+      ),
+    },
+    cookies: {
+      title: "Cookies",
+      body: (
+        <p>
+          Koqentra uses the cookies needed to provide the service, such as the
+          ones that keep you signed in. It does not use cookies or tracking for
+          advertising.
+        </p>
+      ),
+    },
     availability: {
       title: "Availability",
       body: (
         <p>
-          Koqentra is in Closed Beta. Its availability and continuity are not
-          guaranteed, and scheduled runs may be missed.
+          Koqentra may be temporarily unavailable, and scheduled runs may be
+          missed, because of maintenance, faults, the state of external services,
+          or other reasons.
         </p>
       ),
     },
@@ -439,7 +546,8 @@ const PRIVACY_COPY = {
       body: (
         <p>
           This notice describes Koqentra as it currently works. It may be updated
-          as Koqentra changes.
+          as Koqentra changes, and significant changes will be announced in an
+          appropriate way.
         </p>
       ),
     },
@@ -452,12 +560,8 @@ const PRIVACY_COPY = {
     metadataDescription:
       "Koqentra が何を保存し、どこへ送られ、何をしないのかを説明します。",
     closedBeta: {
-      title: "Koqentraはクローズドベータです",
-      body: (
-        <p>
-          利用は招待制です。本サービスは運用段階ではなく試用段階にあり、予告なく変更または終了することがあります。
-        </p>
-      ),
+      title: "提供状況",
+      body: <p>Koqentraは現在、招待制で提供しています。</p>,
     },
     signIn: {
       title: "サインイン時に受け取るもの",
@@ -470,27 +574,40 @@ const PRIVACY_COPY = {
     provide: {
       title: "利用者が入力するもの",
       body: (
-        <p>
-          ワーカーは、名前、任意の説明、プロンプトで構成されます。アカウントのタイムゾーンも選択でき、これは時刻の表示方法と、スケジュール実行のタイミングの両方を決めます。
-        </p>
+        <>
+          <p>
+            ワーカーは、名前、任意の説明、プロンプトで構成されます。Webページを監視するワーカーは利用者が指定した公開アドレスを、おすすめを探すワーカーは利用者が指定した検索条件を保持します。アカウントのタイムゾーンも選択でき、これは時刻の表示方法と、スケジュール実行のタイミングの両方を決めます。
+          </p>
+          <p>
+            Creatorへ送る内容は後の節で説明します。メールでお問い合わせいただいた場合は、その内容と送信元のアドレスを受け取ります。
+          </p>
+        </>
       ),
     },
     use: {
       title: "利用目的",
       body: (
-        <p>
-          ワーカーを実行するため、スケジュール実行の次回予定を算出するため、そして結果を表示するために使用します。Koqentraはこれらの情報をこうした機能の提供のために使用し、販売しません。
-        </p>
+        <>
+          <p>
+            サービスを提供するため、すなわち、サインイン、ワーカーの実行とスケジュール実行の次回予定の算出、AIによる処理、利用者が有効にした通知の送信、プランと決済の管理、不正利用の防止、障害対応、サービスの改善、お問い合わせへの対応のために使用します。
+          </p>
+          <p>Koqentraはこれらの情報を販売しません。</p>
+        </>
       ),
     },
     ai: {
       title: "AIによる処理",
       body: (
-        <p>
-          ワーカーを実行すると、そのプロンプト全体が（<code>{"{{today}}"}</code>
-          と<code>{"{{now}}"}</code>
-          を展開したうえで）Anthropicへ送信され、結果が生成されます。Koqentraは再試行を行いません。失敗したリクエストは失敗として記録され、そのワーカーは次の実行機会を待ちます。
-        </p>
+        <>
+          <p>
+            ワーカーを実行すると、そのプロンプト全体が（<code>{"{{today}}"}</code>
+            と<code>{"{{now}}"}</code>
+            を展開したうえで）AnthropicのClaude APIへ送信され、結果が生成されます。Koqentraは再試行を行いません。失敗したリクエストは失敗として記録され、そのワーカーは次の実行機会を待ちます。
+          </p>
+          <p>
+            Claude APIは、監視しているWebページで見つかった変化の要約（ワーカーの指示と、変化の前後のページ本文が送信されます）、おすすめ探しの新しい候補からの選定（検索条件と見つかった候補が送信されます）、利用者の説明からのワーカーの下書き作成（入力した説明が送信されます）にも使用します。
+          </p>
+        </>
       ),
     },
     email: {
@@ -608,6 +725,45 @@ const PRIVACY_COPY = {
         </>
       ),
     },
+    webAccess: {
+      title: "Webページの監視とおすすめ探し",
+      body: (
+        <>
+          <p>
+            Webページを監視するワーカーは、上記のCreatorと同様に、Koqentraのサーバー自身から、利用者が指定した公開アドレスへ通常のHTTPリクエストを送信します。次回の実行で変化があったかを判断するため、ページの本文を保存します。
+          </p>
+          <p>
+            おすすめを探すワーカーは、検索条件をGoogleが提供するYouTube Data APIへ送信します。同じものを繰り返しおすすめしないよう、すでにおすすめした項目を記録します。
+          </p>
+        </>
+      ),
+    },
+    payment: {
+      title: "決済",
+      body: (
+        <>
+          <p>
+            有料プランの購入と管理にはStripeを利用します。支払い情報は、Stripeが提供する画面（Stripe CheckoutおよびStripe Billing Portal）で入力します。
+            <strong>Koqentraがカード番号を受け取ったり保存したりすることはありません。</strong>
+          </p>
+          <p>
+            契約をアカウントに結び付けるため、KoqentraはStripeへKoqentraのアカウント識別子を送信し、Stripeが発行する顧客および契約の識別子を、プラン、契約の状態、請求期間とあわせて保存します。
+          </p>
+        </>
+      ),
+    },
+    thirdParties: {
+      title: "利用している外部サービス",
+      body: (
+        <ul className="list-disc pl-5">
+          <li>Google — サインイン、およびおすすめ探しの検索（YouTube Data API）</li>
+          <li>Anthropic — Claude APIによるAI処理</li>
+          <li>Stripe — 有料プランの決済</li>
+          <li>Resend — メール通知の送信</li>
+          <li>Railway — アプリケーションとデータベースのホスティング</li>
+        </ul>
+      ),
+    },
     storage: {
       title: "保管場所",
       body: (
@@ -646,6 +802,9 @@ const PRIVACY_COPY = {
             </strong>
             。また、一定期間の経過によって削除されることもありません。ワーカーを削除してもこれらには影響しません。両者は別のものであり、ワーカーはこれらについて何も関知しません。
           </p>
+          <p>
+            プランや決済に関する記録を含むその他の情報は、サービスの提供に必要な期間、または法令・契約・運営上必要な期間保持します。
+          </p>
         </>
       ),
     },
@@ -670,11 +829,35 @@ const PRIVACY_COPY = {
         </p>
       ),
     },
+    security: {
+      title: "安全管理",
+      body: (
+        <p>
+          Koqentraは、保持する情報の漏えい、滅失、不正なアクセス等を防ぐため、合理的な安全管理措置を講じます。
+        </p>
+      ),
+    },
+    rights: {
+      title: "開示・訂正・削除等",
+      body: (
+        <p>
+          Koqentraが保持している情報の開示、訂正、削除等をご希望の場合は、下記の問い合わせ先までご連絡ください。製品内に手段のないものもあるため、個別に対応します。
+        </p>
+      ),
+    },
+    cookies: {
+      title: "Cookie",
+      body: (
+        <p>
+          Koqentraは、サインイン状態の維持など、サービスの提供に必要なCookieを利用します。広告を目的としたCookieやトラッキングは利用しません。
+        </p>
+      ),
+    },
     availability: {
       title: "可用性",
       body: (
         <p>
-          Koqentraはクローズドベータです。可用性および継続性は保証されず、スケジュール実行が行われないことがあります。
+          保守、障害、外部サービスの状況その他の理由により、Koqentraを一時的に利用できない場合や、スケジュール実行が行われない場合があります。
         </p>
       ),
     },
@@ -699,7 +882,7 @@ const PRIVACY_COPY = {
       title: "本ノーティスの変更",
       body: (
         <p>
-          本ノーティスは現時点のKoqentraの動作を説明したものです。Koqentraの変更にあわせて更新されることがあります。
+          本ノーティスは現時点のKoqentraの動作を説明したものです。Koqentraの変更にあわせて更新されることがあり、重要な変更は適切な方法でお知らせします。
         </p>
       ),
     },
@@ -778,6 +961,11 @@ export default async function PrivacyPage() {
         <Section title={copy.creatorDoesNot.title}>
           {copy.creatorDoesNot.body}
         </Section>
+        <Section title={copy.webAccess.title}>{copy.webAccess.body}</Section>
+        <Section title={copy.payment.title}>{copy.payment.body}</Section>
+        <Section title={copy.thirdParties.title}>
+          {copy.thirdParties.body}
+        </Section>
 
         <Section title={copy.storage.title}>{copy.storage.body}</Section>
         <Section title={copy.run.title}>{copy.run.body}</Section>
@@ -789,6 +977,9 @@ export default async function PrivacyPage() {
         <Section title={copy.deleteAccount.title}>
           {copy.deleteAccount.body}
         </Section>
+        <Section title={copy.security.title}>{copy.security.body}</Section>
+        <Section title={copy.rights.title}>{copy.rights.body}</Section>
+        <Section title={copy.cookies.title}>{copy.cookies.body}</Section>
         <Section title={copy.availability.title}>
           {copy.availability.body}
         </Section>
