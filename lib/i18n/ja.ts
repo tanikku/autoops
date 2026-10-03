@@ -838,6 +838,30 @@ export const ja: Record<TranslationKey, string> = {
   "checkout.confirm.heading": "続ける前に確認してください",
   "checkout.confirm.accept": "理解しました。続ける",
   "checkout.confirm.cancel": "キャンセル",
+  "checkout.terms.heading": "購入内容の確認",
+  "checkout.terms.plan.term": "プラン",
+  "checkout.terms.plan.detail": "{plan}（{price}）",
+  "checkout.terms.contract.term": "契約期間",
+  "checkout.terms.contract.detail":
+    "月単位の継続契約です。契約開始日を基準に1か月ごとに自動更新されます。",
+  "checkout.terms.paymentTiming.term": "支払時期",
+  "checkout.terms.paymentTiming.detail":
+    "初回は有料プランの開始時、以後は契約開始日を基準に1か月ごとです。",
+  "checkout.terms.paymentMethod.term": "支払方法",
+  "checkout.terms.paymentMethod.detail":
+    "Stripe Checkout 上で利用可能として表示される決済方法",
+  "checkout.terms.delivery.term": "提供時期",
+  "checkout.terms.delivery.detail": "決済が正常に反映された後、ご利用いただけます。",
+  "checkout.terms.cancellation.term": "解約",
+  "checkout.terms.cancellation.detail": "Stripe Billing Portal から解約できます。",
+  "checkout.terms.afterCancellation.term": "解約後",
+  "checkout.terms.afterCancellation.detail":
+    "解約後も、現在の請求期間の終了までは利用できます。",
+  "checkout.terms.refunds.term": "返金",
+  "checkout.terms.refunds.detail":
+    "原則として返金は行いません。ただし、重複請求、明らかな決済上の誤り、法令上返金が必要となる場合その他当方が必要と判断した場合は、個別に対応します。",
+  "checkout.terms.proceed": "内容を確認してStripeへ進む",
+  "checkout.terms.back": "戻る",
   "checkout.message.planSwitch":
     "別のプランのお支払い手続きが進行中です。完了するか閉じたあと、しばらくしてからもう一度お選びください。",
   "checkout.message.billingManagement":

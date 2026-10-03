@@ -235,6 +235,7 @@ export default async function BillingPage() {
               language={language}
               checkoutEnabled={checkoutEnabled}
               purchasable={offerPurchase}
+              trialing={trialPurchaseNotice}
             />
             {/* What each line on the cards counts, said once beneath them. */}
             <section className="mt-10 border-t border-border pt-8">

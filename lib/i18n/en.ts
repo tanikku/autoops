@@ -1551,6 +1551,34 @@ Notes for the report:
   "checkout.confirm.accept": "I understand — continue",
   "checkout.confirm.cancel": "Cancel",
   /**
+   * The purchase terms, shown after a plan is chosen and before anything is
+   * asked of the server. The same facts the legal notice states, in its words.
+   */
+  "checkout.terms.heading": "Review your purchase",
+  "checkout.terms.plan.term": "Plan",
+  "checkout.terms.plan.detail": "{plan} ({price})",
+  "checkout.terms.contract.term": "Contract term",
+  "checkout.terms.contract.detail":
+    "A monthly, continuing subscription. It renews automatically every month, counted from the date the subscription started.",
+  "checkout.terms.paymentTiming.term": "When payment is taken",
+  "checkout.terms.paymentTiming.detail":
+    "First payment when the paid plan starts; after that, every month, counted from the date the subscription started.",
+  "checkout.terms.paymentMethod.term": "Payment method",
+  "checkout.terms.paymentMethod.detail":
+    "The payment methods shown as available on Stripe Checkout.",
+  "checkout.terms.delivery.term": "When the service is provided",
+  "checkout.terms.delivery.detail": "Once the payment has been successfully applied.",
+  "checkout.terms.cancellation.term": "Cancellation",
+  "checkout.terms.cancellation.detail": "You can cancel from the Stripe Billing Portal.",
+  "checkout.terms.afterCancellation.term": "After cancelling",
+  "checkout.terms.afterCancellation.detail":
+    "You can keep using the plan until the end of the current billing period.",
+  "checkout.terms.refunds.term": "Refunds",
+  "checkout.terms.refunds.detail":
+    "As a rule, payments are not refunded. Duplicate charges, clear payment errors, cases where a refund is required by law, and other cases we judge necessary are handled individually.",
+  "checkout.terms.proceed": "Review and continue to Stripe",
+  "checkout.terms.back": "Back",
+  /**
    * What each refusal says, and what none of them says.
    *
    * **No cause, no identifier, no provider text.** A session id, an attempt id

@@ -32,7 +32,7 @@ import { Button } from "@/components/ui/button";
  * all: there is no DOM in this project's test environment, so a button whose
  * rules lived in its event handlers would have no way to prove that a second
  * click is ignored or that an acknowledgement is only ever sent after somebody
- * agreed to something. `press`, `confirm`, `cancel` and `receive` below are the
+ * agreed to something. `press`, `proceed`, `confirm`, `cancel` and `receive` below are the
  * whole of the behaviour, and the component is a `useState` around them.
  */
 
@@ -55,6 +55,7 @@ export type CheckoutMessage =
  */
 export type CheckoutStep =
   | { readonly kind: "idle" }
+  | { readonly kind: "terms" }
   | { readonly kind: "working" }
   | {
       readonly kind: "over-limit";
@@ -79,10 +80,9 @@ const IDLE: CheckoutStep = { kind: "idle" };
 /**
  * Pressing the button itself.
  *
- * **Never acknowledges anything.** The first ask is always the unacknowledged
- * one: the flag exists to record that somebody was shown what a smaller
- * allowance would do and said yes anyway, and a button that set it for them
- * would be answering on their behalf. Only `confirm` can send `true`.
+ * **Asks the server nothing.** It opens the purchase terms; only `proceed`, from
+ * those terms, sends a request — so no checkout is ever opened for somebody who
+ * has not been shown what they are agreeing to.
  *
  * **A press while working is not a press.** The server's own coordination is
  * what actually stops two subscriptions — one `CheckoutAttempt` per account — but
@@ -91,6 +91,22 @@ const IDLE: CheckoutStep = { kind: "idle" };
  */
 export function press(step: CheckoutStep): CheckoutMove {
   if (step.kind === "working") {
+    return { step, request: null };
+  }
+
+  return { step: { kind: "terms" }, request: null };
+}
+
+/**
+ * Continuing from the purchase terms.
+ *
+ * **Never acknowledges anything.** The first ask is always the unacknowledged
+ * one: the flag exists to record that somebody was shown what a smaller
+ * allowance would do and said yes anyway, and having read the purchase terms is
+ * not that. Only `confirm` can send `true`.
+ */
+export function proceed(step: CheckoutStep): CheckoutMove {
+  if (step.kind !== "terms") {
     return { step, request: null };
   }
 
@@ -115,7 +131,7 @@ export function confirm(step: CheckoutStep): CheckoutMove {
 }
 
 /**
- * Declining it.
+ * Declining it, or going back from the purchase terms.
  *
  * Nothing is sent and nothing is left on screen: no attempt was opened by the
  * question, so there is nothing to close.
@@ -214,7 +230,78 @@ export type CheckoutPlanLabels = {
    */
   readonly overLimit: readonly string[];
   readonly messages: Readonly<Record<CheckoutMessage, string>>;
+  readonly purchase: PurchaseTermsLabels;
 };
+
+type LabelledLink = { readonly href: string; readonly label: string };
+
+/** The purchase terms, already in the right language, links included. */
+export type PurchaseTermsLabels = {
+  readonly heading: string;
+  readonly items: readonly { readonly term: string; readonly detail: string }[];
+  /** What buying does to a running trial; `null` when no trial is running. */
+  readonly trialNotice: string | null;
+  readonly termsLink: LabelledLink;
+  readonly legalLink: LabelledLink;
+  readonly proceed: string;
+  readonly back: string;
+};
+
+/**
+ * The purchase terms, shown between choosing a plan and asking the server.
+ *
+ * **The links open beside the terms**, so reading them does not throw away the
+ * step somebody is on.
+ */
+export function PurchaseTerms({
+  labels,
+  onProceed,
+  onBack,
+}: {
+  readonly labels: PurchaseTermsLabels;
+  readonly onProceed?: () => void;
+  readonly onBack?: () => void;
+}) {
+  return (
+    <div className="mt-3 rounded-md border border-border bg-muted/40 p-3">
+      <p className="text-xs font-medium">{labels.heading}</p>
+      <dl className="mt-2 space-y-2 text-xs">
+        {labels.items.map((item) => (
+          <div key={item.term}>
+            <dt className="font-medium">{item.term}</dt>
+            <dd className="mt-0.5 text-muted-foreground">{item.detail}</dd>
+          </div>
+        ))}
+      </dl>
+      {labels.trialNotice !== null ? (
+        <p className="mt-3 text-xs">{labels.trialNotice}</p>
+      ) : null}
+      <p className="mt-3 text-xs">
+        {[labels.termsLink, labels.legalLink].map((link, index) => (
+          <span key={link.href}>
+            {index > 0 ? " · " : null}
+            <a
+              href={link.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline underline-offset-4"
+            >
+              {link.label}
+            </a>
+          </span>
+        ))}
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button type="button" size="sm" onClick={onProceed}>
+          {labels.proceed}
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={onBack}>
+          {labels.back}
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Puts the server's numbers into a sentence the server wrote.
@@ -289,6 +376,14 @@ export function CheckoutPlanButton({
             ? labels.pending
             : labels.choose}
       </Button>
+
+      {step.kind === "terms" ? (
+        <PurchaseTerms
+          labels={labels.purchase}
+          onProceed={() => void send(proceed(step))}
+          onBack={() => setStep(cancel().step)}
+        />
+      ) : null}
 
       {step.kind === "over-limit" ? (
         <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 p-3">

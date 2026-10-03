@@ -19,8 +19,16 @@ vi.mock("@/app/dashboard/billing/actions", () => ({
   startCheckoutAction: vi.fn(),
 }));
 
-const { CheckoutPlanButton, cancel, confirm, fail, press, receive } =
-  await import("@/components/checkout-plan-button");
+const {
+  CheckoutPlanButton,
+  PurchaseTerms,
+  cancel,
+  confirm,
+  fail,
+  press,
+  proceed,
+  receive,
+} = await import("@/components/checkout-plan-button");
 
 type Labels = Parameters<typeof CheckoutPlanButton>[0]["labels"];
 
@@ -43,6 +51,18 @@ const LABELS: Labels = {
     providerUnavailable: "PROVIDER-UNAVAILABLE-MESSAGE",
     unavailable: "UNAVAILABLE-MESSAGE",
     invalidRequest: "INVALID-REQUEST-MESSAGE",
+  },
+  purchase: {
+    heading: "TERMS-HEADING",
+    items: [
+      { term: "TERM-A", detail: "DETAIL-A" },
+      { term: "TERM-B", detail: "DETAIL-B" },
+    ],
+    trialNotice: null,
+    termsLink: { href: "/terms?lang=en", label: "TERMS-LINK" },
+    legalLink: { href: "/legal?lang=en", label: "LEGAL-LINK" },
+    proceed: "PROCEED-LABEL",
+    back: "BACK-LABEL",
   },
 };
 
@@ -74,6 +94,8 @@ describe("whether it can be pressed", () => {
     const html = render(true);
 
     expect(html).not.toContain("CONFIRM-HEADING");
+    expect(html).not.toContain("TERMS-HEADING");
+    expect(html).not.toContain("PROCEED-LABEL");
     expect(html).not.toContain("MESSAGE");
     expect(html).not.toContain("PENDING-LABEL");
   });
@@ -82,34 +104,109 @@ describe("whether it can be pressed", () => {
 /**
  * Pressing it.
  *
- * **The first ask never acknowledges anything.** The flag records that somebody
- * was shown what a smaller allowance would do and said yes anyway; a button that
- * set it for them would be answering on their behalf.
+ * **A press asks the server nothing.** It opens the purchase terms; the request
+ * is only sent from there, so no checkout is opened for somebody who has not
+ * been shown what they are agreeing to.
  */
 describe("the first press", () => {
-  it("asks for a checkout without acknowledging anything", () => {
+  it("opens the purchase terms and sends nothing", () => {
     expect(press({ kind: "idle" })).toEqual({
+      step: { kind: "terms" },
+      request: null,
+    });
+  });
+
+  it.each([
+    { kind: "message", message: "unavailable" } as const,
+    { kind: "over-limit", activeWorkers: 3, activeWorkerLimit: 2 } as const,
+    { kind: "terms" } as const,
+  ])("opens the terms again from %o without sending anything", (step) => {
+    expect(press(step)).toEqual({ step: { kind: "terms" }, request: null });
+  });
+});
+
+/**
+ * Continuing from the purchase terms: the only press that reaches the server
+ * without an acknowledgement having been asked for.
+ *
+ * **It never acknowledges anything.** The flag records that somebody was shown
+ * what a smaller allowance would do and said yes anyway; having read the
+ * purchase terms is not that.
+ */
+describe("continuing from the terms", () => {
+  it("asks for a checkout without acknowledging anything", () => {
+    expect(proceed({ kind: "terms" })).toEqual({
       step: { kind: "working" },
       request: { overLimitAcknowledged: false },
     });
   });
 
-  it("asks again after a message was shown", () => {
-    expect(
-      press({ kind: "message", message: "unavailable" }).request,
-    ).toEqual({ overLimitAcknowledged: false });
+  it.each([
+    { kind: "idle" } as const,
+    { kind: "working" } as const,
+    { kind: "message", message: "unavailable" } as const,
+    { kind: "over-limit", activeWorkers: 3, activeWorkerLimit: 2 } as const,
+  ])("asks for nothing from %o", (step) => {
+    expect(proceed(step)).toEqual({ step, request: null });
   });
 
-  /** Even from the over-limit state, the button itself acknowledges nothing. */
-  it("does not acknowledge from the over-limit state either", () => {
-    expect(
-      press({ kind: "over-limit", activeWorkers: 3, activeWorkerLimit: 2 })
-        .request,
-    ).toEqual({ overLimitAcknowledged: false });
+  it("goes back to the plain button without sending anything", () => {
+    expect(cancel()).toEqual({ step: { kind: "idle" }, request: null });
+  });
+});
+
+/**
+ * Whole purchases, step by step, as the component drives them: every request
+ * that would reach `startCheckoutAction` is a `request` that is not `null`.
+ */
+describe("a purchase from start to finish", () => {
+  const READY = {
+    outcome: "checkout-ready",
+    url: "https://pay.example.invalid/1",
+    standing: "below-limit",
+  } as const;
+
+  it("goes terms, one request, then the address", () => {
+    const pressed = press({ kind: "idle" });
+    const continued = proceed(pressed.step);
+    const answered = receive(READY);
+
+    expect(pressed.request).toBeNull();
+    expect(continued.request).toEqual({ overLimitAcknowledged: false });
+    expect(answered.url).toBe("https://pay.example.invalid/1");
   });
 
-  it("puts the button into its working state", () => {
-    expect(press({ kind: "idle" }).step).toEqual({ kind: "working" });
+  it("goes terms, the over-limit question, then one acknowledged request", () => {
+    const pressed = press({ kind: "idle" });
+    const continued = proceed(pressed.step);
+    const asked = receive({
+      outcome: "over-limit-confirmation-required",
+      activeWorkers: 5,
+      activeWorkerLimit: 2,
+    });
+    const confirmed = confirm(asked.step);
+    const answered = receive({ ...READY, standing: "over-limit" });
+
+    expect(pressed.request).toBeNull();
+    expect(continued.request).toEqual({ overLimitAcknowledged: false });
+    expect(asked).toEqual({
+      step: { kind: "over-limit", activeWorkers: 5, activeWorkerLimit: 2 },
+      url: null,
+    });
+    // **No second look at the terms.** They were read in this same purchase.
+    expect(confirmed).toEqual({
+      step: { kind: "working" },
+      request: { overLimitAcknowledged: true },
+    });
+    expect(answered.url).toBe("https://pay.example.invalid/1");
+  });
+
+  it("sends nothing at all when somebody goes back from the terms", () => {
+    const pressed = press({ kind: "idle" });
+    const back = cancel();
+
+    expect([pressed.request, back.request]).toEqual([null, null]);
+    expect(proceed(back.step).request).toBeNull();
   });
 });
 
@@ -151,6 +248,7 @@ describe("confirming", () => {
 
   it.each([
     { kind: "idle" } as const,
+    { kind: "terms" } as const,
     { kind: "working" } as const,
     { kind: "message", message: "unavailable" } as const,
   ])("acknowledges nothing from %o", (step) => {
@@ -163,8 +261,11 @@ describe("confirming", () => {
       press({ kind: "idle" }),
       press({ kind: "working" }),
       press({ kind: "over-limit", activeWorkers: 3, activeWorkerLimit: 2 }),
+      proceed({ kind: "terms" }),
+      proceed({ kind: "over-limit", activeWorkers: 3, activeWorkerLimit: 2 }),
       cancel(),
       confirm({ kind: "idle" }),
+      confirm({ kind: "terms" }),
     ];
 
     for (const ask of asks) {
@@ -403,5 +504,51 @@ describe("what never reaches the browser", () => {
     ]) {
       expect(source, `reaches ${forbidden}`).not.toContain(forbidden);
     }
+  });
+});
+
+/**
+ * The purchase terms, as they render.
+ *
+ * **Two buttons, and neither says it charges anything.** The one that goes on
+ * says it goes on; the provider's own page is where a payment is made.
+ */
+describe("the purchase terms on screen", () => {
+  const renderTerms = (purchase = LABELS.purchase) =>
+    renderToStaticMarkup(<PurchaseTerms labels={purchase} />);
+
+  it("shows every item it was given, in order", () => {
+    const html = renderTerms();
+
+    expect(html).toContain("TERMS-HEADING");
+    expect(html.indexOf("TERM-A")).toBeLessThan(html.indexOf("TERM-B"));
+    expect(html).toContain("DETAIL-A");
+    expect(html).toContain("DETAIL-B");
+  });
+
+  it("links to the terms and the legal notice, opening beside the step", () => {
+    const html = renderTerms();
+
+    expect(html).toContain('href="/terms?lang=en"');
+    expect(html).toContain('href="/legal?lang=en"');
+    expect(html).toContain("TERMS-LINK");
+    expect(html).toContain("LEGAL-LINK");
+    expect(html).toContain('rel="noopener noreferrer"');
+  });
+
+  it("offers going on and going back, as buttons that submit nothing", () => {
+    const html = renderTerms();
+
+    expect(html).toContain("PROCEED-LABEL");
+    expect(html).toContain("BACK-LABEL");
+    expect(html.match(/type="button"/g)).toHaveLength(2);
+    expect(html).not.toContain("<form");
+  });
+
+  it("says nothing about a trial unless one is running", () => {
+    expect(renderTerms()).not.toContain("TRIAL-NOTICE");
+    expect(
+      renderTerms({ ...LABELS.purchase, trialNotice: "TRIAL-NOTICE" }),
+    ).toContain("TRIAL-NOTICE");
   });
 });

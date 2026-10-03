@@ -1318,3 +1318,129 @@ describe("what buying is subject to", () => {
     expect(html).toContain('href="/legal"');
   });
 });
+
+/**
+ * The purchase terms each button opens before it asks the server anything.
+ *
+ * **The same facts the legal notice states**, in its words, built here so the
+ * browser gets sentences and never the dictionaries.
+ */
+describe("the purchase terms handed to each button", () => {
+  type Purchase = {
+    heading: string;
+    items: { term: string; detail: string }[];
+    trialNotice: string | null;
+    termsLink: { href: string; label: string };
+    legalLink: { href: string; label: string };
+    proceed: string;
+    back: string;
+  };
+  const purchaseOf = (index: number) =>
+    (buttonProps[index].labels as { purchase: Purchase }).purchase;
+  const said = (purchase: Purchase) =>
+    purchase.items.map((item) => `${item.term}: ${item.detail}`).join("\n");
+
+  beforeEach(() => {
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(true);
+  });
+
+  it("states every term in English", async () => {
+    await render();
+
+    const purchase = purchaseOf(0);
+    const body = said(purchase);
+
+    expect(purchase.heading).toBe("Review your purchase");
+    expect(body).toContain("Plan: Lite (¥780 / month)");
+    expect(body).toContain("A monthly, continuing subscription");
+    expect(body).toContain("renews automatically every month");
+    expect(body).toContain("First payment when the paid plan starts");
+    expect(body).toContain("The payment methods shown as available on Stripe Checkout.");
+    expect(body).toContain("Once the payment has been successfully applied.");
+    expect(body).toContain("You can cancel from the Stripe Billing Portal.");
+    expect(body).toContain("until the end of the current billing period");
+    expect(body).toContain(
+      "As a rule, payments are not refunded. Duplicate charges, clear payment errors, cases where a refund is required by law, and other cases we judge necessary are handled individually.",
+    );
+    expect(purchase.items.map((item) => item.term)).toEqual([
+      "Plan",
+      "Contract term",
+      "When payment is taken",
+      "Payment method",
+      "When the service is provided",
+      "Cancellation",
+      "After cancelling",
+      "Refunds",
+    ]);
+    expect(purchase.proceed).toBe("Review and continue to Stripe");
+    expect(purchase.back).toBe("Back");
+  });
+
+  it("states every term in Japanese to a Japanese account", async () => {
+    mocks.getUserLanguage.mockResolvedValue("ja");
+
+    await render();
+
+    const purchase = purchaseOf(0);
+    const body = said(purchase);
+
+    expect(purchase.heading).toBe("購入内容の確認");
+    expect(body).toContain("プラン: Lite（月額 780 円）");
+    expect(body).toContain("月単位の継続契約です");
+    expect(body).toContain("契約開始日を基準に1か月ごとに自動更新されます");
+    expect(body).toContain("初回は有料プランの開始時、以後は契約開始日を基準に1か月ごとです");
+    expect(body).toContain("Stripe Checkout 上で利用可能として表示される決済方法");
+    expect(body).toContain("決済が正常に反映された後");
+    expect(body).toContain("Stripe Billing Portal から解約できます");
+    expect(body).toContain("現在の請求期間の終了までは利用できます");
+    expect(body).toContain(
+      "原則として返金は行いません。ただし、重複請求、明らかな決済上の誤り、法令上返金が必要となる場合その他当方が必要と判断した場合は、個別に対応します。",
+    );
+    expect(purchase.proceed).toBe("内容を確認してStripeへ進む");
+    expect(purchase.back).toBe("戻る");
+    expect(purchase.termsLink).toEqual({ href: "/terms?lang=ja", label: "利用規約" });
+    expect(purchase.legalLink).toEqual({
+      href: "/legal?lang=ja",
+      label: "特定商取引法に基づく表記",
+    });
+  });
+
+  it("names each card's own plan and price", async () => {
+    await render();
+
+    expect(said(purchaseOf(1))).toContain("Plan: Standard (¥1,480 / month)");
+    expect(said(purchaseOf(2))).toContain("Plan: Pro (¥2,480 / month)");
+  });
+
+  it("links to the terms and the notice in the reader's language", async () => {
+    await render();
+
+    expect(purchaseOf(0).termsLink.href).toBe("/terms?lang=en");
+    expect(purchaseOf(0).legalLink.href).toBe("/legal?lang=en");
+  });
+
+  /** Going on opens the provider's page; it does not itself charge anything. */
+  it("does not word the button that goes on as a payment", async () => {
+    for (const language of ["en", "ja"]) {
+      mocks.getUserLanguage.mockResolvedValue(language);
+      buttonProps.length = 0;
+
+      await render();
+
+      expect(purchaseOf(0).proceed).not.toMatch(/購入する|支払う|^Pay|^Buy/);
+    }
+  });
+
+  it("repeats the trial sentence only while a trial is running", async () => {
+    await render(onPlan("trial", "trialing", false));
+
+    expect(purchaseOf(0).trialNotice).toContain("ends the free trial");
+    expect(purchaseOf(0).trialNotice).toContain("not carried over");
+    expect(purchaseOf(0).trialNotice).toContain("starts from zero");
+
+    buttonProps.length = 0;
+    await render(onPlan("trial", "trial_expired", false, false));
+
+    expect(purchaseOf(0).trialNotice).toBeNull();
+  });
+});

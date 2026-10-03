@@ -158,11 +158,15 @@ function guardrailNotice({
  * to the press rather than from the count this page was rendered with, which may
  * have moved in between. Saying it twice in two wordings is what this avoids.
  */
-function checkoutLabels(plan: PricedPlan, language: string): CheckoutPlanLabels {
+function checkoutLabels(
+  plan: PricedPlan,
+  language: string,
+  trialing: boolean,
+): CheckoutPlanLabels {
+  const planName = t(language, planNameKeyFor(plan.id));
+
   return {
-    choose: t(language, "pricing.cta.choose", {
-      plan: t(language, planNameKeyFor(plan.id)),
-    }),
+    choose: t(language, "pricing.cta.choose", { plan: planName }),
     unavailable: t(language, "pricing.cta.comingSoon"),
     pending: t(language, "checkout.pending"),
     confirmHeading: t(language, "checkout.confirm.heading"),
@@ -181,6 +185,62 @@ function checkoutLabels(plan: PricedPlan, language: string): CheckoutPlanLabels 
       unavailable: t(language, "checkout.message.unavailable"),
       invalidRequest: t(language, "checkout.message.invalidRequest"),
     },
+    purchase: purchaseTermsLabels(plan, planName, language, trialing),
+  };
+}
+
+const PURCHASE_TERM_ITEMS = [
+  "contract",
+  "paymentTiming",
+  "paymentMethod",
+  "delivery",
+  "cancellation",
+  "afterCancellation",
+  "refunds",
+] as const;
+
+/**
+ * The purchase terms for one plan.
+ *
+ * **The trial sentence is the page's own**, the one shown above the cards, so
+ * the terms say nothing about a trial the notice does not.
+ */
+function purchaseTermsLabels(
+  plan: PricedPlan,
+  planName: string,
+  language: string,
+  trialing: boolean,
+): CheckoutPlanLabels["purchase"] {
+  const price = t(language, "pricing.price.monthly", {
+    amount: plan.monthlyYen.toLocaleString("en-US"),
+  });
+
+  return {
+    heading: t(language, "checkout.terms.heading"),
+    items: [
+      {
+        term: t(language, "checkout.terms.plan.term"),
+        detail: t(language, "checkout.terms.plan.detail", {
+          plan: planName,
+          price,
+        }),
+      },
+      ...PURCHASE_TERM_ITEMS.map((item) => ({
+        term: t(language, `checkout.terms.${item}.term`),
+        detail: t(language, `checkout.terms.${item}.detail`),
+      })),
+    ],
+    trialNotice: trialing ? t(language, "pricing.trialPurchaseNotice") : null,
+    termsLink: {
+      href: `/terms?lang=${language}`,
+      label: t(language, "pricing.legal.terms"),
+    },
+    legalLink: {
+      href: `/legal?lang=${language}`,
+      label: t(language, "pricing.legal.notice"),
+    },
+    proceed: t(language, "checkout.terms.proceed"),
+    back: t(language, "checkout.terms.back"),
   };
 }
 
@@ -190,6 +250,7 @@ export function PlanCards({
   language,
   checkoutEnabled,
   purchasable = true,
+  trialing = false,
 }: {
   plans: readonly PricedPlan[];
   activeWorkers: number;
@@ -202,6 +263,8 @@ export function PlanCards({
    * disabled one.
    */
   purchasable?: boolean;
+  /** Whether buying would end a running trial; the purchase terms then say so. */
+  trialing?: boolean;
 }) {
   return (
     /* Three across from `lg`, one column on a phone. The middle card carries a
@@ -243,7 +306,7 @@ export function PlanCards({
               <CheckoutPlanButton
                 plan={plan.id}
                 enabled={checkoutEnabled}
-                labels={checkoutLabels(plan, language)}
+                labels={checkoutLabels(plan, language, trialing)}
               />
             ) : null}
           </CardContent>
