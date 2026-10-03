@@ -1,6 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { auth } from "@/auth";
+import {
+  LegalLanguageSwitch,
+  type LegalSearchParams,
+  requestedLegalLanguage,
+} from "@/components/legal-language-switch";
 import { DEFAULT_LANGUAGE, t, type Language } from "@/lib/i18n";
 import { getDocumentLanguage } from "@/lib/i18n/server";
 import { supportMailtoHref } from "@/lib/support";
@@ -24,8 +29,15 @@ import { getUserLanguage } from "@/lib/users";
  * falls back to English; nothing here provisions an account row, which is what
  * keeps a privacy notice openable by somebody who does not have one.
  */
-export async function generateMetadata(): Promise<Metadata> {
-  const copy = PRIVACY_COPY[await getDocumentLanguage()];
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams?: LegalSearchParams;
+}): Promise<Metadata> {
+  const copy =
+    PRIVACY_COPY[
+      (await requestedLegalLanguage(searchParams)) ?? (await getDocumentLanguage())
+    ];
 
   return {
     title: `${copy.heading} — Koqentra`,
@@ -900,7 +912,11 @@ const PRIVACY_COPY = {
  */
 export const dynamic = "force-dynamic";
 
-export default async function PrivacyPage() {
+export default async function PrivacyPage({
+  searchParams,
+}: {
+  searchParams?: LegalSearchParams;
+}) {
   /**
    * **An optional session, never a required one.** A privacy notice a
    * signed-out visitor cannot open is not much of a privacy notice, so this
@@ -913,7 +929,11 @@ export default async function PrivacyPage() {
    */
   const session = await auth();
   const userId = session?.user?.id;
-  const language = userId ? await getUserLanguage(userId) : DEFAULT_LANGUAGE;
+  // `?lang=` first, so a visitor with no session can still read either
+  // language; then the account's own; then the default.
+  const language =
+    (await requestedLegalLanguage(searchParams)) ??
+    (userId ? await getUserLanguage(userId) : DEFAULT_LANGUAGE);
 
   const copy = PRIVACY_COPY[language];
   const supportHref = supportMailtoHref(
@@ -933,6 +953,7 @@ export default async function PrivacyPage() {
           {copy.heading}
         </h1>
         <p className="mt-3 text-sm text-muted-foreground">{copy.intro}</p>
+        <LegalLanguageSwitch path="/privacy" language={language} />
 
         <Section title={copy.closedBeta.title}>{copy.closedBeta.body}</Section>
         <Section title={copy.signIn.title}>{copy.signIn.body}</Section>

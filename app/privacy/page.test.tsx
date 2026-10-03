@@ -44,7 +44,7 @@ const { generateMetadata } = await import("@/app/privacy/page");
 
 /** The rendered page with its markup stripped, for whichever session is set. */
 const render = async () =>
-  renderToStaticMarkup(await PrivacyPage()).replace(/<[^>]*>/g, " ");
+  renderToStaticMarkup(await PrivacyPage({})).replace(/<[^>]*>/g, " ");
 
 const signedOut = () => {
   mocks.auth.mockResolvedValue(null);
@@ -103,12 +103,19 @@ describe("which language the notice is written in", () => {
   });
 
   /**
-   * **The id comes from the session and nowhere else.** A page that accepted
-   * one as a prop or a search param would read somebody else's setting for the
-   * asking, so it takes no arguments at all.
+   * **The id comes from the session and nowhere else.** The page now accepts
+   * `?lang=`, which chooses a language, never an account: a search param naming
+   * somebody else is ignored, and the only setting read is the session's own.
    */
-  it("takes no request input, so no caller can choose whose language is read", () => {
-    expect(PrivacyPage.length).toBe(0);
+  it("takes no request input that chooses whose language is read", async () => {
+    signedInWith("user-1", "ja");
+
+    await PrivacyPage({
+      searchParams: Promise.resolve({ userId: "user-2", id: "user-2" } as never),
+    });
+
+    expect(mocks.getUserLanguage).toHaveBeenCalledTimes(1);
+    expect(mocks.getUserLanguage).toHaveBeenCalledWith("user-1");
   });
 });
 
@@ -609,7 +616,7 @@ describe("what the tab says", () => {
   it("keeps the English title and description exactly as they were", async () => {
     signedOut();
 
-    await expect(generateMetadata()).resolves.toMatchObject({
+    await expect(generateMetadata({})).resolves.toMatchObject({
       title: "Privacy — Koqentra",
       description:
         "What Koqentra stores, where it goes, and what it does not do.",
@@ -619,7 +626,7 @@ describe("what the tab says", () => {
   it("says the same thing in Japanese when the account reads Japanese", async () => {
     signedInWith("user-ja", "ja");
 
-    await expect(generateMetadata()).resolves.toMatchObject({
+    await expect(generateMetadata({})).resolves.toMatchObject({
       title: "プライバシー — Koqentra",
       description:
         "Koqentra が何を保存し、どこへ送られ、何をしないのかを説明します。",
@@ -629,7 +636,7 @@ describe("what the tab says", () => {
   it("titles itself in English for a signed-in English account", async () => {
     signedInWith("user-en", "en");
 
-    await expect(generateMetadata()).resolves.toMatchObject({
+    await expect(generateMetadata({})).resolves.toMatchObject({
       title: "Privacy — Koqentra",
     });
   });
@@ -643,7 +650,7 @@ describe("what the tab says", () => {
   it("does not reuse the opening sentence of the notice", async () => {
     signedOut();
 
-    const { description } = await generateMetadata();
+    const { description } = await generateMetadata({});
 
     expect(description).not.toContain("What Koqentra receives");
   });
@@ -651,10 +658,10 @@ describe("what the tab says", () => {
   /** The product name is a name in both languages. */
   it("leaves the name untranslated in either language", async () => {
     signedOut();
-    expect((await generateMetadata()).title).toContain("Koqentra");
+    expect((await generateMetadata({})).title).toContain("Koqentra");
 
     signedInWith("user-ja", "ja");
-    expect((await generateMetadata()).title).toContain("Koqentra");
+    expect((await generateMetadata({})).title).toContain("Koqentra");
   });
 });
 
@@ -719,8 +726,57 @@ describe("the notice for a paid service", () => {
 
   it("keeps the support contact", async () => {
     signedOut();
-    const markup = renderToStaticMarkup(await PrivacyPage());
+    const markup = renderToStaticMarkup(await PrivacyPage({}));
 
     expect(markup).toContain('href="mailto:support@example.test');
+  });
+});
+
+/**
+ * **Either language, without signing in.** `?lang=` decides first, so a
+ * visitor with no session can reach the Japanese text; an unknown value falls
+ * back as if there were none.
+ */
+describe("choosing the language on the page", () => {
+  const page = (lang?: string) =>
+    PrivacyPage({ searchParams: Promise.resolve(lang === undefined ? {} : { lang }) });
+  const pageText = async (lang?: string) =>
+    renderToStaticMarkup(await page(lang)).replace(/<[^>]*>/g, " ");
+
+  beforeEach(() => {
+    mocks.auth.mockResolvedValue(null);
+  });
+
+  it("shows the Japanese text to a visitor with no session who asks for it", async () => {
+    const body = await pageText("ja");
+
+    expect(body).toContain("Koqentraがカード番号を受け取ったり保存したりすることはありません");
+    expect(mocks.getUserLanguage).not.toHaveBeenCalled();
+  });
+
+  it("shows the English text when asked, even to a Japanese account", async () => {
+    mocks.auth.mockResolvedValue({ user: { id: "user-1" } });
+    mocks.getUserLanguage.mockResolvedValue("ja");
+
+    expect(await pageText("en")).toContain("Koqentra does not receive or store your card number");
+  });
+
+  it("falls back as if nothing were asked for an unknown language", async () => {
+    expect(await pageText("fr")).toContain("Koqentra does not receive or store your card number");
+  });
+
+  it("offers a link to the other language and marks the current one", async () => {
+    const ja = renderToStaticMarkup(await page("ja"));
+    const en = renderToStaticMarkup(await page("en"));
+
+    expect(ja).toContain('href="/privacy?lang=en"');
+    expect(ja).toContain('aria-current="true"');
+    expect(en).toContain('href="/privacy?lang=ja"');
+  });
+
+  it("titles the tab in the language asked for", async () => {
+    const metadata = await generateMetadata({ searchParams: Promise.resolve({ lang: "ja" }) });
+
+    expect(String(metadata.title)).toContain("プライバシー");
   });
 });

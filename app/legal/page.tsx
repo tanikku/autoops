@@ -1,6 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { auth } from "@/auth";
+import {
+  LegalLanguageSwitch,
+  type LegalSearchParams,
+  requestedLegalLanguage,
+} from "@/components/legal-language-switch";
 import { MONTHLY_YEN } from "@/lib/billing/pricing";
 import { DEFAULT_LANGUAGE, t, type Language } from "@/lib/i18n";
 import { getDocumentLanguage } from "@/lib/i18n/server";
@@ -249,8 +254,15 @@ const LEGAL_COPY = {
   },
 } satisfies Record<Language, LegalCopy>;
 
-export async function generateMetadata(): Promise<Metadata> {
-  const copy = LEGAL_COPY[await getDocumentLanguage()];
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams?: LegalSearchParams;
+}): Promise<Metadata> {
+  const copy =
+    LEGAL_COPY[
+      (await requestedLegalLanguage(searchParams)) ?? (await getDocumentLanguage())
+    ];
 
   return {
     title: `${copy.heading} — Koqentra`,
@@ -272,11 +284,19 @@ function Field({ row }: { row: Row }) {
   );
 }
 
-export default async function LegalPage() {
+export default async function LegalPage({
+  searchParams,
+}: {
+  searchParams?: LegalSearchParams;
+}) {
   // An optional session, never a required one: this notice is public.
   const session = await auth();
   const userId = session?.user?.id;
-  const language = userId ? await getUserLanguage(userId) : DEFAULT_LANGUAGE;
+  // `?lang=` first, so a visitor with no session can still read either
+  // language; then the account's own; then the default.
+  const language =
+    (await requestedLegalLanguage(searchParams)) ??
+    (userId ? await getUserLanguage(userId) : DEFAULT_LANGUAGE);
 
   const copy = LEGAL_COPY[language];
   const supportHref = supportMailtoHref(t(language, "settings.support.subject"));
@@ -294,6 +314,7 @@ export default async function LegalPage() {
           {copy.heading}
         </h1>
         <p className="mt-3 text-sm text-muted-foreground">{copy.intro}</p>
+        <LegalLanguageSwitch path="/legal" language={language} />
 
         <dl className="mt-8 border-b border-border">
           <Field row={copy.service} />

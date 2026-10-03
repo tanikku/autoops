@@ -22,7 +22,7 @@ vi.mock("@/lib/support", () => ({ supportMailtoHref: mocks.supportMailtoHref }))
 const LegalPage = (await import("@/app/legal/page")).default;
 const { generateMetadata } = await import("@/app/legal/page");
 
-const html = async () => renderToStaticMarkup(await LegalPage());
+const html = async () => renderToStaticMarkup(await LegalPage({}));
 const text = async () => (await html()).replace(/<[^>]*>/g, " ");
 
 beforeEach(() => {
@@ -51,7 +51,7 @@ describe("who may read it", () => {
   });
 
   it("has a title and description", async () => {
-    const metadata = await generateMetadata();
+    const metadata = await generateMetadata({});
 
     expect(String(metadata.title)).toContain("Koqentra");
     expect(metadata.description).toBeTruthy();
@@ -132,5 +132,54 @@ describe("the English notice", () => {
 
     expect(body).toContain("A contact address is being prepared.");
     expect(await html()).not.toContain("mailto:");
+  });
+});
+
+/**
+ * **Either language, without signing in.** `?lang=` decides first, so a
+ * visitor with no session can reach the Japanese text; an unknown value falls
+ * back as if there were none.
+ */
+describe("choosing the language on the page", () => {
+  const page = (lang?: string) =>
+    LegalPage({ searchParams: Promise.resolve(lang === undefined ? {} : { lang }) });
+  const pageText = async (lang?: string) =>
+    renderToStaticMarkup(await page(lang)).replace(/<[^>]*>/g, " ");
+
+  beforeEach(() => {
+    mocks.auth.mockResolvedValue(null);
+  });
+
+  it("shows the Japanese text to a visitor with no session who asks for it", async () => {
+    const body = await pageText("ja");
+
+    expect(body).toContain("請求があれば遅滞なく開示します");
+    expect(mocks.getUserLanguage).not.toHaveBeenCalled();
+  });
+
+  it("shows the English text when asked, even to a Japanese account", async () => {
+    mocks.auth.mockResolvedValue({ user: { id: "user-1" } });
+    mocks.getUserLanguage.mockResolvedValue("ja");
+
+    expect(await pageText("en")).toContain("Disclosed without delay upon request");
+  });
+
+  it("falls back as if nothing were asked for an unknown language", async () => {
+    expect(await pageText("fr")).toContain("Disclosed without delay upon request");
+  });
+
+  it("offers a link to the other language and marks the current one", async () => {
+    const ja = renderToStaticMarkup(await page("ja"));
+    const en = renderToStaticMarkup(await page("en"));
+
+    expect(ja).toContain('href="/legal?lang=en"');
+    expect(ja).toContain('aria-current="true"');
+    expect(en).toContain('href="/legal?lang=ja"');
+  });
+
+  it("titles the tab in the language asked for", async () => {
+    const metadata = await generateMetadata({ searchParams: Promise.resolve({ lang: "ja" }) });
+
+    expect(String(metadata.title)).toContain("特定商取引法に基づく表記");
   });
 });

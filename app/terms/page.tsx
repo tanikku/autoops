@@ -1,6 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { auth } from "@/auth";
+import {
+  LegalLanguageSwitch,
+  type LegalSearchParams,
+  requestedLegalLanguage,
+} from "@/components/legal-language-switch";
 import { DEFAULT_LANGUAGE, t, type Language } from "@/lib/i18n";
 import { getDocumentLanguage } from "@/lib/i18n/server";
 import { getPlanDefinition } from "@/lib/plans";
@@ -195,10 +200,10 @@ const TERMS_COPY = {
         ),
       },
       {
-        title: "18. 準拠法・管轄",
+        title: "18. 準拠法・紛争解決",
         body: (
           <p>
-            本規約は日本法に準拠します。本規約または本サービスに関して生じた紛争については、日本国内の裁判所を管轄裁判所とします。
+            本規約は日本法を準拠法とします。本サービスに関して紛争が生じた場合は、適用される法令に従って解決するものとします。
           </p>
         ),
       },
@@ -412,12 +417,11 @@ const TERMS_COPY = {
         ),
       },
       {
-        title: "18. Governing law and jurisdiction",
+        title: "18. Governing law and dispute resolution",
         body: (
           <p>
-            These Terms are governed by the laws of Japan. Any dispute arising
-            from these Terms or the Service is subject to the jurisdiction of the
-            courts of Japan.
+            These Terms are governed by the laws of Japan. Any dispute concerning
+            the Service will be resolved in accordance with the applicable laws.
           </p>
         ),
       },
@@ -430,8 +434,15 @@ const TERMS_COPY = {
   },
 } satisfies Record<Language, TermsCopy>;
 
-export async function generateMetadata(): Promise<Metadata> {
-  const copy = TERMS_COPY[await getDocumentLanguage()];
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams?: LegalSearchParams;
+}): Promise<Metadata> {
+  const copy =
+    TERMS_COPY[
+      (await requestedLegalLanguage(searchParams)) ?? (await getDocumentLanguage())
+    ];
 
   return {
     title: `${copy.heading} — Koqentra`,
@@ -459,11 +470,19 @@ function Section({
   );
 }
 
-export default async function TermsPage() {
+export default async function TermsPage({
+  searchParams,
+}: {
+  searchParams?: LegalSearchParams;
+}) {
   // An optional session, never a required one: these terms are public.
   const session = await auth();
   const userId = session?.user?.id;
-  const language = userId ? await getUserLanguage(userId) : DEFAULT_LANGUAGE;
+  // `?lang=` first, so a visitor with no session can still read either
+  // language; then the account's own; then the default.
+  const language =
+    (await requestedLegalLanguage(searchParams)) ??
+    (userId ? await getUserLanguage(userId) : DEFAULT_LANGUAGE);
 
   const copy = TERMS_COPY[language];
   const supportHref = supportMailtoHref(t(language, "settings.support.subject"));
@@ -481,6 +500,7 @@ export default async function TermsPage() {
           {copy.heading}
         </h1>
         <p className="mt-3 text-sm text-muted-foreground">{copy.intro}</p>
+        <LegalLanguageSwitch path="/terms" language={language} />
 
         {copy.sections.map((section) => (
           <Section key={section.title} title={section.title}>
