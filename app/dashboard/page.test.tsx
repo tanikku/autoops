@@ -335,7 +335,7 @@ describe("the three numbers", () => {
       snapshot({ counters: null, planBaseline: "standard" }),
     );
 
-    expect(await render()).toContain("0 / 150");
+    expect(await render()).toContain("0 / 60");
   });
 
   /**
@@ -633,7 +633,7 @@ describe("an account that has done nothing yet", () => {
 
     expect(html).toContain("0 / 3");
     // The trial's AI allowance, taken from the baseline the snapshot names.
-    expect(html).toContain("0 / 50");
+    expect(html).toContain("0 / 30");
   });
 
   it("leads with the two things there are to do", async () => {

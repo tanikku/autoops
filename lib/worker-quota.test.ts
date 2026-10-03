@@ -98,8 +98,8 @@ const PLANS = {
     limit: 10,
   },
   lite: { row: record({ plan: "lite" }), limit: 2 },
-  standard: { row: record({ plan: "standard" }), limit: 8 },
-  pro: { row: record({ plan: "pro" }), limit: 15 },
+  standard: { row: record({ plan: "standard" }), limit: 6 },
+  pro: { row: record({ plan: "pro" }), limit: 12 },
 } as const;
 
 /** Puts the account on a plan, for the entitlement the quota will compute. */
@@ -250,10 +250,10 @@ describe("how many workers each plan may run at once", () => {
     ["beta" as const, 10, "refused"],
     ["lite" as const, 1, null],
     ["lite" as const, 2, "refused"],
-    ["standard" as const, 7, null],
-    ["standard" as const, 8, "refused"],
-    ["pro" as const, 14, null],
-    ["pro" as const, 15, "refused"],
+    ["standard" as const, 5, null],
+    ["standard" as const, 6, "refused"],
+    ["pro" as const, 11, null],
+    ["pro" as const, 12, "refused"],
   ])("on %s with %i already active", async (plan, active, expected) => {
     const limit = on(plan);
     count.mockResolvedValue(active);

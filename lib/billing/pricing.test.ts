@@ -103,9 +103,27 @@ describe("which plans are priced", () => {
     expect(lite.definition.email).toBe("one-worker");
     expect(lite.definition.history).toEqual({ kind: "days", days: 7 });
 
-    expect(standard.definition.activeWorkerLimit).toBe(8);
-    expect(pro.definition.activeWorkerLimit).toBe(15);
+    expect(standard.definition.activeWorkerLimit).toBe(6);
+    expect(pro.definition.activeWorkerLimit).toBe(12);
     expect(pro.definition.email).toBe("all-workers");
+  });
+
+  /** What the cards show is the catalogue's current numbers, prices unchanged. */
+  it("shows Standard and Pro at their current allowances, at the same prices", async () => {
+    const view = await readPricingView(USER);
+    const [, standard, pro] = view.plans;
+    const allowances = (plan: typeof standard) => [
+      plan.definition.activeWorkerLimit,
+      plan.definition.aiProcessingLimit,
+      plan.definition.manualRunLimit,
+      plan.definition.discoveryLimit,
+    ];
+
+    expect(allowances(standard)).toEqual([6, 60, 60, 30]);
+    expect(allowances(pro)).toEqual([12, 120, 150, 60]);
+    expect(standard.definition.history).toEqual({ kind: "days", days: 90 });
+    expect(pro.definition.history).toEqual({ kind: "days", days: 365 });
+    expect([standard.monthlyYen, pro.monthlyYen]).toEqual([1480, 2480]);
   });
 });
 
@@ -124,10 +142,10 @@ describe("how the guardrail is previewed", () => {
     [1, ["below-limit", "below-limit", "below-limit"]],
     [2, ["at-limit", "below-limit", "below-limit"]],
     [3, ["over-limit", "below-limit", "below-limit"]],
-    [8, ["over-limit", "at-limit", "below-limit"]],
-    [9, ["over-limit", "over-limit", "below-limit"]],
-    [15, ["over-limit", "over-limit", "at-limit"]],
-    [16, ["over-limit", "over-limit", "over-limit"]],
+    [6, ["over-limit", "at-limit", "below-limit"]],
+    [7, ["over-limit", "over-limit", "below-limit"]],
+    [12, ["over-limit", "over-limit", "at-limit"]],
+    [13, ["over-limit", "over-limit", "over-limit"]],
   ])("classifies %i active workers", async (active, expected) => {
     routineCount.mockResolvedValue(active);
 

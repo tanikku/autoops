@@ -72,6 +72,30 @@ describe("a period that is already open", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  /**
+   * **A plan's numbers moving does not reach a period already open.** Standard
+   * now opens at 60 / 60 / 30; a Standard period opened at 150 / 100 / 60 is
+   * still measured against those until it ends. Nothing is written to it.
+   */
+  it("keeps the limits it was opened with after the plan's numbers change", async () => {
+    findUnique.mockResolvedValue(
+      stored([
+        { kind: "aiProcessing", used: 12, limit: 150 },
+        { kind: "manualRun", used: 0, limit: 100 },
+        { kind: "discovery", used: 0, limit: 60 },
+      ]),
+    );
+
+    const period = await openOrGetUsagePeriod(WINDOW);
+
+    expect(period.counters).toEqual([
+      { kind: "aiProcessing", used: 12, limit: 150 },
+      { kind: "manualRun", used: 0, limit: 100 },
+      { kind: "discovery", used: 0, limit: 60 },
+    ]);
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("is looked up by the account and the instant it started", async () => {
     findUnique.mockResolvedValue(stored([]));
 
@@ -88,9 +112,9 @@ describe("opening a period", () => {
     findUnique.mockResolvedValue(null);
     create.mockResolvedValue(
       stored([
-        { kind: "aiProcessing", used: 0, limit: 150 },
-        { kind: "manualRun", used: 0, limit: 100 },
-        { kind: "discovery", used: 0, limit: 60 },
+        { kind: "aiProcessing", used: 0, limit: 60 },
+        { kind: "manualRun", used: 0, limit: 60 },
+        { kind: "discovery", used: 0, limit: 30 },
       ]),
     );
   });
@@ -104,9 +128,9 @@ describe("opening a period", () => {
     await openOrGetUsagePeriod(WINDOW);
 
     expect(create.mock.calls[0][0].data.counters.create).toEqual([
-      { kind: "aiProcessing", used: 0, limit: 150 },
-      { kind: "manualRun", used: 0, limit: 100 },
-      { kind: "discovery", used: 0, limit: 60 },
+      { kind: "aiProcessing", used: 0, limit: 60 },
+      { kind: "manualRun", used: 0, limit: 60 },
+      { kind: "discovery", used: 0, limit: 30 },
     ]);
   });
 
@@ -140,9 +164,9 @@ describe("opening a period", () => {
   });
 
   it.each([
-    ["trial", 50, 20, 14],
+    ["trial", 30, 20, 14],
     ["lite", 30, 20, 10],
-    ["pro", 300, 300, 150],
+    ["pro", 120, 150, 60],
     ["beta", 300, 300, 150],
   ])(
     "takes %o's own limits",
@@ -268,9 +292,9 @@ describe("openOrGetUsagePeriodLocked", () => {
     await openOrGetUsagePeriodLocked(tx as never, WINDOW);
 
     expect(txCreate.mock.calls[0][0].data.counters.create).toEqual([
-      { kind: "aiProcessing", used: 0, limit: 150 },
-      { kind: "manualRun", used: 0, limit: 100 },
-      { kind: "discovery", used: 0, limit: 60 },
+      { kind: "aiProcessing", used: 0, limit: 60 },
+      { kind: "manualRun", used: 0, limit: 60 },
+      { kind: "discovery", used: 0, limit: 30 },
     ]);
     expect(create).not.toHaveBeenCalled();
   });

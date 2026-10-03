@@ -14,8 +14,8 @@ import type { TrialUsageStatus, TrialUsageView } from "@/lib/usage/trial-view";
  *
  * **Every number reads `used / limit`, never as a remainder.** A trial can
  * legitimately begin past its AI limit, because what an account spent before
- * starting is carried in — and there is no honest way to write "47 remaining"
- * beside 63 of 50. One format that is always true beats two that are usually
+ * starting is carried in — and there is no honest way to write "27 remaining"
+ * beside 43 of 30. One format that is always true beats two that are usually
  * shorter.
  *
  * **Nothing here refuses anything.** "Over the limit" is a description of a
@@ -41,7 +41,7 @@ function statusLabel(status: TrialUsageStatus, language: string): string | null 
 /**
  * One allowance: what it is, `used / limit`, and how that reads.
  *
- * **The numbers are not translated.** `3 / 50` is the same in every language,
+ * **The numbers are not translated.** `3 / 30` is the same in every language,
  * and a dictionary entry for it would be a place for the two to disagree.
  */
 function UsageRow({

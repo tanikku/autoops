@@ -58,8 +58,8 @@ describe("what the catalogue says", () => {
     ["trial", 3],
     ["beta", 10],
     ["lite", 2],
-    ["standard", 8],
-    ["pro", 15],
+    ["standard", 6],
+    ["pro", 12],
   ])("%s allows %i at once", (plan, expected) => {
     expect(getPlanDefinition(plan).activeWorkerLimit).toBe(expected);
   });
@@ -95,8 +95,8 @@ describe("an account on a plan", () => {
     ["the granted beta allowance", { plan: "beta", state: "active", source: "admin",
       expiresAt: new Date("2026-12-31T23:59:59.000Z") }, 10],
     ["Lite", { plan: "lite" }, 2],
-    ["Standard", { plan: "standard" }, 8],
-    ["Pro", { plan: "pro" }, 15],
+    ["Standard", { plan: "standard" }, 6],
+    ["Pro", { plan: "pro" }, 12],
   ])("on %s is allowed %i", async (_label, overrides, expected) => {
     findSubscription.mockResolvedValue(record(overrides));
 

@@ -307,7 +307,7 @@ describe("the period a trial is counted over", () => {
     expect(byKind.get("aiProcessing")).toEqual({
       kind: "aiProcessing",
       used: 0,
-      limit: 50,
+      limit: 30,
     });
     expect(byKind.get("manualRun")).toEqual({
       kind: "manualRun",
@@ -650,7 +650,7 @@ describe("a trial at the instant it ends", () => {
     const { computeEntitlement } = await import("@/lib/entitlements/index");
 
     expect(computeEntitlement(endedTrial, ENDS).limits).toMatchObject({
-      aiProcessingLimit: 50,
+      aiProcessingLimit: 30,
       manualRunLimit: 20,
       discoveryLimit: 14,
     });
@@ -695,7 +695,7 @@ describe("a trial at the instant it ends", () => {
 /**
  * What the account already spent, arriving with the trial.
  *
- * **A trial is an offer to try Koqentra, not fifty more of it.** Drafting a
+ * **A trial is an offer to try Koqentra, not thirty more of it.** Drafting a
  * worker with AI, and both Creator features, all reach a model without any
  * worker being active — so an account can spend a good deal of AI processing
  * before it ever activates anything. Starting the fortnight at zero would make
@@ -717,7 +717,7 @@ describe("what an account has already spent on AI", () => {
     expect(createdCounter("aiProcessing")).toEqual({
       kind: "aiProcessing",
       used: 0,
-      limit: 50,
+      limit: 30,
     });
   });
 
@@ -733,9 +733,9 @@ describe("what an account has already spent on AI", () => {
 
   it.each([
     ["a few drafts", 3],
-    ["exactly the whole allowance", 50],
-    ["one more than the allowance", 51],
-    ["twice the allowance", 100],
+    ["exactly the whole allowance", 30],
+    ["one more than the allowance", 31],
+    ["twice the allowance", 60],
     ["the sixty-three from the investigation", 63],
   ])("carries %s into the trial", async (_label, used) => {
     eligibleAndFirst();
@@ -746,14 +746,14 @@ describe("what an account has already spent on AI", () => {
     expect(createdCounter("aiProcessing")).toEqual({
       kind: "aiProcessing",
       used,
-      limit: 50,
+      limit: 30,
     });
   });
 
   /**
    * **Nothing is clamped, and the limit does not move.** A counter reading
-   * `63 / 50` is a true statement about an account that used sixty-three; a
-   * clamp would lose the thirteen, and raising the limit would say a trial
+   * `63 / 30` is a true statement about an account that used sixty-three; a
+   * clamp would lose the thirty-three, and raising the limit would say a trial
    * allows more than it does. Over-limit is a state the counters can already
    * hold — see `usageStatusFor` — so there is nothing to invent.
    */
@@ -766,8 +766,8 @@ describe("what an account has already spent on AI", () => {
     const counter = createdCounter("aiProcessing");
 
     expect(counter.used).toBe(63);
-    expect(counter.used).not.toBe(50);
-    expect(counter.limit).toBe(50);
+    expect(counter.used).not.toBe(30);
+    expect(counter.limit).toBe(30);
   });
 
   /** An account already past the allowance still gets its fourteen days. */

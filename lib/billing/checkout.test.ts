@@ -220,8 +220,8 @@ describe("the guardrail, counted when it matters", () => {
   /** The limit is the plan's, from the one catalogue that says so. */
   it.each([
     ["lite", 2],
-    ["standard", 8],
-    ["pro", 15],
+    ["standard", 6],
+    ["pro", 12],
   ])("judges %s against %i", async (plan, limit) => {
     routineCount.mockResolvedValue(limit + 1);
 

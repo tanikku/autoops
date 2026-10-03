@@ -1562,8 +1562,8 @@ describe("updateRoutineAction — the plan's active-worker limit", () => {
 
   it.each([
     ["Lite", "lite", 2],
-    ["Standard", "standard", 8],
-    ["Pro", "pro", 15],
+    ["Standard", "standard", 6],
+    ["Pro", "pro", 12],
   ])("refuses %s at its own limit, naming it", async (_label, plan, limit) => {
     onPlan({ plan });
     mocks.getRoutineForEdit.mockResolvedValue(paused());
@@ -1580,8 +1580,8 @@ describe("updateRoutineAction — the plan's active-worker limit", () => {
 
   it.each([
     ["Lite", "lite", 2],
-    ["Standard", "standard", 8],
-    ["Pro", "pro", 15],
+    ["Standard", "standard", 6],
+    ["Pro", "pro", 12],
   ])("lets %s activate one below its limit", async (_label, plan, limit) => {
     onPlan({ plan });
     mocks.getRoutineForEdit.mockResolvedValue(paused());

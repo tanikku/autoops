@@ -469,8 +469,8 @@ describe("a paid subscription's snapshot", () => {
 
   it.each([
     ["lite", 2, 30],
-    ["standard", 8, 150],
-    ["pro", 15, 300],
+    ["standard", 6, 60],
+    ["pro", 12, 120],
   ])("measures %s against its own allowances", async (plan, workers, ai) => {
     subscriptionFindUnique.mockResolvedValue(paidRow({ plan }));
     findUnique.mockResolvedValue(

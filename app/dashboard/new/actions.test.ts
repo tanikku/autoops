@@ -2131,7 +2131,7 @@ describe("createRoutineAction — carrying pre-trial AI into the trial", () => {
     expect(counter("aiProcessing")).toEqual({
       kind: "aiProcessing",
       used: 3,
-      limit: 50,
+      limit: 30,
     });
   });
 
@@ -2152,7 +2152,7 @@ describe("createRoutineAction — carrying pre-trial AI into the trial", () => {
 
     expect(result?.status).toBe("success");
     expect(counter("aiProcessing").used).toBe(63);
-    expect(counter("aiProcessing").limit).toBe(50);
+    expect(counter("aiProcessing").limit).toBe(30);
   });
 
   /** Read with the same client as the worker: one transaction, or neither. */

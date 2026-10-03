@@ -127,7 +127,7 @@ describe("an account that has not started a trial", () => {
     expect(await getTrialUsageView(USER, NOW)).toEqual({
       kind: "pre-trial",
       aiUsed: 0,
-      aiLimit: 50,
+      aiLimit: 30,
     });
   });
 
@@ -142,7 +142,7 @@ describe("an account that has not started a trial", () => {
     expect(await getTrialUsageView(USER, NOW)).toEqual({
       kind: "pre-trial",
       aiUsed: 3,
-      aiLimit: 50,
+      aiLimit: 30,
     });
     expect(mocks.readPreTrialAiProcessing).toHaveBeenCalledTimes(1);
   });
@@ -291,7 +291,7 @@ describe("an account in its trial", () => {
     expect(lineFor(view, "aiProcessing")).toEqual({
       kind: "aiProcessing",
       used: 0,
-      limit: 50,
+      limit: 30,
       status: "normal",
     });
     expect(lineFor(view, "manualRun")?.limit).toBe(20);

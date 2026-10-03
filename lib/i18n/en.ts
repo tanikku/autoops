@@ -1361,7 +1361,7 @@ Notes for the report:
    *
    * **Every quantity is written "used / limit", never as a remainder.** A trial
    * can legitimately begin past its AI limit — what an account spent before it
-   * started is carried in — and "47 remaining" has no honest reading at 63/50.
+   * started is carried in — and "27 remaining" has no honest reading at 43/30.
    * One format that is always true is worth more than two that are usually
    * shorter.
    *

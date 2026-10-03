@@ -1223,8 +1223,8 @@ silently, and the wrong number would be an allowance somebody was given or
 denied. `ProviderUsageEvent` remains independent cost telemetry, unread by any
 of this.
 
-**The carried number is never clamped.** An account that used sixty-three
-begins its trial at `63 / 50`, which is a true statement; clamping would lose
+**The carried number is never clamped.** An account that used forty-three
+begins its trial at `43 / 30`, which is a true statement; clamping would lose
 the thirteen and raising the limit would say a trial allows more than it does.
 Over-limit is a state the counters already hold. The activation is not refused
 either — the fourteen days start as normal, and enforcement, when it exists,

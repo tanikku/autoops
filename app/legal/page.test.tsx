@@ -101,7 +101,7 @@ describe("the Japanese notice", () => {
     expect(body).toContain("14日間のトライアル");
     expect(body).toContain("独立したプラン");
     expect(body).toContain("同時に稼働できるWorker数: 3");
-    expect(body).toContain("AI処理: 50");
+    expect(body).toContain("AI処理: 30");
     expect(body).toContain("手動実行: 20");
     expect(body).toContain("おすすめ探し: 14");
     expect(body).toContain("その時点でトライアルは終了");

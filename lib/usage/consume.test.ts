@@ -726,15 +726,15 @@ describe("spendAllowances — before a trial", () => {
   }
 
   it("allows AI while the lifetime total stays within the trial's allowance", async () => {
-    const db = preTrial([49]);
+    const db = preTrial([29]);
 
     expect(await spend(db, [{ kind: "aiProcessing", units: 1 }])).toEqual({ granted: true, usagePeriodId: expect.any(String) });
-    expect(db.used("month-0", "aiProcessing")).toBe(50);
+    expect(db.used("month-0", "aiProcessing")).toBe(30);
   });
 
   it.each([
-    ["49 used and 2 asked", [49], 2],
-    ["50 used and 1 asked", [50], 1],
+    ["29 used and 2 asked", [29], 2],
+    ["30 used and 1 asked", [30], 1],
   ])("refuses with %s", async (_label, used, units) => {
     const db = preTrial(used);
 

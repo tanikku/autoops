@@ -94,7 +94,7 @@ describe("a trial", () => {
 
     expect(entitlement.state).toBe("trialing");
     expect(entitlement.entitled).toBe(true);
-    expect(entitlement.limits?.aiProcessingLimit).toBe(50);
+    expect(entitlement.limits?.aiProcessingLimit).toBe(30);
   });
 
   /**
@@ -300,6 +300,6 @@ describe("reading an account's entitlement", () => {
     const entitlement = await getEffectiveEntitlement(USER, NOW);
 
     expect(entitlement.plan).toBe("pro");
-    expect(entitlement.limits?.discoveryLimit).toBe(150);
+    expect(entitlement.limits?.discoveryLimit).toBe(60);
   });
 });
