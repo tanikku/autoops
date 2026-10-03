@@ -40,6 +40,7 @@ import {
 } from "@/lib/watcher/website-request";
 import {
   type AiAllowanceRefusal,
+  type AiAllowanceReservation,
   allowanceRefusalOfRun,
   aiAllowanceRunMessage,
   reserveAiProcessing,
@@ -849,7 +850,12 @@ async function recordDiscoveryCall(
     return;
   }
 
-  const context = { userId, feature: "discovery", runId } as const;
+  const context = {
+    userId,
+    feature: "discovery",
+    runId,
+    usagePeriodId: call.usagePeriodId,
+  } as const;
 
   if (call.kind === "result") {
     await recordAIExecution(context, call.result);
@@ -889,12 +895,18 @@ async function executePrompt(
   let call:
     | { readonly sent: true; readonly result: AIExecutionResult }
     | { readonly sent: false; readonly refusal: AiAllowanceRefusal };
+  // Outside the `try`, so a call that failed is recorded against its period too.
+  let usagePeriodId: string | null = null;
   try {
     const prompt = renderPrompt(routinePrompt, promptVariables());
 
     // After the prompt is rendered and immediately before it is sent: a prompt
     // that cannot be rendered never takes a unit.
-    const refusal = await reserveAiProcessingFor(routineId, userId);
+    const reservation = await reserveAiProcessingFor(routineId, userId);
+
+    if (reservation?.granted) {
+      usagePeriodId = reservation.usagePeriodId;
+    }
 
     // **No `system`.** A prompt worker's instruction and its material are the
     // same text, exactly as they have always been — the field exists for the
@@ -905,7 +917,7 @@ async function executePrompt(
     // provider happened to allow, which was longer than the tick it runs
     // inside. See `PROMPT_AI_TIMEOUT_MS`.
     call =
-      refusal === null
+      reservation === null || reservation.granted
         ? {
             sent: true,
             result: await provider.execute({
@@ -913,14 +925,14 @@ async function executePrompt(
               timeoutMs: PROMPT_AI_TIMEOUT_MS,
             }),
           }
-        : { sent: false, refusal };
+        : { sent: false, refusal: reservation.refusal };
   } catch (error) {
     // **Before the failure is recorded, and it cannot change it.** A call
     // that was made was billable whether or not it answered, and
     // `recordAIFailure` writes nothing for the failures that never reached a
     // provider. Nothing here is awaited for its result: it cannot throw.
     await recordAIFailure(
-      { userId, feature: "prompt", runId: run.id },
+      { userId, feature: "prompt", runId: run.id, usagePeriodId },
       error,
     );
 
@@ -953,7 +965,10 @@ async function executePrompt(
   // about what a call used is not part of what a run produced, and putting
   // the two writes together would let a bookkeeping failure take a finished
   // run down with it. Nothing is recorded for the stand-in.
-  await recordAIExecution({ userId, feature: "prompt", runId: run.id }, result);
+  await recordAIExecution(
+    { userId, feature: "prompt", runId: run.id, usagePeriodId },
+    result,
+  );
 
   // **Every completed prompt run is worth telling somebody about, including
   // one that produced nothing.** A prompt worker exists to answer, so the
@@ -1301,25 +1316,27 @@ async function processWebsiteChange(
   // anything is sent, so none of them is recorded as a call — which is why
   // the recording lives here rather than at the top of the function, and why
   // the allowance is taken here and not before them.
-  let refusal: AiAllowanceRefusal | null;
+  let reservation: AiAllowanceReservation | null;
   try {
-    refusal = await reserveAiProcessingFor(routineId, userId);
+    reservation = await reserveAiProcessingFor(routineId, userId);
   } catch {
     return failWithoutAdvancing(CHANGE_PROCESSING_FAILED);
   }
 
   // The baseline stays where it was, so the same change is found again once
   // there is allowance to describe it.
-  if (refusal !== null) {
-    return failWithoutAdvancing(aiAllowanceRunMessage(refusal));
+  if (reservation !== null && !reservation.granted) {
+    return failWithoutAdvancing(aiAllowanceRunMessage(reservation.refusal));
   }
+
+  const usagePeriodId = reservation?.usagePeriodId ?? null;
 
   let result: AIExecutionResult;
   try {
     result = await provider.execute(request);
   } catch (error) {
     await recordAIFailure(
-      { userId, feature: "website", runId },
+      { userId, feature: "website", runId, usagePeriodId },
       error,
     );
     console.error(
@@ -1334,7 +1351,10 @@ async function processWebsiteChange(
   // **Recorded before the answer is judged.** A summary that comes back empty
   // fails the run, but the call that produced it was made and paid for all
   // the same.
-  await recordAIExecution({ userId, feature: "website", runId }, result);
+  await recordAIExecution(
+    { userId, feature: "website", runId, usagePeriodId },
+    result,
+  );
 
   const output = result.text;
 
@@ -1605,7 +1625,8 @@ function finalizationFailureMessage(error: unknown): string {
  * Takes one unit of AI processing for a call this run is about to send.
  *
  * **The stand-in costs nothing**, so it takes nothing — it sends no request,
- * exactly as its calls are never recorded as calls.
+ * exactly as its calls are never recorded as calls. Null says so: nothing was
+ * reserved, and there is no period to link a call to.
  *
  * **A database that will not answer stops the call.** Not knowing whether
  * there is allowance is not knowing there is some; what the run stores is a
@@ -1615,24 +1636,27 @@ function finalizationFailureMessage(error: unknown): string {
 async function reserveAiProcessingFor(
   routineId: string,
   userId: string,
-): Promise<AiAllowanceRefusal | null> {
+): Promise<AiAllowanceReservation | null> {
   if (provider.mode !== "real") {
     return null;
   }
 
-  let refusal: AiAllowanceRefusal | null;
+  let reservation: AiAllowanceReservation;
   try {
-    refusal = await reserveAiProcessing(userId);
+    reservation = await reserveAiProcessing(userId);
   } catch (error) {
     console.error("[worker] AI processing allowance could not be read", routineId, error);
     throw new Error("Execution failed.");
   }
 
-  if (refusal !== null) {
-    console.warn(`[worker] AI processing allowance refused — reason=${refusal}`, routineId);
+  if (!reservation.granted) {
+    console.warn(
+      `[worker] AI processing allowance refused — reason=${reservation.refusal}`,
+      routineId,
+    );
   }
 
-  return refusal;
+  return reservation;
 }
 
 /** The provider's own wording, which is what a failed run has always stored. */

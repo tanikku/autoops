@@ -77,6 +77,7 @@ function event(
     },
     outcome: "ok",
     runId: "run-1",
+    usagePeriodId: "period-1",
     ...overrides,
   };
 }
@@ -129,6 +130,7 @@ describe("what is written down", () => {
       cacheWriteTokens: null,
       outcome: "ok",
       runId: "run-1",
+      usagePeriodId: "period-1",
     });
   });
 
@@ -201,6 +203,7 @@ describe("what is never written down", () => {
       "cacheWriteTokens",
       "outcome",
       "runId",
+      "usagePeriodId",
     ]);
   });
 
@@ -288,7 +291,7 @@ describe("recording a call that succeeded", () => {
 
   it("writes the call, with the context the provider never knew", async () => {
     await recordAIExecution(
-      { userId: USER, feature: "prompt", runId: "run-1" },
+      { userId: USER, feature: "prompt", runId: "run-1", usagePeriodId: "period-1" },
       anthropicResult,
       OCCURRED_AT,
     );
@@ -305,12 +308,13 @@ describe("recording a call that succeeded", () => {
       cacheWriteTokens: null,
       outcome: "ok",
       runId: "run-1",
+      usagePeriodId: "period-1",
     });
   });
 
   it("takes the model from the provider rather than from the caller", async () => {
     await recordAIExecution(
-      { userId: USER, feature: "website", runId: "run-2" },
+      { userId: USER, feature: "website", runId: "run-2", usagePeriodId: "period-1" },
       { ...anthropicResult, model: "claude-something-else" },
       OCCURRED_AT,
     );
@@ -322,7 +326,7 @@ describe("recording a call that succeeded", () => {
     "records %o against the run it belonged to",
     async (feature) => {
       await recordAIExecution(
-        { userId: USER, feature, runId: "run-9" },
+        { userId: USER, feature, runId: "run-9", usagePeriodId: "period-1" },
         anthropicResult,
         OCCURRED_AT,
       );
@@ -339,7 +343,7 @@ describe("recording a call that succeeded", () => {
    */
   it("writes nothing for the stand-in provider", async () => {
     await recordAIExecution(
-      { userId: USER, feature: "prompt", runId: "run-1" },
+      { userId: USER, feature: "prompt", runId: "run-1", usagePeriodId: "period-1" },
       {
         provider: "dummy",
         model: "stand-in",
@@ -354,7 +358,7 @@ describe("recording a call that succeeded", () => {
   /** Either condition alone is enough, and this is the other one. */
   it("writes nothing for a result that reports no usage", async () => {
     await recordAIExecution(
-      { userId: USER, feature: "prompt", runId: "run-1" },
+      { userId: USER, feature: "prompt", runId: "run-1", usagePeriodId: "period-1" },
       { ...anthropicResult, usage: null },
       OCCURRED_AT,
     );
@@ -373,7 +377,7 @@ describe("recording a call that failed", () => {
 
   it("writes the call, with nothing invented about what it used", async () => {
     await recordAIFailure(
-      { userId: USER, feature: "discovery", runId: "run-3" },
+      { userId: USER, feature: "discovery", runId: "run-3", usagePeriodId: "period-1" },
       attempted(UNKNOWN_PROVIDER_USAGE),
       OCCURRED_AT,
     );
@@ -390,6 +394,7 @@ describe("recording a call that failed", () => {
       cacheWriteTokens: null,
       outcome: "error",
       runId: "run-3",
+      usagePeriodId: "period-1",
     });
   });
 
@@ -400,7 +405,7 @@ describe("recording a call that failed", () => {
    */
   it("keeps the numbers when the failure knew them", async () => {
     await recordAIFailure(
-      { userId: USER, feature: "prompt", runId: "run-4" },
+      { userId: USER, feature: "prompt", runId: "run-4", usagePeriodId: "period-1" },
       new ProviderError("refused", "declined", {
         attempt: {
           provider: "anthropic",
@@ -422,7 +427,7 @@ describe("recording a call that failed", () => {
 
   it("writes nulls rather than zeroes when the attempt knew nothing", async () => {
     await recordAIFailure(
-      { userId: USER, feature: "prompt", runId: "run-5" },
+      { userId: USER, feature: "prompt", runId: "run-5", usagePeriodId: "period-1" },
       attempted(null),
       OCCURRED_AT,
     );
@@ -444,7 +449,7 @@ describe("recording a call that failed", () => {
     ["null", null],
   ])("writes nothing for %s", async (_label, error) => {
     await recordAIFailure(
-      { userId: USER, feature: "prompt", runId: "run-1" },
+      { userId: USER, feature: "prompt", runId: "run-1", usagePeriodId: "period-1" },
       error,
       OCCURRED_AT,
     );
@@ -454,7 +459,7 @@ describe("recording a call that failed", () => {
 
   it("writes nothing when the attempt was the stand-in", async () => {
     await recordAIFailure(
-      { userId: USER, feature: "prompt", runId: "run-1" },
+      { userId: USER, feature: "prompt", runId: "run-1", usagePeriodId: "period-1" },
       new ProviderError("unknown", "whatever", {
         attempt: { provider: "dummy", model: "stand-in", usage: null },
       }),
@@ -476,7 +481,7 @@ describe("when the bridge cannot write", () => {
 
     await expect(
       recordAIExecution(
-        { userId: USER, feature: "prompt", runId: "run-1" },
+        { userId: USER, feature: "prompt", runId: "run-1", usagePeriodId: "period-1" },
         {
                 provider: "anthropic",
           model: "claude-opus-5",
@@ -492,7 +497,7 @@ describe("when the bridge cannot write", () => {
 
     await expect(
       recordAIFailure(
-        { userId: USER, feature: "prompt", runId: "run-1" },
+        { userId: USER, feature: "prompt", runId: "run-1", usagePeriodId: "period-1" },
         new ProviderError("timeout", "took too long", {
           attempt: {
             provider: "anthropic",
@@ -535,7 +540,7 @@ describe("the AI processing counter", () => {
     "creator-memory",
   ] as const)("writes the ledger and moves no counter for a real call from %o", async (feature) => {
     await recordAIExecution(
-      { userId: USER, feature, runId: null },
+      { userId: USER, feature, runId: null, usagePeriodId: "period-1" },
       anthropicResult,
       OCCURRED_AT,
     );
@@ -548,7 +553,7 @@ describe("the AI processing counter", () => {
 
   it("writes the ledger and moves no counter for a call that was made and then failed", async () => {
     await recordAIFailure(
-      { userId: USER, feature: "prompt", runId: "run-1" },
+      { userId: USER, feature: "prompt", runId: "run-1", usagePeriodId: "period-1" },
       new ProviderError("timeout", "took too long", {
         attempt: { provider: "anthropic", model: "claude-opus-5", usage: null },
       }),
@@ -561,7 +566,7 @@ describe("the AI processing counter", () => {
 
   it("counts nothing for the stand-in provider", async () => {
     await recordAIExecution(
-      { userId: USER, feature: "prompt", runId: "run-1" },
+      { userId: USER, feature: "prompt", runId: "run-1", usagePeriodId: "period-1" },
       { provider: "dummy", model: "stand-in", usage: null },
       OCCURRED_AT,
     );
@@ -576,7 +581,7 @@ describe("the AI processing counter", () => {
     ["a thrown string", "not an error at all"],
   ])("counts nothing for %s", async (_label, error) => {
     await recordAIFailure(
-      { userId: USER, feature: "prompt", runId: "run-1" },
+      { userId: USER, feature: "prompt", runId: "run-1", usagePeriodId: "period-1" },
       error,
       OCCURRED_AT,
     );
@@ -591,7 +596,7 @@ describe("the AI processing counter", () => {
 
     await expect(
       recordAIExecution(
-        { userId: USER, feature: "prompt", runId: "run-1" },
+        { userId: USER, feature: "prompt", runId: "run-1", usagePeriodId: "period-1" },
         { ...anthropicResult, usage: UNKNOWN_PROVIDER_USAGE },
         OCCURRED_AT,
       ),
@@ -647,7 +652,7 @@ describe("a call made after a trial has ended", () => {
 
   it("still writes what the call cost", async () => {
     await recordAIExecution(
-      { userId: USER, feature: "prompt", runId: "run-1" },
+      { userId: USER, feature: "prompt", runId: "run-1", usagePeriodId: "period-1" },
       succeeded,
       AFTER,
     );
@@ -657,7 +662,7 @@ describe("a call made after a trial has ended", () => {
 
   it("moves no product counter and opens no period", async () => {
     await recordAIExecution(
-      { userId: USER, feature: "prompt", runId: "run-1" },
+      { userId: USER, feature: "prompt", runId: "run-1", usagePeriodId: "period-1" },
       succeeded,
       AFTER,
     );
@@ -669,12 +674,85 @@ describe("a call made after a trial has ended", () => {
   /** A failed call is the same story: the cost is kept, the allowance is not. */
   it("keeps the cost of a call that failed after reaching the model", async () => {
     await recordAIFailure(
-      { userId: USER, feature: "website", runId: "run-2" },
+      { userId: USER, feature: "website", runId: "run-2", usagePeriodId: "period-1" },
       failedAfterReaching,
       AFTER,
     );
 
     expect(create).toHaveBeenCalledTimes(1);
     expect(usageUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The period a call is recorded against, as the reservation named it.
+ *
+ * **Carried, never looked up.** Nothing here reads a period to find one: an
+ * account's periods can overlap, so only the spend knows which it counted in.
+ */
+describe("the usage period a call is recorded against", () => {
+  const anthropicResult = {
+    provider: "anthropic" as const,
+    model: "claude-opus-5",
+    usage: {
+      inputTokens: 1_200,
+      outputTokens: 340,
+      cacheReadTokens: 0,
+      cacheWriteTokens: null,
+    },
+  };
+
+  it("writes the period a successful call was reserved in", async () => {
+    await recordAIExecution(
+      { userId: USER, feature: "prompt", runId: "run-1", usagePeriodId: "period-7" },
+      anthropicResult,
+      OCCURRED_AT,
+    );
+
+    expect(written().usagePeriodId).toBe("period-7");
+  });
+
+  it("writes it for a call that reached the provider and failed", async () => {
+    await recordAIFailure(
+      { userId: USER, feature: "prompt", runId: "run-1", usagePeriodId: "period-7" },
+      new ProviderError("unavailable", "The AI provider is unavailable.", {
+        attempt: { provider: "anthropic", model: "claude-opus-5", usage: null },
+      }),
+      OCCURRED_AT,
+    );
+
+    expect(written()).toMatchObject({ outcome: "error", usagePeriodId: "period-7" });
+  });
+
+  /** Null is what every row written before the column existed holds. */
+  it("writes null when no period came with the call", async () => {
+    await recordAIExecution(
+      { userId: USER, feature: "draft", runId: null, usagePeriodId: null },
+      anthropicResult,
+      OCCURRED_AT,
+    );
+
+    expect(written().usagePeriodId).toBeNull();
+  });
+
+  it("looks up no period to fill it in", async () => {
+    await recordAIExecution(
+      { userId: USER, feature: "prompt", runId: "run-1", usagePeriodId: null },
+      anthropicResult,
+      OCCURRED_AT,
+    );
+
+    expect(usagePeriodFindUnique).not.toHaveBeenCalled();
+    expect(usagePeriodCreate).not.toHaveBeenCalled();
+  });
+
+  it("still writes nothing for a failure that never reached a provider", async () => {
+    await recordAIFailure(
+      { userId: USER, feature: "prompt", runId: "run-1", usagePeriodId: "period-7" },
+      new Error("not a provider failure"),
+      OCCURRED_AT,
+    );
+
+    expect(create).not.toHaveBeenCalled();
   });
 });

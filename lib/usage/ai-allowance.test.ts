@@ -29,7 +29,7 @@ const {
 } = await import("@/lib/usage/ai-allowance");
 
 beforeEach(() => {
-  spendAllowances.mockReset().mockResolvedValue({ granted: true });
+  spendAllowances.mockReset().mockResolvedValue({ granted: true, usagePeriodId: "period-1" });
 });
 
 describe("reserveAiProcessing", () => {
@@ -43,8 +43,12 @@ describe("reserveAiProcessing", () => {
     });
   });
 
-  it("answers null when the unit was taken", async () => {
-    expect(await reserveAiProcessing("user-1")).toBeNull();
+  /** The period is the one the spend counted in, handed on unchanged. */
+  it("answers granted, with the period the unit was taken in", async () => {
+    expect(await reserveAiProcessing("user-1")).toEqual({
+      granted: true,
+      usagePeriodId: "period-1",
+    });
   });
 
   it.each([
@@ -53,7 +57,10 @@ describe("reserveAiProcessing", () => {
   ])("answers exhausted when the allowance is spent (%o)", async (result) => {
     spendAllowances.mockResolvedValue(result);
 
-    expect(await reserveAiProcessing("user-1")).toBe("exhausted");
+    expect(await reserveAiProcessing("user-1")).toEqual({
+      granted: false,
+      refusal: "exhausted",
+    });
   });
 
   /** Every other refusal still means the request is not sent. */
@@ -64,7 +71,10 @@ describe("reserveAiProcessing", () => {
   ])("answers unavailable for %o", async (result) => {
     spendAllowances.mockResolvedValue(result);
 
-    expect(await reserveAiProcessing("user-1")).toBe("unavailable");
+    expect(await reserveAiProcessing("user-1")).toEqual({
+      granted: false,
+      refusal: "unavailable",
+    });
   });
 
   it("lets a database failure through rather than guessing", async () => {
@@ -132,7 +142,7 @@ describe("the period allowances for runs", () => {
   });
 
   it.each([
-    [{ granted: true }, null],
+    [{ granted: true, usagePeriodId: "period-1" }, null],
     [{ granted: false, reason: "exhausted", kind: "manualRun", scope: "period" }, "exhausted"],
     [{ granted: false, reason: "not-entitled" }, "unavailable"],
     [{ granted: false, reason: "not-counted" }, "unavailable"],

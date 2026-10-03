@@ -25,16 +25,27 @@ export type AiAllowanceRefusal =
   | "unavailable";
 
 /**
+ * What reserving AI processing came to.
+ *
+ * **Granted carries the period the unit was taken in**, so the provider call it
+ * pays for can be recorded against exactly that period. It is the id the spend
+ * itself used, not one looked up afterwards.
+ */
+export type AiAllowanceReservation =
+  | { readonly granted: true; readonly usagePeriodId: string }
+  | { readonly granted: false; readonly refusal: AiAllowanceRefusal };
+
+/**
  * Takes one unit of AI processing for the account, or says why it cannot.
  *
- * Null means the unit is taken and the request may be sent. Every refusal that
- * is not about the allowance being spent — not entitled, nowhere to count it, no
- * counter — is `unavailable`: each means the account cannot spend, and none is
- * a reason to send the request anyway.
+ * Granted means the unit is taken and the request may be sent. Every refusal
+ * that is not about the allowance being spent — not entitled, nowhere to count
+ * it, no counter — is `unavailable`: each means the account cannot spend, and
+ * none is a reason to send the request anyway.
  */
 export async function reserveAiProcessing(
   userId: string,
-): Promise<AiAllowanceRefusal | null> {
+): Promise<AiAllowanceReservation> {
   return reserveOne(userId, "aiProcessing");
 }
 
@@ -48,7 +59,7 @@ export async function reserveAiProcessing(
 export async function reserveManualRun(
   userId: string,
 ): Promise<AiAllowanceRefusal | null> {
-  return reserveOne(userId, "manualRun");
+  return refusalOf(await reserveOne(userId, "manualRun"));
 }
 
 /**
@@ -59,7 +70,7 @@ export async function reserveManualRun(
 export async function reserveDiscoveryRun(
   userId: string,
 ): Promise<AiAllowanceRefusal | null> {
-  return reserveOne(userId, "discovery");
+  return refusalOf(await reserveOne(userId, "discovery"));
 }
 
 /**
@@ -69,17 +80,24 @@ export async function reserveDiscoveryRun(
 async function reserveOne(
   userId: string,
   kind: "aiProcessing" | "manualRun" | "discovery",
-): Promise<AiAllowanceRefusal | null> {
+): Promise<AiAllowanceReservation> {
   const result = await spendAllowances({
     userId,
     items: [{ kind, units: 1 }],
   });
 
   if (result.granted) {
-    return null;
+    return { granted: true, usagePeriodId: result.usagePeriodId };
   }
 
-  return result.reason === "exhausted" ? "exhausted" : "unavailable";
+  return {
+    granted: false,
+    refusal: result.reason === "exhausted" ? "exhausted" : "unavailable",
+  };
+}
+
+function refusalOf(reservation: AiAllowanceReservation): AiAllowanceRefusal | null {
+  return reservation.granted ? null : reservation.refusal;
 }
 
 /** Thrown where a refusal has to leave as an error — a Creator analysis. */

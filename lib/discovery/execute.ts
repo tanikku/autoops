@@ -15,6 +15,7 @@ import type { DiscoveryCandidate, DiscoverySelection } from "@/lib/discovery/typ
 import { DISCOVERY_NO_SELECTION_OUTPUT } from "@/lib/run-display";
 import {
   type AiAllowanceRefusal,
+  type AiAllowanceReservation,
   aiAllowanceRunMessage,
   discoveryAllowanceRunMessage,
   reserveAiProcessing,
@@ -79,8 +80,17 @@ export type DiscoveryExecution =
  * made, or nothing at all — and the third is the common case.
  */
 export type DiscoveryProviderCall =
-  | { readonly kind: "result"; readonly result: AIExecutionResult }
-  | { readonly kind: "failure"; readonly error: unknown }
+  | {
+      readonly kind: "result";
+      readonly result: AIExecutionResult;
+      /** The period the call's AI allowance was reserved in, when one was. */
+      readonly usagePeriodId: string | null;
+    }
+  | {
+      readonly kind: "failure";
+      readonly error: unknown;
+      readonly usagePeriodId: string | null;
+    }
   | null;
 
 /**
@@ -283,23 +293,30 @@ export async function executeDiscovery(
   // missing, a search that failed and a search with nothing new all end above
   // without sending anything, so none of them spends AI processing. The
   // stand-in sends nothing either.
+  let usagePeriodId: string | null = null;
+
   if (deps.aiProvider.mode === "real") {
-    let refusal: AiAllowanceRefusal | null;
+    let reservation: AiAllowanceReservation;
     try {
-      refusal = await reserveAiProcessing(userId);
+      reservation = await reserveAiProcessing(userId);
     } catch (error) {
       console.error("[worker] AI processing allowance could not be read", routineId, error);
       return { status: "failed", errorMessage: SELECTION_FAILED, call: null };
     }
 
-    if (refusal !== null) {
-      console.warn(`[worker] AI processing allowance refused — reason=${refusal}`, routineId);
+    if (!reservation.granted) {
+      console.warn(
+        `[worker] AI processing allowance refused — reason=${reservation.refusal}`,
+        routineId,
+      );
       return {
         status: "failed",
-        errorMessage: aiAllowanceRunMessage(refusal),
+        errorMessage: aiAllowanceRunMessage(reservation.refusal),
         call: null,
       };
     }
+
+    usagePeriodId = reservation.usagePeriodId;
   }
 
   let selection: DiscoverySelectionResult;
@@ -323,14 +340,14 @@ export async function executeDiscovery(
     // **The failure carries the call, when there was one.** An answer that
     // arrived and could not be used was still paid for, and an unusable
     // answer is the failure most worth being able to count.
-    return { status: "failed", errorMessage: SELECTION_FAILED, call: failedCall(error) };
+    return { status: "failed", errorMessage: SELECTION_FAILED, call: failedCall(error, usagePeriodId) };
   }
 
   if (selection.selections.length === 0) {
     // A valid answer that chose nothing, or one whose every choice shared an
     // author with an earlier one. Both are finished runs — and both followed
     // a real call, which is why the call goes with them.
-    return completedWithNothing(madeCall(selection.call));
+    return completedWithNothing(madeCall(selection.call, usagePeriodId));
   }
 
   const byKey = new Map(fresh.map((candidate) => [candidate.itemKey, candidate]));
@@ -339,7 +356,7 @@ export async function executeDiscovery(
 
   return {
     status: "completed",
-    call: madeCall(selection.call),
+    call: madeCall(selection.call, usagePeriodId),
     // **In the order the model ranked them**, which is the order the list is
     // read in and the order they are written down in.
     selected: chosen
@@ -351,8 +368,11 @@ export async function executeDiscovery(
 }
 
 /** What a call that returned looks like to the caller. Null stays null. */
-function madeCall(result: AIExecutionResult | null): DiscoveryProviderCall {
-  return result === null ? null : { kind: "result", result };
+function madeCall(
+  result: AIExecutionResult | null,
+  usagePeriodId: string | null,
+): DiscoveryProviderCall {
+  return result === null ? null : { kind: "result", result, usagePeriodId };
 }
 
 /**
@@ -362,16 +382,19 @@ function madeCall(result: AIExecutionResult | null): DiscoveryProviderCall {
  * ask whether a provider was actually reached — this one would have to know
  * about provider errors to decide, and it deliberately does not.
  */
-function failedCall(error: unknown): DiscoveryProviderCall {
+function failedCall(
+  error: unknown,
+  usagePeriodId: string | null,
+): DiscoveryProviderCall {
   // **An unusable answer is a call that succeeded.** The model was reached, it
   // replied, and the reply was billed; only the using of it failed. Reporting
   // that as a failed call would put a wasted charge in the column meant for
   // charges that never happened.
   if (error instanceof InvalidDiscoverySelectionError && error.call !== null) {
-    return { kind: "result", result: error.call };
+    return { kind: "result", result: error.call, usagePeriodId };
   }
 
-  return { kind: "failure", error };
+  return { kind: "failure", error, usagePeriodId };
 }
 
 /** A finished run that chose nothing, which is an outcome rather than an absence. */

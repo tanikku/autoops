@@ -51,6 +51,7 @@ export async function recordProviderUsage(
         cacheWriteTokens: event.usage.cacheWriteTokens,
         outcome: event.outcome,
         runId: event.runId,
+        usagePeriodId: event.usagePeriodId,
       },
     });
   } catch (error) {
@@ -75,6 +76,8 @@ export type AICallContext = {
   readonly feature: UsageFeature;
   /** The run this call belonged to, or null for the paths that have none. */
   readonly runId: string | null;
+  /** The period the call's AI allowance was reserved in, when one was. */
+  readonly usagePeriodId: string | null;
 };
 
 /**
@@ -112,6 +115,7 @@ export async function recordAIExecution(
     usage: result.usage,
     outcome: "ok",
     runId: context.runId,
+    usagePeriodId: context.usagePeriodId,
   });
 }
 
@@ -149,5 +153,6 @@ export async function recordAIFailure(
     usage: attempt.usage ?? UNKNOWN_PROVIDER_USAGE,
     outcome: "error",
     runId: context.runId,
+    usagePeriodId: context.usagePeriodId,
   });
 }

@@ -472,7 +472,7 @@ describe("spendAllowances — an account with room", () => {
   it("takes one allowance and says so", async () => {
     const db = fakeDatabase({ subscription: paidRow(), periods: [PAID_PERIOD], counters: liteCounters() });
 
-    expect(await spend(db, [{ kind: "manualRun", units: 1 }])).toEqual({ granted: true });
+    expect(await spend(db, [{ kind: "manualRun", units: 1 }])).toEqual({ granted: true, usagePeriodId: expect.any(String) });
     expect(db.used("period-paid", "manualRun")).toBe(1);
   });
 
@@ -523,7 +523,7 @@ describe("spendAllowances — an account with room", () => {
       counters: liteCounters({ manual: 19 }),
     });
 
-    expect(await spend(db, [{ kind: "manualRun", units: 1 }])).toEqual({ granted: true });
+    expect(await spend(db, [{ kind: "manualRun", units: 1 }])).toEqual({ granted: true, usagePeriodId: expect.any(String) });
     expect(await spend(db, [{ kind: "manualRun", units: 1 }])).toEqual({
       granted: false,
       reason: "exhausted",
@@ -595,7 +595,7 @@ describe("spendAllowances — who may spend, and from where", () => {
   ])("spends %s from its billing period", async (_label, row) => {
     const db = fakeDatabase({ subscription: row, periods: [PAID_PERIOD], counters: liteCounters() });
 
-    expect(await spend(db, [{ kind: "manualRun", units: 1 }])).toEqual({ granted: true });
+    expect(await spend(db, [{ kind: "manualRun", units: 1 }])).toEqual({ granted: true, usagePeriodId: expect.any(String) });
     expect(db.used("period-paid", "manualRun")).toBe(1);
     expect(db.tx.usagePeriod.create).not.toHaveBeenCalled();
   });
@@ -617,7 +617,7 @@ describe("spendAllowances — who may spend, and from where", () => {
       }),
     });
 
-    expect(await spend(db, [{ kind: "manualRun", units: 1 }])).toEqual({ granted: true });
+    expect(await spend(db, [{ kind: "manualRun", units: 1 }])).toEqual({ granted: true, usagePeriodId: expect.any(String) });
 
     const [period] = db.periods();
     expect(period.periodStart).toEqual(trialStart);
@@ -636,7 +636,7 @@ describe("spendAllowances — who may spend, and from where", () => {
       }),
     });
 
-    expect(await spend(db, [{ kind: "manualRun", units: 1 }])).toEqual({ granted: true });
+    expect(await spend(db, [{ kind: "manualRun", units: 1 }])).toEqual({ granted: true, usagePeriodId: expect.any(String) });
 
     const [period] = db.periods();
     expect(period.periodStart).toEqual(new Date("2026-10-01T00:00:00.000Z"));
@@ -728,7 +728,7 @@ describe("spendAllowances — before a trial", () => {
   it("allows AI while the lifetime total stays within the trial's allowance", async () => {
     const db = preTrial([49]);
 
-    expect(await spend(db, [{ kind: "aiProcessing", units: 1 }])).toEqual({ granted: true });
+    expect(await spend(db, [{ kind: "aiProcessing", units: 1 }])).toEqual({ granted: true, usagePeriodId: expect.any(String) });
     expect(db.used("month-0", "aiProcessing")).toBe(50);
   });
 
@@ -764,7 +764,7 @@ describe("spendAllowances — before a trial", () => {
     const limit = getPlanDefinition("trial").aiProcessingLimit;
     const db = preTrial([limit - 1]);
 
-    expect(await spend(db, [{ kind: "aiProcessing", units: 1 }])).toEqual({ granted: true });
+    expect(await spend(db, [{ kind: "aiProcessing", units: 1 }])).toEqual({ granted: true, usagePeriodId: expect.any(String) });
     expect(await spend(db, [{ kind: "aiProcessing", units: 1 }])).toMatchObject({
       reason: "exhausted",
       scope: "pre-trial",
@@ -787,7 +787,7 @@ describe("spendAllowances — before a trial", () => {
   it("opens this month's period for the first use", async () => {
     const db = fakeDatabase({ subscription: null });
 
-    expect(await spend(db, [{ kind: "aiProcessing", units: 1 }])).toEqual({ granted: true });
+    expect(await spend(db, [{ kind: "aiProcessing", units: 1 }])).toEqual({ granted: true, usagePeriodId: expect.any(String) });
     expect(db.periods()).toHaveLength(1);
     expect(db.periods()[0].periodStart).toEqual(new Date("2026-10-01T00:00:00.000Z"));
   });
@@ -806,7 +806,7 @@ describe("spendAllowances — a period opened by observation at the same moment"
   it("begins again once, and says so without naming anybody", async () => {
     const db = fakeDatabase({ subscription: null, createFailures: 1 });
 
-    expect(await spend(db, [{ kind: "aiProcessing", units: 1 }])).toEqual({ granted: true });
+    expect(await spend(db, [{ kind: "aiProcessing", units: 1 }])).toEqual({ granted: true, usagePeriodId: expect.any(String) });
     expect(db.transactions()).toBe(2);
     expect(warnings).toEqual(["[usage] allowance period conflict — retried"]);
   });
@@ -846,7 +846,7 @@ describe("spendAllowances — inside a caller's transaction", () => {
   it("joins it rather than opening one", async () => {
     const db = fakeDatabase({ subscription: paidRow(), periods: [PAID_PERIOD], counters: liteCounters() });
 
-    expect(await joinTransaction(db)).toEqual({ granted: true });
+    expect(await joinTransaction(db)).toEqual({ granted: true, usagePeriodId: expect.any(String) });
     expect(db.transactions()).toBe(0);
   });
 
@@ -1018,7 +1018,7 @@ describe("spendAllowances — the instant it is judged at", () => {
         items: [{ kind: "aiProcessing", units: 1 }],
         client: db.client as never,
       }),
-    ).toEqual({ granted: true });
+    ).toEqual({ granted: true, usagePeriodId: expect.any(String) });
 
     const [period] = db.periods();
     expect(period.planAtStart).toBe("trial");
@@ -1053,7 +1053,7 @@ describe("spendAllowances — the instant it is judged at", () => {
         items: [{ kind: "aiProcessing", units: 1 }],
         client: db.client as never,
       }),
-    ).toEqual({ granted: true });
+    ).toEqual({ granted: true, usagePeriodId: expect.any(String) });
 
     const [period] = db.periods();
     expect(period.planAtStart).toBe("beta");
@@ -1105,7 +1105,7 @@ describe("spendAllowances — the instant it is judged at", () => {
         items: [{ kind: "aiProcessing", units: 1 }],
         client: db.client as never,
       }),
-    ).toEqual({ granted: true });
+    ).toEqual({ granted: true, usagePeriodId: expect.any(String) });
 
     const [period] = db.periods();
     expect(period.periodStart).toEqual(new Date("2026-11-01T00:00:00.000Z"));
@@ -1127,7 +1127,7 @@ describe("spendAllowances — the instant it is judged at", () => {
         now: new Date("2026-10-20T00:00:00.000Z"),
         client: db.client as never,
       }),
-    ).toEqual({ granted: true });
+    ).toEqual({ granted: true, usagePeriodId: expect.any(String) });
 
     const [period] = db.periods();
     expect(period.periodStart).toEqual(new Date("2026-10-01T00:00:00.000Z"));
@@ -1143,7 +1143,61 @@ describe("spendAllowances — the instant it is judged at", () => {
         items: [{ kind: "aiProcessing", units: 1 }],
         client: db.tx as never,
       }),
-    ).toEqual({ granted: true });
+    ).toEqual({ granted: true, usagePeriodId: expect.any(String) });
     expect(db.periods()[0].planAtStart).toBe("trial");
+  });
+});
+
+/**
+ * Which period a grant was counted in, as the grant itself says.
+ *
+ * **The id the spend used, not one found again afterwards.** An account's
+ * periods can overlap, so a lookup by time could name a period nothing was
+ * taken from; these tests tie the answer to the counter that actually moved.
+ */
+describe("spendAllowances — the period a grant names", () => {
+  it("names the existing period it took the unit from", async () => {
+    const db = fakeDatabase({ subscription: paidRow(), periods: [PAID_PERIOD], counters: liteCounters() });
+
+    const result = await spend(db, [{ kind: "aiProcessing", units: 1 }]);
+
+    expect(result).toEqual({ granted: true, usagePeriodId: "period-paid" });
+    expect(db.used("period-paid", "aiProcessing")).toBe(1);
+  });
+
+  it("names a period it had to open for the first use", async () => {
+    const db = fakeDatabase({});
+
+    const result = await spend(db, [{ kind: "aiProcessing", units: 1 }]);
+    const [period] = db.periods();
+
+    expect(result).toEqual({ granted: true, usagePeriodId: period.id });
+    expect(db.used(period.id, "aiProcessing")).toBe(1);
+  });
+
+  it("names the period inside a caller's transaction too", async () => {
+    const db = fakeDatabase({ subscription: paidRow(), periods: [PAID_PERIOD], counters: liteCounters() });
+
+    expect(
+      await spendAllowances({
+        userId: USER,
+        items: [{ kind: "manualRun", units: 1 }],
+        now: NOW,
+        client: db.tx as never,
+      }),
+    ).toEqual({ granted: true, usagePeriodId: "period-paid" });
+  });
+
+  it("names no period when nothing was taken", async () => {
+    const db = fakeDatabase({
+      subscription: paidRow(),
+      periods: [PAID_PERIOD],
+      counters: liteCounters({ ai: 30 }),
+    });
+
+    const result = await spend(db, [{ kind: "aiProcessing", units: 1 }]);
+
+    expect(result.granted).toBe(false);
+    expect(result).not.toHaveProperty("usagePeriodId");
   });
 });

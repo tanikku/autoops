@@ -41,8 +41,13 @@ const mocks = vi.hoisted(() => ({
 // does against a database is `lib/usage/consume.ts`'s own suite.
 const allowance = vi.hoisted(() => ({
   reserveAiProcessing: vi.fn<
-    (userId: string) => Promise<"exhausted" | "unavailable" | null>
-  >(async () => null),
+    (
+      userId: string,
+    ) => Promise<
+      | { granted: true; usagePeriodId: string }
+      | { granted: false; refusal: "exhausted" | "unavailable" }
+    >
+  >(async () => ({ granted: true, usagePeriodId: "period-1" })),
   // **Recorded where the run was always counted.** The period allowance is now
   // taken rather than observed; the counting tests below read the same record.
   reserveDiscoveryRun: vi.fn<
@@ -765,6 +770,36 @@ describe("a discovery run — what it records about its call", () => {
     expect(mocks.usageCreate).not.toHaveBeenCalled();
   });
 
+  it("records the call against the period its allowance was reserved in", async () => {
+    allowance.reserveAiProcessing.mockResolvedValueOnce({
+      granted: true,
+      usagePeriodId: "period-42",
+    });
+    available([candidate("a")]);
+    mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(usageRow().usagePeriodId).toBe("period-42");
+  });
+
+  it("records a selection that failed after being sent against the same period", async () => {
+    allowance.reserveAiProcessing.mockResolvedValueOnce({
+      granted: true,
+      usagePeriodId: "period-42",
+    });
+    available([candidate("a")]);
+    mocks.select.mockRejectedValue(
+      new ProviderError("timeout", "took too long", {
+        attempt: { provider: "anthropic", model: "claude-opus-5", usage: null },
+      }),
+    );
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(usageRow()).toMatchObject({ outcome: "error", usagePeriodId: "period-42" });
+  });
+
   it("records one call when a model was asked", async () => {
     available([candidate("a")]);
     mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
@@ -1206,7 +1241,7 @@ describe("a discovery run — the AI processing allowance", () => {
     ["unavailable", AI_ALLOWANCE_UNAVAILABLE_MESSAGE],
   ] as const)("asks no model when the allowance is %s", async (refusal, message) => {
     available([candidate("a")]);
-    allowance.reserveAiProcessing.mockResolvedValueOnce(refusal);
+    allowance.reserveAiProcessing.mockResolvedValueOnce({ granted: false, refusal });
 
     const result = await executeDiscovery(ROUTINE_ID, USER_ID, { aiProvider });
 
@@ -1234,7 +1269,7 @@ describe("a discovery run — the AI processing allowance", () => {
       emailNotificationsEnabled: true,
     });
     available([candidate("a")]);
-    allowance.reserveAiProcessing.mockResolvedValueOnce("exhausted");
+    allowance.reserveAiProcessing.mockResolvedValueOnce({ granted: false, refusal: "exhausted" });
 
     const finished = await runRoutine(ROUTINE_ID);
 

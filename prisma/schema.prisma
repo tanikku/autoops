@@ -850,6 +850,8 @@ model UsagePeriod {
   createdAt   DateTime       @default(now())
   user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   counters    UsageCounter[]
+  /// The provider calls whose AI allowance was reserved in this period.
+  providerUsageEvents ProviderUsageEvent[]
 
   /// One period per account and start instant. What makes two simultaneous
   /// first requests produce one period and one constraint failure, rather than
@@ -928,13 +930,24 @@ model ProviderUsageEvent {
   /// and a cascade would delete the record of what something cost along with
   /// the record of what it did, which are two different things to keep.
   runId            String?
+  /// The period the call's AI allowance was reserved in, as the reservation
+  /// returned it — never looked up from the time, because periods can overlap.
+  ///
+  /// **Null means not linked**: recorded before this column existed, or for a
+  /// call no reservation came with. Nothing is backfilled. **`SetNull`, not a
+  /// cascade**, for the same reason as `runId`: what a call cost outlives the
+  /// period that counted it.
+  usagePeriodId    String?
   createdAt        DateTime @default(now())
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  usagePeriod      UsagePeriod? @relation(fields: [usagePeriodId], references: [id], onDelete: SetNull)
 
   /// What one account spent, over a span.
   @@index([userId, occurredAt])
   /// What the deployment spent, over a span. The question a cost guard asks.
   @@index([occurredAt])
+  /// What one usage period's reservations cost.
+  @@index([usagePeriodId])
 }
 
 /// One thing a billing provider said happened to a subscription.

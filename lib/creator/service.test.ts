@@ -87,8 +87,13 @@ const tx = {
 // does against a database is `lib/usage/consume.ts`'s own suite.
 const allowance = vi.hoisted(() => ({
   reserveAiProcessing: vi.fn<
-    (userId: string) => Promise<"exhausted" | "unavailable" | null>
-  >(async () => null),
+    (
+      userId: string,
+    ) => Promise<
+      | { granted: true; usagePeriodId: string }
+      | { granted: false; refusal: "exhausted" | "unavailable" }
+    >
+  >(async () => ({ granted: true, usagePeriodId: "period-1" })),
 }));
 
 vi.mock("@/lib/usage/ai-allowance", async (importOriginal) => ({
@@ -1203,6 +1208,30 @@ describe("the summary of older answers", () => {
       ).length;
     }
 
+    /**
+     * **Two calls, two reservations, two periods named.** The memory call is
+     * reserved and sent first; the analysis is reserved on its own afterwards.
+     */
+    it("links the memory call and the analysis call to their own reservations", async () => {
+      agedOutFeedback();
+      allowance.reserveAiProcessing
+        .mockResolvedValueOnce({ granted: true, usagePeriodId: "period-memory" })
+        .mockResolvedValueOnce({ granted: true, usagePeriodId: "period-analysis" });
+      const { analyzer } = fakeAnalyzer(threeRecommendations);
+      const { synthesizer } = fakeSynthesizer();
+
+      await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
+
+      const analysisRow = usageCreate.mock.calls.find(
+        (entry: { data: { feature: string } }[]) =>
+          entry[0].data.feature === "creator-analysis",
+      )?.[0].data;
+
+      expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(2);
+      expect(memoryRow()?.usagePeriodId).toBe("period-memory");
+      expect(analysisRow?.usagePeriodId).toBe("period-analysis");
+    });
+
     it("records one call when a summary came back", async () => {
       agedOutFeedback();
       const { analyzer } = fakeAnalyzer(threeRecommendations);
@@ -1377,7 +1406,7 @@ describe("the summary of older answers", () => {
       async (refusal) => {
         agedOutFeedback();
         // The synthesis asks first; the analysis after it is granted.
-        allowance.reserveAiProcessing.mockResolvedValueOnce(refusal);
+        allowance.reserveAiProcessing.mockResolvedValueOnce({ granted: false, refusal });
         const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
         const { synthesizer, requests: synthesised } = fakeSynthesizer();
 
@@ -1870,7 +1899,7 @@ describe("an analysis the AI processing allowance refused", () => {
   it.each(["exhausted", "unavailable"] as const)(
     "asks no model and writes nothing when the allowance is %s",
     async (refusal) => {
-      allowance.reserveAiProcessing.mockResolvedValueOnce(refusal);
+      allowance.reserveAiProcessing.mockResolvedValueOnce({ granted: false, refusal });
       const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
 
       const error = await analyzeCreatorText(

@@ -152,7 +152,12 @@ export type AllowanceScope =
 
 /** What spending came to. Nothing was taken unless it says `granted`. */
 export type SpendAllowancesResult =
-  | { readonly granted: true }
+  /**
+   * Everything was taken, in this period. The id is the one the spend itself
+   * counted in — never found again afterwards by time, because an account's
+   * periods can overlap.
+   */
+  | { readonly granted: true; readonly usagePeriodId: string }
   /** One of the allowances did not have room. Nothing was taken. */
   | {
       readonly granted: false;
@@ -326,7 +331,7 @@ async function spendWithin(
   userId: string,
   items: readonly AllowanceItem[],
   explicitNow: Date | undefined,
-): Promise<void> {
+): Promise<string> {
   await lockAccount(client, userId);
 
   // **The clock is read once the lock is held, not before.** A trial start that
@@ -388,6 +393,8 @@ async function spendWithin(
       );
     }
   }
+
+  return period.id;
 }
 
 /**
@@ -418,16 +425,16 @@ export async function spendAllowances(input: {
   const owned = "$transaction" in client && typeof client.$transaction === "function";
 
   if (!owned) {
-    await spendWithin(client, input.userId, items, now);
-    return { granted: true };
+    const usagePeriodId = await spendWithin(client, input.userId, items, now);
+    return { granted: true, usagePeriodId };
   }
 
   const attempt = async (): Promise<SpendAllowancesResult> => {
     try {
-      await (client as typeof prisma).$transaction((tx) =>
+      const usagePeriodId = await (client as typeof prisma).$transaction((tx) =>
         spendWithin(tx, input.userId, items, now),
       );
-      return { granted: true };
+      return { granted: true, usagePeriodId };
     } catch (error) {
       const refusal = allowanceRefusalOf(error);
 

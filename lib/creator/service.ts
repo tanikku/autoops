@@ -39,7 +39,7 @@ import {
   providerErrorKind,
 } from "@/lib/ai/provider";
 import {
-  type AiAllowanceRefusal,
+  type AiAllowanceReservation,
   AiAllowanceRefusedError,
   reserveAiProcessing,
 } from "@/lib/usage/ai-allowance";
@@ -201,11 +201,13 @@ async function analyzeCreatorContent(
   // **After every check that refuses the request for free, and immediately
   // before it is sent.** A refusal writes nothing, exactly as a failed call
   // does not.
-  const refusal = await reserveAiProcessing(userId);
+  const reservation = await reserveAiProcessing(userId);
 
-  if (refusal !== null) {
-    throw new AiAllowanceRefusedError(refusal);
+  if (!reservation.granted) {
+    throw new AiAllowanceRefusedError(reservation.refusal);
   }
+
+  const { usagePeriodId } = reservation;
 
   let analysis: CreatorAnalysis;
   try {
@@ -216,7 +218,7 @@ async function analyzeCreatorContent(
     // billed. Everything refused before a request was sent — a body that is
     // empty, one too large — never reaches here.
     await recordProviderOutcome(
-      { userId, feature: "creator-analysis", runId: null },
+      { userId, feature: "creator-analysis", runId: null, usagePeriodId },
       error instanceof InvalidCreatorAnalysisResponseError ? error.call : null,
       error,
     );
@@ -230,7 +232,7 @@ async function analyzeCreatorContent(
   // an analysis somebody paid for. There is no run to point at — a Creator
   // analysis is not a worker — so `runId` is null.
   await recordAIExecution(
-    { userId, feature: "creator-analysis", runId: null },
+    { userId, feature: "creator-analysis", runId: null, usagePeriodId },
     analysis.call,
   );
 
@@ -549,16 +551,18 @@ async function refreshCreatorMemory({
   // **Spent only for a batch that will be sent.** A refusal writes nothing — no
   // summary and no memberships — so every answer in the batch is still
   // outstanding, and a later analysis with allowance picks it up.
-  let refusal: AiAllowanceRefusal | null;
+  let reservation: AiAllowanceReservation;
   try {
-    refusal = await reserveAiProcessing(userId);
+    reservation = await reserveAiProcessing(userId);
   } catch (error) {
     logMemoryAnomaly("allowance-read-failed", error);
     return null;
   }
 
-  if (refusal !== null) {
-    console.warn(`[creator] memory synthesis skipped — allowance ${refusal}`);
+  if (!reservation.granted) {
+    console.warn(
+      `[creator] memory synthesis skipped — allowance ${reservation.refusal}`,
+    );
     return null;
   }
 
@@ -572,7 +576,12 @@ async function refreshCreatorMemory({
     // nothing. An unusable summary is the other way round: the model was
     // reached and replied, so it is recorded as the call it was.
     await recordProviderOutcome(
-      { userId, feature: "creator-memory", runId: null },
+      {
+        userId,
+        feature: "creator-memory",
+        runId: null,
+        usagePeriodId: reservation.usagePeriodId,
+      },
       error instanceof InvalidCreatorMemoryError ? error.call : null,
       error,
     );
@@ -591,7 +600,12 @@ async function refreshCreatorMemory({
   // the row stays exactly as it is. Nothing is refunded and nothing is asked
   // again.
   await recordAIExecution(
-    { userId, feature: "creator-memory", runId: null },
+    {
+      userId,
+      feature: "creator-memory",
+      runId: null,
+      usagePeriodId: reservation.usagePeriodId,
+    },
     synthesis.call,
   );
 

@@ -129,4 +129,6 @@ export type ProviderUsageEventInput = {
   readonly outcome: UsageOutcome;
   /** The run this belonged to, when it belonged to one. Null for the rest. */
   readonly runId: string | null;
+  /** The period the call's AI allowance was reserved in. Null when not linked. */
+  readonly usagePeriodId: string | null;
 };

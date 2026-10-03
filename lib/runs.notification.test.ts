@@ -43,8 +43,13 @@ const mocks = vi.hoisted(() => ({
 // does against a database is `lib/usage/consume.ts`'s own suite.
 const allowance = vi.hoisted(() => ({
   reserveAiProcessing: vi.fn<
-    (userId: string) => Promise<"exhausted" | "unavailable" | null>
-  >(async () => null),
+    (
+      userId: string,
+    ) => Promise<
+      | { granted: true; usagePeriodId: string }
+      | { granted: false; refusal: "exhausted" | "unavailable" }
+    >
+  >(async () => ({ granted: true, usagePeriodId: "period-1" })),
 }));
 
 vi.mock("@/lib/usage/ai-allowance", async (importOriginal) => ({
@@ -439,7 +444,7 @@ describe("a run the AI processing allowance refused", () => {
     "sends nothing for a prompt worker refused as %s",
     async (refusal) => {
       mocks.findUniqueOrThrow.mockResolvedValue(worker({ kind: "prompt" }));
-      allowance.reserveAiProcessing.mockResolvedValueOnce(refusal);
+      allowance.reserveAiProcessing.mockResolvedValueOnce({ granted: false, refusal });
 
       await runRoutine("worker-1");
 
@@ -450,7 +455,7 @@ describe("a run the AI processing allowance refused", () => {
 
   it("sends nothing for a website worker whose change was refused", async () => {
     mocks.getWebsiteSnapshot.mockResolvedValue(changedSnapshot());
-    allowance.reserveAiProcessing.mockResolvedValueOnce("exhausted");
+    allowance.reserveAiProcessing.mockResolvedValueOnce({ granted: false, refusal: "exhausted" });
 
     await runRoutine("worker-1");
 

@@ -39,8 +39,13 @@ const mocks = vi.hoisted(() => ({
 // does against a database is `lib/usage/consume.ts`'s own suite.
 const allowance = vi.hoisted(() => ({
   reserveAiProcessing: vi.fn<
-    (userId: string) => Promise<"exhausted" | "unavailable" | null>
-  >(async () => null),
+    (
+      userId: string,
+    ) => Promise<
+      | { granted: true; usagePeriodId: string }
+      | { granted: false; refusal: "exhausted" | "unavailable" }
+    >
+  >(async () => ({ granted: true, usagePeriodId: "period-1" })),
 }));
 
 vi.mock("@/lib/usage/ai-allowance", async (importOriginal) => ({
@@ -1721,6 +1726,20 @@ describe("generateWorkerDraftAction — what it records about its call", () => {
     return mocks.usageCreate.mock.calls[0][0].data;
   }
 
+  it("records the call against the period its allowance was reserved in", async () => {
+    allowance.reserveAiProcessing.mockResolvedValueOnce({
+      granted: true,
+      usagePeriodId: "period-42",
+    });
+    mocks.generate.mockResolvedValue(
+      draftGeneration({ status: "unsupported", reason: "no" }),
+    );
+
+    await ask("watch a page");
+
+    expect(usageRow().usagePeriodId).toBe("period-42");
+  });
+
   it("records one call when a draft came back", async () => {
     mocks.generate.mockResolvedValue(
       draftGeneration({ status: "unsupported", reason: "no" }),
@@ -1951,7 +1970,7 @@ describe("generateWorkerDraftAction — the AI processing allowance", () => {
   ] as const)(
     "asks no model and says so when the allowance is %s",
     async (refusal, key) => {
-      allowance.reserveAiProcessing.mockResolvedValueOnce(refusal);
+      allowance.reserveAiProcessing.mockResolvedValueOnce({ granted: false, refusal });
 
       const result = await ask("watch a page");
 

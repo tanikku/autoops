@@ -28,8 +28,13 @@ const mocks = vi.hoisted(() => ({
 // does against a database is `lib/usage/consume.ts`'s own suite.
 const allowance = vi.hoisted(() => ({
   reserveAiProcessing: vi.fn<
-    (userId: string) => Promise<"exhausted" | "unavailable" | null>
-  >(async () => null),
+    (
+      userId: string,
+    ) => Promise<
+      | { granted: true; usagePeriodId: string }
+      | { granted: false; refusal: "exhausted" | "unavailable" }
+    >
+  >(async () => ({ granted: true, usagePeriodId: "period-1" })),
 }));
 
 vi.mock("@/lib/usage/ai-allowance", async (importOriginal) => ({
@@ -685,6 +690,45 @@ describe("runRoutine — what a prompt run records about its call", () => {
     return mocks.usageCreate.mock.calls[0][0].data;
   }
 
+  it("records the call against the period its allowance was reserved in", async () => {
+    allowance.reserveAiProcessing.mockResolvedValueOnce({
+      granted: true,
+      usagePeriodId: "period-42",
+    });
+
+    await runRoutine("worker-1");
+
+    expect(usageRow().usagePeriodId).toBe("period-42");
+  });
+
+  it("records a call that failed after being sent against the same period", async () => {
+    allowance.reserveAiProcessing.mockResolvedValueOnce({
+      granted: true,
+      usagePeriodId: "period-42",
+    });
+    mocks.execute.mockRejectedValue(
+      new ProviderError("timeout", "took too long", {
+        attempt: { provider: "anthropic", model: "claude-opus-5", usage: null },
+      }),
+    );
+
+    await runRoutine("worker-1");
+
+    expect(usageRow()).toMatchObject({ outcome: "error", usagePeriodId: "period-42" });
+  });
+
+  it("sends nothing and records nothing when the allowance refused", async () => {
+    allowance.reserveAiProcessing.mockResolvedValueOnce({
+      granted: false,
+      refusal: "exhausted",
+    });
+
+    await runRoutine("worker-1");
+
+    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(mocks.usageCreate).not.toHaveBeenCalled();
+  });
+
   it("writes exactly one row for one call", async () => {
     await runRoutine("worker-1");
 
@@ -875,7 +919,7 @@ describe("runRoutine — the AI processing allowance for a prompt run", () => {
   ] as const)(
     "asks no model and finishes the row when the allowance is %s",
     async (refusal, message) => {
-      allowance.reserveAiProcessing.mockResolvedValueOnce(refusal);
+      allowance.reserveAiProcessing.mockResolvedValueOnce({ granted: false, refusal });
 
       const run = await runRoutine("worker-1");
 
