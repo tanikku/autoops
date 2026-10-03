@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClaudeProvider } from "@/lib/ai/claude-provider";
-import { ProviderError } from "@/lib/ai/provider";
+import { ProviderError, TruncatedAIResponseError } from "@/lib/ai/provider";
 
 /**
  * What each way of failing is called, fixed from outside the provider.
@@ -542,5 +542,118 @@ describe("what a failed call reports", () => {
       "model",
       "usage",
     ]);
+  });
+});
+
+/**
+ * How much a caller lets one answer run to.
+ *
+ * **Named per call, defaulting to what it always was.** A caller that names
+ * nothing gets the ceiling every request had before this existed.
+ */
+describe("the output limit", () => {
+  it("keeps the old ceiling for a caller that names none", async () => {
+    create.mockResolvedValue(response());
+
+    await provider.execute({ user: "prompt" });
+
+    expect(sentRequest().max_tokens).toBe(16000);
+  });
+
+  it("sends the limit a caller names", async () => {
+    create.mockResolvedValue(response());
+
+    await provider.execute({ user: "prompt", maxTokens: 2_000 });
+
+    expect(sentRequest().max_tokens).toBe(2_000);
+    expect(sentRequest().model).toBe("claude-opus-5");
+  });
+});
+
+/**
+ * An answer that stopped at its output limit.
+ *
+ * **Not a success and not a provider failure.** The call completed and was
+ * billed; what failed is using half an answer as if it were all of one. So it
+ * leaves as its own error, carrying the call and none of its words.
+ */
+describe("an answer cut off at its output limit", () => {
+  function truncated() {
+    return response({
+      stop_reason: "max_tokens",
+      content: [{ type: "text", text: "the first half of an answ" }],
+    });
+  }
+
+  it("returns no result for it", async () => {
+    create.mockResolvedValue(truncated());
+
+    await expect(provider.execute({ user: "prompt" })).rejects.toBeInstanceOf(
+      TruncatedAIResponseError,
+    );
+  });
+
+  it("is not a provider failure and has no provider kind", async () => {
+    create.mockResolvedValue(truncated());
+
+    const thrown = await provider.execute({ user: "prompt" }).catch((error) => error);
+
+    expect(thrown).not.toBeInstanceOf(ProviderError);
+    expect(thrown).not.toHaveProperty("kind");
+    expect(thrown.message).toBe("The AI response was cut off before it finished.");
+  });
+
+  it("carries the completed call with what it actually used", async () => {
+    create.mockResolvedValue(truncated());
+
+    const thrown = await provider.execute({ user: "prompt" }).catch((error) => error);
+
+    expect(thrown.call).toEqual({
+      provider: "anthropic",
+      model: "claude-opus-5",
+      usage: {
+        inputTokens: 1_200,
+        outputTokens: 340,
+        cacheReadTokens: 0,
+        cacheWriteTokens: null,
+      },
+    });
+  });
+
+  it("keeps none of the partial text", async () => {
+    create.mockResolvedValue(truncated());
+
+    const thrown = await provider.execute({ user: "prompt" }).catch((error) => error);
+
+    expect(JSON.stringify(thrown)).not.toContain("first half");
+    expect(thrown.message).not.toContain("first half");
+    expect(thrown).not.toHaveProperty("text");
+  });
+
+  it("asks once and does not ask again", async () => {
+    create.mockClear();
+    create.mockResolvedValue(truncated());
+
+    await provider.execute({ user: "prompt" }).catch(() => {});
+
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  /** A refusal is still a refusal, whatever else the response says. */
+  it("leaves a refusal what it was", async () => {
+    create.mockResolvedValue(response({ stop_reason: "refusal" }));
+
+    const thrown = await provider.execute({ user: "prompt" }).catch((error) => error);
+
+    expect(thrown).toBeInstanceOf(ProviderError);
+    expect(thrown.kind).toBe("refused");
+  });
+
+  it("still returns a finished answer as one", async () => {
+    create.mockResolvedValue(response({ stop_reason: "end_turn" }));
+
+    await expect(provider.execute({ user: "prompt" })).resolves.toMatchObject({
+      text: "an answer",
+    });
   });
 });

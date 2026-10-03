@@ -1,8 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AIExecutionRequest, AIProvider } from "@/lib/ai/provider";
+import {
+  type AIExecutionRequest,
+  type AIProvider,
+  TruncatedAIResponseError,
+} from "@/lib/ai/provider";
 import { DISCOVERY_MAX_RESULTS_CEILING } from "@/lib/discovery/limits";
 import {
   buildDiscoverySelectionRequest,
+  DISCOVERY_AI_MAX_TOKENS,
   DISCOVERY_AI_TIMEOUT_MS,
   DISCOVERY_REASON_MAX_CHARS,
   InvalidDiscoverySelectionError,
@@ -545,5 +550,70 @@ describe("asking a provider", () => {
     )) as Error;
 
     expect(thrown.message).not.toContain(secretish);
+  });
+});
+
+/**
+ * An answer cut off at its output limit.
+ *
+ * **Refused before anything reads it.** Half a JSON document is either a syntax
+ * error several frames from its cause or, worse, a shorter list that parses; it
+ * is an unusable answer, carrying the call it cost and none of what it said.
+ */
+describe("an answer cut off at its output limit", () => {
+  const CALL = {
+    provider: "anthropic" as const,
+    model: "claude-opus-5",
+    usage: {
+      inputTokens: 3_000,
+      outputTokens: 4_000,
+      cacheReadTokens: 0,
+      cacheWriteTokens: null,
+    },
+  };
+
+  function cutOffProvider(): AIProvider {
+    return {
+      mode: "real",
+      execute: vi.fn(async () => {
+        throw new TruncatedAIResponseError(CALL);
+      }),
+    };
+  }
+
+  it("asks with the selection's own output limit", () => {
+    expect(DISCOVERY_AI_MAX_TOKENS).toBe(4_000);
+    expect(buildDiscoverySelectionRequest(request()).maxTokens).toBe(4_000);
+  });
+
+  it("is refused as an unusable answer, with the call it cost", async () => {
+    const thrown = await selectDiscoveryItems(cutOffProvider(), request()).catch(
+      (error: unknown) => error,
+    );
+
+    expect(isInvalidDiscoverySelection(thrown)).toBe(true);
+    expect((thrown as InvalidDiscoverySelectionError).call).toEqual(CALL);
+    expect((thrown as Error).message).toContain("cut off before it finished");
+  });
+
+  it("never reaches the parser", async () => {
+    const parse = vi.spyOn(JSON, "parse");
+
+    await selectDiscoveryItems(cutOffProvider(), request()).catch(() => {});
+
+    expect(parse).not.toHaveBeenCalled();
+    parse.mockRestore();
+  });
+
+  it("lets any other failure through unchanged", async () => {
+    const failure = new Error("network down");
+    const provider: AIProvider = {
+      mode: "real",
+      execute: vi.fn(async () => {
+        throw failure;
+      }),
+    };
+
+    await expect(selectDiscoveryItems(provider, request())).rejects.toBe(failure);
   });
 });

@@ -96,6 +96,7 @@ vi.mock("@/lib/prisma", () => ({
 const {
   isUnsupportedRoutineKind,
   latestExecutionFailureAt,
+  PROMPT_AI_MAX_TOKENS,
   PROMPT_AI_TIMEOUT_MS,
   runRoutine,
   RunPersistenceError,
@@ -104,7 +105,7 @@ const { ExecutionSuppressedError } = await import("@/lib/execution-lease");
 const { ExecutionEntitlementBlockedError } = await import(
   "@/lib/entitlements/worker-execution"
 );
-const { ProviderError } = await import("@/lib/ai/provider");
+const { ProviderError, TruncatedAIResponseError } = await import("@/lib/ai/provider");
 const { AI_ALLOWANCE_EXHAUSTED_MESSAGE, AI_ALLOWANCE_UNAVAILABLE_MESSAGE } =
   await import("@/lib/usage/ai-allowance");
 // Imported for one comparison, and only here: the two constants belong to
@@ -665,9 +666,16 @@ describe("how long a prompt worker waits for a model", () => {
 
     expect(request.user).toBe("hello");
     // A prompt worker's instruction and its material are one text: it has no
-    // `system`, and giving it a deadline does not give it one.
+    // `system`, and giving it a deadline and an output limit does not give it one.
     expect(request).not.toHaveProperty("system");
-    expect(Object.keys(request).sort()).toEqual(["timeoutMs", "user"]);
+    expect(Object.keys(request).sort()).toEqual(["maxTokens", "timeoutMs", "user"]);
+  });
+
+  it("bounds the answer at the prompt worker's own output limit", async () => {
+    await runRoutine("worker-1");
+
+    expect(mocks.execute.mock.calls.at(-1)?.[0]).toMatchObject({ maxTokens: 10_000 });
+    expect(PROMPT_AI_MAX_TOKENS).toBe(10_000);
   });
 });
 
@@ -1055,5 +1063,92 @@ describe("a worker whose account is not entitled to run", () => {
     for (const forbidden of ["user-1", "worker-1", "run-1"]) {
       expect(error.message, `says ${forbidden}`).not.toContain(forbidden);
     }
+  });
+});
+
+/**
+ * A prompt worker's answer cut off at its output limit.
+ *
+ * **The run fails and keeps none of it**, because half an answer stored as the
+ * run's output would read as all of one. The call completed and was billed, so
+ * it is recorded as a call that happened — against the period its allowance
+ * came from — and nothing is given back.
+ */
+describe("runRoutine — a prompt answer cut off at its output limit", () => {
+  function cutOff() {
+    mocks.execute.mockRejectedValue(
+      new TruncatedAIResponseError({
+        provider: "anthropic",
+        model: "claude-opus-5",
+        usage: {
+          inputTokens: 1_500,
+          outputTokens: 10_000,
+          cacheReadTokens: 0,
+          cacheWriteTokens: null,
+        },
+      }),
+    );
+  }
+
+  it("fails the run rather than completing it", async () => {
+    cutOff();
+
+    await runRoutine("worker-1");
+
+    expect(written()).toMatchObject({
+      status: "failed",
+      errorMessage: "The AI response was cut off before it finished.",
+    });
+  });
+
+  it("stores none of the answer as output", async () => {
+    cutOff();
+
+    await runRoutine("worker-1");
+
+    expect(written().output ?? "").not.toContain("cut off");
+    expect(written().status).not.toBe("completed");
+  });
+
+  it("records the call as one that happened, with what it used", async () => {
+    allowance.reserveAiProcessing.mockResolvedValueOnce({
+      granted: true,
+      usagePeriodId: "period-42",
+    });
+    cutOff();
+
+    await runRoutine("worker-1");
+
+    expect(mocks.usageCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.usageCreate.mock.calls[0][0].data).toMatchObject({
+      feature: "prompt",
+      outcome: "ok",
+      runId: "run-1",
+      usagePeriodId: "period-42",
+      inputTokens: 1_500,
+      outputTokens: 10_000,
+    });
+  });
+
+  it("spends the one unit and asks once", async () => {
+    cutOff();
+
+    await runRoutine("worker-1");
+
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+  });
+
+  /** A genuine provider failure is still recorded as a failure. */
+  it("leaves a provider failure recorded as an error", async () => {
+    mocks.execute.mockRejectedValue(
+      new ProviderError("timeout", "took too long", {
+        attempt: { provider: "anthropic", model: "claude-opus-5", usage: null },
+      }),
+    );
+
+    await runRoutine("worker-1");
+
+    expect(mocks.usageCreate.mock.calls[0][0].data).toMatchObject({ outcome: "error" });
   });
 });

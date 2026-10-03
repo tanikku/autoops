@@ -1,7 +1,9 @@
-import type {
-  AIExecutionRequest,
-  AIExecutionResult,
-  AIProvider,
+import {
+  type AIExecutionRequest,
+  type AIExecutionResult,
+  type AIProvider,
+  type ProviderCallMetadata,
+  TruncatedAIResponseError,
 } from "@/lib/ai/provider";
 import { DISCOVERY_MAX_RESULTS_CEILING } from "@/lib/discovery/limits";
 import type { DiscoveryCandidate, DiscoverySelection } from "@/lib/discovery/types";
@@ -47,6 +49,13 @@ export const DISCOVERY_REASON_MAX_CHARS = 500;
 export const DISCOVERY_AI_TIMEOUT_MS = 120_000;
 
 /**
+ * The most a selection may run to. Ten choices with a reason each fit with
+ * room to spare; an answer that reaches it is cut off mid-document and is
+ * refused before anything tries to read it.
+ */
+export const DISCOVERY_AI_MAX_TOKENS = 4_000;
+
+/**
  * An answer that cannot be acted on.
  *
  * The same minimal shape as `InvalidCreatorAnalysisResponseError` — one class,
@@ -74,11 +83,11 @@ export class InvalidDiscoverySelectionError extends Error {
    * Null when the shape was judged without a call in hand, which is how
    * `readDiscoverySelections` is used on its own.
    */
-  readonly call: AIExecutionResult | null;
+  readonly call: ProviderCallMetadata | null;
 
   constructor(
     detail: string,
-    options?: { cause?: unknown; call?: AIExecutionResult | null },
+    options?: { cause?: unknown; call?: ProviderCallMetadata | null },
   ) {
     super(`The AI returned an unusable selection: ${detail}`, options);
     this.name = "InvalidDiscoverySelectionError";
@@ -170,6 +179,7 @@ export function buildDiscoverySelectionRequest(
 ): AIExecutionRequest {
   return {
     timeoutMs: DISCOVERY_AI_TIMEOUT_MS,
+    maxTokens: DISCOVERY_AI_MAX_TOKENS,
     system: SYSTEM_INSTRUCTION,
     user: buildUserMessage(request),
   };
@@ -326,7 +336,22 @@ export async function selectDiscoveryItems(
     return { selections: [], call: null };
   }
 
-  const answer = await provider.execute(buildDiscoverySelectionRequest(request));
+  let answer: AIExecutionResult;
+  try {
+    answer = await provider.execute(buildDiscoverySelectionRequest(request));
+  } catch (error) {
+    // **A cut-off answer is an unusable one, and it never reaches the parser.**
+    // The call completed and was billed, so it leaves the way every other
+    // unusable answer does — with the call, and without a word of what it said.
+    if (error instanceof TruncatedAIResponseError) {
+      throw new InvalidDiscoverySelectionError(
+        "the answer was cut off before it finished",
+        { cause: error, call: error.call },
+      );
+    }
+
+    throw error;
+  }
 
   let parsed: unknown;
   try {

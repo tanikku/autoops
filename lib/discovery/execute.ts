@@ -1,6 +1,10 @@
 import "server-only";
 
-import type { AIExecutionResult, AIProvider } from "@/lib/ai/provider";
+import type {
+  AIExecutionResult,
+  AIProvider,
+  ProviderCallMetadata,
+} from "@/lib/ai/provider";
 import { createDiscoveryProvider } from "@/lib/discovery/factory";
 import { DISCOVERY_MAX_CANDIDATES } from "@/lib/discovery/limits";
 import { isDiscoveryProviderError } from "@/lib/discovery/provider";
@@ -82,7 +86,7 @@ export type DiscoveryExecution =
 export type DiscoveryProviderCall =
   | {
       readonly kind: "result";
-      readonly result: AIExecutionResult;
+      readonly result: ProviderCallMetadata;
       /** The period the call's AI allowance was reserved in, when one was. */
       readonly usagePeriodId: string | null;
     }

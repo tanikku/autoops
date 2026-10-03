@@ -4,6 +4,7 @@ import { createAIProvider } from "@/lib/ai/factory";
 import {
   type AIExecutionResult,
   providerErrorKind,
+  TruncatedAIResponseError,
 } from "@/lib/ai/provider";
 import {
   type DiscoveryExecution,
@@ -831,6 +832,15 @@ async function websiteSourceUrlForNotification(
 export const PROMPT_AI_TIMEOUT_MS = 180_000;
 
 /**
+ * The most a prompt worker's answer may run to.
+ *
+ * **Room for the longest answer seen, with some to spare** — the largest
+ * observed was about three quarters of this. An answer that reaches it is cut
+ * off and fails the run rather than being kept as if it were whole.
+ */
+export const PROMPT_AI_MAX_TOKENS = 10_000;
+
+/**
  * Writes down the one call a discovery run may make, whichever way it went.
  *
  * **Three outcomes, and the common one is silence.** A worker with no search, a
@@ -923,6 +933,7 @@ async function executePrompt(
             result: await provider.execute({
               user: prompt,
               timeoutMs: PROMPT_AI_TIMEOUT_MS,
+              maxTokens: PROMPT_AI_MAX_TOKENS,
             }),
           }
         : { sent: false, refusal: reservation.refusal };
@@ -931,7 +942,7 @@ async function executePrompt(
     // that was made was billable whether or not it answered, and
     // `recordAIFailure` writes nothing for the failures that never reached a
     // provider. Nothing here is awaited for its result: it cannot throw.
-    await recordAIFailure(
+    await recordUnusableOrFailedCall(
       { userId, feature: "prompt", runId: run.id, usagePeriodId },
       error,
     );
@@ -941,7 +952,9 @@ async function executePrompt(
     // deciding what `failed` means, and that is not settled.
     console.error(
       "[worker] run failed —",
-      providerErrorKind(error),
+      error instanceof TruncatedAIResponseError
+        ? "truncated"
+        : providerErrorKind(error),
       "—",
       error,
     );
@@ -1335,13 +1348,16 @@ async function processWebsiteChange(
   try {
     result = await provider.execute(request);
   } catch (error) {
-    await recordAIFailure(
+    // A cut-off summary fails here too, before the baseline can move past it.
+    await recordUnusableOrFailedCall(
       { userId, feature: "website", runId, usagePeriodId },
       error,
     );
     console.error(
       "[worker] website change processing failed —",
-      providerErrorKind(error),
+      error instanceof TruncatedAIResponseError
+        ? "truncated"
+        : providerErrorKind(error),
       "—",
       error,
     );
@@ -1619,6 +1635,26 @@ function finalizationFailureMessage(error: unknown): string {
   return isWebsiteStateConflict(error)
     ? STATE_CHANGED_DURING_RUN
     : "Execution failed.";
+}
+
+/**
+ * Records a call that did not produce a usable answer.
+ *
+ * **An answer cut off at its output limit is a call that succeeded**: it
+ * completed and was billed, so it is recorded as made, with what it used — the
+ * same judgement Drafts and Creator analyses make about an unusable answer.
+ * Everything else is a provider failure and recorded as one, exactly as before.
+ */
+async function recordUnusableOrFailedCall(
+  context: Parameters<typeof recordAIFailure>[0],
+  error: unknown,
+): Promise<void> {
+  if (error instanceof TruncatedAIResponseError) {
+    await recordAIExecution(context, error.call);
+    return;
+  }
+
+  await recordAIFailure(context, error);
 }
 
 /**

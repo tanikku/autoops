@@ -225,7 +225,7 @@ function aiResult(
   };
 }
 
-const { ProviderError } = await import("@/lib/ai/provider");
+const { ProviderError, TruncatedAIResponseError } = await import("@/lib/ai/provider");
 const { AI_ALLOWANCE_EXHAUSTED_MESSAGE, AI_ALLOWANCE_UNAVAILABLE_MESSAGE } =
   await import("@/lib/usage/ai-allowance");
 
@@ -1583,5 +1583,92 @@ describe("a website run — the AI processing allowance", () => {
     expect(run.status).toBe("failed");
     expect(written().errorMessage).toBe("Website change processing failed.");
     expectChangeNotConsumed();
+  });
+});
+
+/**
+ * A change summary cut off at its output limit.
+ *
+ * **The run fails and the change survives**: nothing is stored as the summary,
+ * the baseline does not move, and the next run finds the same change. The call
+ * completed and was billed, so it is recorded as one that happened.
+ */
+describe("a website change summary cut off at its output limit", () => {
+  const STALE = {
+    ...matchingSnapshot(),
+    normalizedContent: "Careers Not hiring",
+    contentHash: "0".repeat(64),
+  };
+
+  function cutOff() {
+    mocks.getWebsiteSnapshot.mockResolvedValue(STALE);
+    mocks.execute.mockRejectedValue(
+      new TruncatedAIResponseError({
+        provider: "anthropic",
+        model: "claude-opus-5",
+        usage: {
+          inputTokens: 1_500,
+          outputTokens: 2_000,
+          cacheReadTokens: 0,
+          cacheWriteTokens: null,
+        },
+      }),
+    );
+  }
+
+  it("asks with the website's own output limit", async () => {
+    cutOff();
+
+    await runRoutine("worker-1");
+
+    expect(mocks.execute.mock.calls[0][0]).toMatchObject({ maxTokens: 2_000 });
+  });
+
+  it("fails the run and stores no summary", async () => {
+    cutOff();
+
+    await runRoutine("worker-1");
+
+    expect(written().status).toBe("failed");
+    expect(written().output ?? "").toBe("");
+  });
+
+  it("does not move the baseline past the change", async () => {
+    cutOff();
+
+    await runRoutine("worker-1");
+
+    expectChangeNotConsumed();
+  });
+
+  it("records the call as one that happened, against its period", async () => {
+    allowance.reserveAiProcessing.mockResolvedValueOnce({
+      granted: true,
+      usagePeriodId: "period-42",
+    });
+    cutOff();
+
+    await runRoutine("worker-1");
+
+    expect(mocks.usageCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.usageCreate.mock.calls[0][0].data).toMatchObject({
+      feature: "website",
+      outcome: "ok",
+      usagePeriodId: "period-42",
+      outputTokens: 2_000,
+    });
+  });
+
+  it("leaves a provider failure recorded as an error", async () => {
+    mocks.getWebsiteSnapshot.mockResolvedValue(STALE);
+    mocks.execute.mockRejectedValue(
+      new ProviderError("timeout", "took too long", {
+        attempt: { provider: "anthropic", model: "claude-opus-5", usage: null },
+      }),
+    );
+
+    await runRoutine("worker-1");
+
+    expect(mocks.usageCreate.mock.calls[0][0].data).toMatchObject({ outcome: "error" });
   });
 });

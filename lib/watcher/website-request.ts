@@ -30,6 +30,13 @@ export const MAX_WEBSITE_AI_REQUEST_CHARS = 40_000;
 export const WEBSITE_AI_TIMEOUT_MS = 120_000;
 
 /**
+ * The most a change summary may run to. A summary of a bounded excerpt is
+ * short; the longest seen was under half of this. One that reaches it is cut
+ * off and fails the run, and the baseline stays where it was.
+ */
+export const WEBSITE_AI_MAX_TOKENS = 2_000;
+
+/**
  * What is said about the page's own text before any of it is read.
  *
  * **The material is somebody else's writing, and it is treated as material.**
@@ -89,6 +96,7 @@ export function buildWebsiteChangeRequest(
 
   return {
     timeoutMs: WEBSITE_AI_TIMEOUT_MS,
+    maxTokens: WEBSITE_AI_MAX_TOKENS,
     system: `${PLATFORM_INSTRUCTION}\n${instruction}`,
     user: `WEBSITE CHANGE DATA
 

@@ -870,7 +870,6 @@ describe("a discovery run — what it records about its call", () => {
     mocks.select.mockRejectedValue(
       new InvalidDiscoverySelectionError("the answer was not valid JSON", {
         call: {
-          text: "not json",
           provider: "anthropic",
           model: "claude-opus-5",
           usage: {
@@ -1350,5 +1349,64 @@ describe("a discovery run — the period allowance", () => {
     expect(finished.status).toBe("failed");
     expect(finished.errorMessage).toBe("Recommendation run limit reached.");
     expect(mocks.notify).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A selection cut off at its output limit, as the run sees it: one more
+ * unusable answer, failed and recorded as the completed call it was.
+ */
+describe("a discovery selection cut off at its output limit", () => {
+  function cutOff() {
+    available([candidate("a")]);
+    mocks.select.mockRejectedValue(
+      new InvalidDiscoverySelectionError("the answer was cut off before it finished", {
+        call: {
+          provider: "anthropic",
+          model: "claude-opus-5",
+          usage: {
+            inputTokens: 3_000,
+            outputTokens: 4_000,
+            cacheReadTokens: 0,
+            cacheWriteTokens: null,
+          },
+        },
+      }),
+    );
+  }
+
+  it("fails the run", async () => {
+    cutOff();
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(mocks.runUpdate.mock.calls.at(-1)?.[0].data).toMatchObject({ status: "failed" });
+  });
+
+  it("records the call as one that happened, against its period", async () => {
+    allowance.reserveAiProcessing.mockResolvedValueOnce({
+      granted: true,
+      usagePeriodId: "period-42",
+    });
+    cutOff();
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(mocks.usageCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.usageCreate.mock.calls[0][0].data).toMatchObject({
+      feature: "discovery",
+      outcome: "ok",
+      usagePeriodId: "period-42",
+      outputTokens: 4_000,
+    });
+  });
+
+  it("spends one discovery run and one unit of AI processing, as before", async () => {
+    cutOff();
+
+    await runRoutine(ROUTINE_ID);
+
+    expect(allowance.reserveDiscoveryRun).toHaveBeenCalledTimes(1);
+    expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
   });
 });

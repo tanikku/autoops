@@ -47,6 +47,15 @@ export type AIExecutionRequest = {
    * caller gets, and nothing in production is one.
    */
   timeoutMs?: number;
+  /**
+   * The most output this one call may produce.
+   *
+   * **Named by the caller for the same reason as the deadline**: a summary of a
+   * changed page needs far less room than a prompt worker's whole answer, and
+   * only the caller knows which it is asking for. Omitted means the provider's
+   * own default.
+   */
+  maxTokens?: number;
 };
 
 /**
@@ -244,4 +253,27 @@ export function providerAttemptOf(error: unknown): ProviderAttempt | null {
 /** The kind of a failure, for anything that has to describe one. */
 export function providerErrorKind(error: unknown): ProviderErrorKind {
   return error instanceof ProviderError ? error.kind : "unknown";
+}
+
+/**
+ * An answer that ran out of room before it finished.
+ *
+ * **Not a `ProviderError`, on purpose.** The call completed and was billed;
+ * what failed is Koqentra's use of the answer, because half of one is not one.
+ * It is the same judgement Drafts and Creator analyses already make: an
+ * unusable answer is a call that succeeded, recorded as such, and never shown.
+ *
+ * **It carries the call and nothing it said.** The partial text is exactly the
+ * plausible-looking wrong answer this exists to keep out of a run's output, an
+ * email or a parser, so it is not held here at all.
+ */
+export class TruncatedAIResponseError extends Error {
+  /** The completed call, with what the provider said it used. */
+  readonly call: ProviderCallMetadata;
+
+  constructor(call: ProviderCallMetadata) {
+    super("The AI response was cut off before it finished.");
+    this.name = "TruncatedAIResponseError";
+    this.call = call;
+  }
 }

@@ -6,6 +6,7 @@ import {
   type AIProviderMode,
   ProviderError,
   type ProviderErrorKind,
+  TruncatedAIResponseError,
 } from "@/lib/ai/provider";
 import { normalizeAnthropicUsage, UNKNOWN_AI_USAGE } from "@/lib/ai/usage";
 
@@ -18,6 +19,11 @@ const MODEL = "claude-opus-5";
  * never disagree with the client that made it.
  */
 const PROVIDER = "anthropic" as const;
+/**
+ * The output allowance for a caller that names none. Every production caller
+ * now names its own (`AIExecutionRequest.maxTokens`); this is what an unnamed
+ * one still gets, unchanged.
+ */
 const MAX_TOKENS = 16000;
 
 /**
@@ -123,7 +129,7 @@ export class ClaudeProvider implements AIProvider {
     try {
       message = await this.client.messages.create({
         model: MODEL,
-        max_tokens: MAX_TOKENS,
+        max_tokens: request.maxTokens ?? MAX_TOKENS,
         // **Absent rather than empty when there is no instruction.** A prompt
         // worker has none, and its request has to reach the model as the one it
         // reached before — a `system` of `undefined` would be a field that was
@@ -184,6 +190,18 @@ export class ClaudeProvider implements AIProvider {
           },
         },
       );
+    }
+
+    // **After a refusal, before any text is read.** A turn that stopped at the
+    // output limit is an answer cut short: returning it would make the first
+    // half of something look like all of it. The call itself completed and is
+    // billed, so what it used goes with the error; what it said does not.
+    if (message.stop_reason === "max_tokens") {
+      throw new TruncatedAIResponseError({
+        provider: PROVIDER,
+        model: MODEL,
+        usage: normalizeAnthropicUsage(message.usage),
+      });
     }
 
     return {

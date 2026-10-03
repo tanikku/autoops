@@ -141,6 +141,7 @@ vi.mock("@/lib/notify/email", async () => {
 });
 
 const { runRoutine, RunPersistenceError } = await import("@/lib/runs");
+const { TruncatedAIResponseError } = await import("@/lib/ai/provider");
 const { EmailDeliveryError } = await vi.importActual<
   typeof import("@/lib/notify/email")
 >("@/lib/notify/email");
@@ -588,5 +589,35 @@ describe("what a failed send does not change", () => {
     await runRoutine("worker-1");
 
     expect(mocks.send).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** An answer cut off at its output limit is never announced as a result. */
+describe("an answer cut off at its output limit", () => {
+  const cutOff = () =>
+    new TruncatedAIResponseError({
+      provider: "anthropic",
+      model: "claude-opus-5",
+      usage: null,
+    });
+
+  it("is told as a failed prompt run, never a completed one", async () => {
+    mocks.findUniqueOrThrow.mockResolvedValue(worker({ kind: "prompt" }));
+    mocks.execute.mockRejectedValue(cutOff());
+
+    await runRoutine("worker-1");
+
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(subject()).toBe('[Koqentra] "Careers page" failed');
+  });
+
+  it("is never announced as a detected change", async () => {
+    mocks.getWebsiteSnapshot.mockResolvedValue(changedSnapshot());
+    mocks.execute.mockRejectedValue(cutOff());
+
+    await runRoutine("worker-1");
+
+    const subjects = mocks.send.mock.calls.map((call) => call[0].subject);
+    expect(subjects).not.toContain('[Koqentra] "Careers page" detected a change');
   });
 });
