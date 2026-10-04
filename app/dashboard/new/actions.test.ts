@@ -2431,3 +2431,22 @@ describe("createRoutineAction — the target condition", () => {
     expect(result?.status).toBe("success");
   });
 });
+
+/** An oversized condition posted with another kind is dropped, not refused. */
+describe("createRoutineAction — a target condition on another kind", () => {
+  it.each([
+    ["prompt", {}],
+    ["discovery", { kind: "discovery", discoverySource: "youtube", discoveryQuery: "hedgehogs" }],
+  ])("saves a %s worker with none, however long the posted value", async (_kind, fields) => {
+    const result = await createRoutineAction(
+      null,
+      form({ ...fields, targetCondition: "x".repeat(5_000) }),
+    );
+
+    expect(result?.status).toBe("success");
+    expect(result?.errors).toBeUndefined();
+    expect(
+      (mocks.createRoutine.mock.calls[0][0] as { targetCondition: unknown }).targetCondition,
+    ).toBeNull();
+  });
+});

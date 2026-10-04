@@ -973,3 +973,58 @@ describe("readWorkerForm — the email switch as the form was opened", () => {
     expect(read(value)).toBeNull();
   });
 });
+
+/**
+ * The target condition is checked for a website worker and for nothing else.
+ *
+ * **Other kinds never keep one**, so a value posted with a prompt or discovery
+ * worker is not theirs to be refused for: it is dropped when the worker is
+ * saved, and every other rule they answer to is exactly what it was.
+ */
+describe("validateWorkerFormForKind — the target condition", () => {
+  const AT_LIMIT = "x".repeat(1_000);
+  const OVER_LIMIT = "x".repeat(1_001);
+
+  const website = (targetCondition: string) =>
+    input({
+      kind: "website",
+      websiteUrl: "https://example.com/news",
+      prompt: "Tell me what changed.",
+      targetCondition,
+    });
+
+  it("accepts a website worker's condition at its limit", () => {
+    expect(validateWorkerFormForKind(website(AT_LIMIT), context(), "website")).toEqual({});
+  });
+
+  it("refuses a website worker's condition over its limit, beside the box", () => {
+    const errors = validateWorkerFormForKind(website(OVER_LIMIT), context(), "website");
+
+    expect(Object.keys(errors)).toEqual(["targetCondition"]);
+  });
+
+  it.each([
+    ["a prompt worker", "prompt" as const, input({ prompt: "Summarise." })],
+    [
+      "a discovery worker",
+      "discovery" as const,
+      input({ discoverySource: "youtube", discoveryQuery: "ハリネズミ 飼い方" }),
+    ],
+    ["an incomplete prompt worker", "prompt" as const, input({ name: "" })],
+    [
+      "an incomplete discovery worker",
+      "discovery" as const,
+      input({ discoverySource: "youtube", discoveryQuery: "" }),
+    ],
+  ])("judges %s exactly as without one, however long it is", (_label, kind, base) => {
+    const without = validateWorkerFormForKind(base, context(), kind);
+    const withOversized = validateWorkerFormForKind(
+      { ...base, targetCondition: OVER_LIMIT },
+      context(),
+      kind,
+    );
+
+    expect(withOversized).toEqual(without);
+    expect(withOversized).not.toHaveProperty("targetCondition");
+  });
+});

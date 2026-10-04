@@ -2070,3 +2070,44 @@ describe("updateRoutineAction — the target condition", () => {
     expect(update().targetCondition).toBeNull();
   });
 });
+
+/** An oversized condition posted while editing another kind is dropped, not refused. */
+describe("updateRoutineAction — a target condition on another kind", () => {
+  it("saves a prompt worker with none, however long the posted value", async () => {
+    const result = await save(
+      form({ status: "draft", frequency: "manual", targetCondition: "x".repeat(5_000) }),
+    );
+
+    expect(result?.status).toBe("success");
+    expect(
+      (mocks.updateRoutine.mock.calls[0][1] as { targetCondition: unknown }).targetCondition,
+    ).toBeNull();
+  });
+
+  it("still refuses an oversized condition on a website worker", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(
+      stored({ kind: "website", prompt: "Tell me what changed." }),
+    );
+    mocks.getWebsiteSource.mockResolvedValue({
+      id: "source-1",
+      routineId: "worker-1",
+      url: "https://example.com/news",
+      createdAt: new Date("2026-08-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-08-01T00:00:00.000Z"),
+    });
+
+    const result = await save(
+      form({
+        websiteUrl: "https://example.com/news",
+        prompt: "Tell me what changed.",
+        status: "draft",
+        frequency: "manual",
+        targetCondition: "x".repeat(1_001),
+      }),
+    );
+
+    expect(result?.status).toBe("error");
+    expect(result?.errors?.targetCondition).toBeTruthy();
+    expect(mocks.updateRoutine).not.toHaveBeenCalled();
+  });
+});
