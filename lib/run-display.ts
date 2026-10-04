@@ -39,6 +39,16 @@ export const WEBSITE_BASELINE_OUTPUT =
 export const WEBSITE_UNCHANGED_OUTPUT = "Website content has not changed.";
 
 /**
+ * A change that was read and judged not to be what the worker waits for.
+ *
+ * **A finished check, not a failure, and nothing to tell.** The model's own
+ * reason is not kept here: what the owner needs from this run is that the page
+ * moved and it was not the change they asked about.
+ */
+export const WEBSITE_NOT_TARGET_OUTPUT =
+  "Website changed, but not as this worker is waiting for.";
+
+/**
  * What a discovery worker records when it chose nothing.
  *
  * **It says nothing was found *for this search*, and stops there.** A run that
@@ -68,6 +78,7 @@ export const DISCOVERY_NO_SELECTION_OUTPUT =
 const websiteSystemOutputs = new Map<string, TranslationKey>([
   [WEBSITE_BASELINE_OUTPUT, "run.system.websiteBaseline"],
   [WEBSITE_UNCHANGED_OUTPUT, "run.system.websiteUnchanged"],
+  [WEBSITE_NOT_TARGET_OUTPUT, "run.system.websiteNotTarget"],
 ]);
 
 /**

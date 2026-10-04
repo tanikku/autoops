@@ -2001,3 +2001,72 @@ describe("updateRoutineAction — the email switch as the form showed it", () =>
     },
   );
 });
+
+/**
+ * What a worker waits for, edited.
+ *
+ * **The stored kind decides**, as for everything else on this form: a website
+ * worker keeps a condition, any other kind never acquires one.
+ */
+describe("updateRoutineAction — the target condition", () => {
+  const update = () => mocks.updateRoutine.mock.calls[0][1] as { targetCondition: unknown };
+
+  it("saves the condition of a website worker, trimmed", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(
+      stored({ kind: "website", prompt: "Tell me what changed." }),
+    );
+    mocks.getWebsiteSource.mockResolvedValue({
+      id: "source-1",
+      routineId: "worker-1",
+      url: "https://example.com/news",
+      createdAt: new Date("2026-08-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-08-01T00:00:00.000Z"),
+    });
+
+    const result = await save(
+      form({
+        websiteUrl: "https://example.com/news",
+        prompt: "Tell me what changed.",
+        status: "draft",
+        frequency: "manual",
+        targetCondition: "  A room opens for May 2 ",
+      }),
+    );
+
+    expect(result?.status).toBe("success");
+    expect(update().targetCondition).toBe("A room opens for May 2");
+  });
+
+  it("clears it when the box is emptied", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(
+      stored({ kind: "website", prompt: "Tell me what changed." }),
+    );
+    mocks.getWebsiteSource.mockResolvedValue({
+      id: "source-1",
+      routineId: "worker-1",
+      url: "https://example.com/news",
+      createdAt: new Date("2026-08-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-08-01T00:00:00.000Z"),
+    });
+
+    await save(
+      form({
+        websiteUrl: "https://example.com/news",
+        prompt: "Tell me what changed.",
+        status: "draft",
+        frequency: "manual",
+        targetCondition: "",
+      }),
+    );
+
+    expect(update().targetCondition).toBeNull();
+  });
+
+  it("never gives a prompt worker one", async () => {
+    await save(
+      form({ status: "draft", frequency: "manual", targetCondition: "A room opens for May 2" }),
+    );
+
+    expect(update().targetCondition).toBeNull();
+  });
+});

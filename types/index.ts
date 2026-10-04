@@ -54,6 +54,12 @@ export type Routine = {
   prompt: string;
   /** What the worker does when it runs. See `RoutineKind`. */
   kind: RoutineKind;
+  /**
+   * What a website worker is waiting for. Null tells every change, as a
+   * website worker always has; set, only a change the model judges to be this
+   * is told. Always null for other kinds.
+   */
+  targetCondition: string | null;
   status: RoutineStatus;
   frequency: RoutineFrequency;
   /**
@@ -112,6 +118,8 @@ export type RoutineInput = {
    * so it belongs to the fields a save may carry.
    */
   emailNotificationsEnabled: boolean;
+  /** See `Routine.targetCondition`. Null for anything but a website worker. */
+  targetCondition: string | null;
 };
 
 /**

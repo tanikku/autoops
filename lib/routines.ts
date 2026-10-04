@@ -54,6 +54,7 @@ export function toRoutine(record: RoutineRecord): Routine {
     // prompt — a silent fall-through there would produce a confident answer
     // about a page nobody read.
     kind: isRoutineKind(record.kind) ? record.kind : "prompt",
+    targetCondition: record.targetCondition,
     status: isRoutineStatus(record.status) ? record.status : "draft",
     frequency: isRoutineFrequency(record.frequency)
       ? record.frequency

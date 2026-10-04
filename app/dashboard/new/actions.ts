@@ -43,6 +43,7 @@ import {
   readWorkerForm,
   emailSwitchRequired,
   summarizeWorkerFormErrors,
+  targetConditionFor,
   validateWorkerFormForKind,
   type WorkerFieldErrors,
   type WorkerFormInput,
@@ -262,6 +263,7 @@ export async function createRoutineAction(
     // where**: the recipient is this account, read from its own row when a run
     // finishes, and nothing in the submission can name anybody.
     emailNotificationsEnabled: input.emailNotificationsEnabled,
+    targetCondition: targetConditionFor(kind, input.targetCondition),
     nextRunAt: calculateNextRunAt({
       frequency,
       runAtMinutes,

@@ -136,6 +136,13 @@ model Routine {
   // the column those share, and re-padding twenty untouched lines to fit it
   // would put unrelated churn in the same diff.
   emailNotificationsEnabled Boolean @default(false)
+  /// What a website worker is waiting for, in the owner's words.
+  ///
+  /// **Null is the worker as it always was**: every change is summarised and
+  /// told. Set, a change is told only when the model judges it to be this;
+  /// any other change is recorded and moved past without a message. Only a
+  /// website worker ever has one.
+  targetCondition String?
   /// Who currently holds the right to execute this worker, as an opaque token
   /// minted per acquisition. Null means nobody does.
   ///

@@ -7,6 +7,10 @@ import {
   TruncatedAIResponseError,
 } from "@/lib/ai/provider";
 import {
+  isInvalidWebsiteTargetDecision,
+  parseWebsiteTargetDecision,
+} from "@/lib/watcher/target-decision";
+import {
   type DiscoveryExecution,
   type DiscoveryProviderCall,
   executeDiscovery,
@@ -41,6 +45,7 @@ import { fetchWatchedPage } from "@/lib/watcher/fetch";
 import { normalizeWebsiteContent } from "@/lib/watcher/normalize";
 import {
   buildWebsiteChangeRequest,
+  buildWebsiteTargetRequest,
   MAX_WEBSITE_AI_REQUEST_CHARS,
   websiteRequestSize,
 } from "@/lib/watcher/website-request";
@@ -63,6 +68,7 @@ import {
 } from "@/lib/website-snapshots";
 import {
   WEBSITE_BASELINE_OUTPUT,
+  WEBSITE_NOT_TARGET_OUTPUT,
   WEBSITE_UNCHANGED_OUTPUT,
 } from "@/lib/run-display";
 import { monitoredPageLink } from "@/lib/watcher/monitored-link";
@@ -600,12 +606,15 @@ const THROTTLED: WatcherErrorKind = "throttled";
 function websiteNotification(
   run: RunHistory,
   change: WebsiteChangeState,
+  notify: boolean,
 ): RunNotificationKind | null {
   if (run.status === "failed") {
     return "failed";
   }
 
-  return change.state === "changed" ? "website-changed" : null;
+  // **A change judged not to be the one waited for is told to nobody.** The
+  // run completed and the page moved on; there is simply nothing to say.
+  return change.state === "changed" && notify ? "website-changed" : null;
 }
 
 /**
@@ -674,6 +683,7 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
       prompt: true,
       kind: true,
       emailNotificationsEnabled: true,
+      targetCondition: true,
     },
   });
 
@@ -713,7 +723,13 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
     // instruction to a model as if it were the whole of the run.
     switch (routine.kind) {
       case "website":
-        outcome = await executeWebsite(routineId, routine.userId, routine.prompt);
+        outcome = await executeWebsite(
+          routineId,
+          routine.userId,
+          routine.prompt,
+          // Absent reads as none: a worker as website workers always were.
+          routine.targetCondition ?? null,
+        );
         break;
       case "discovery":
         outcome = await executeDiscoveryRun(routineId, routine.userId);
@@ -1210,6 +1226,7 @@ async function executeWebsite(
   routineId: string,
   userId: string,
   routinePrompt: string,
+  targetCondition: string | null,
 ): Promise<ExecutionOutcome> {
   // A row first, for the same reason a prompt worker gets one: an attempt that
   // reached execution is an attempt, however it turns out. One run, one row.
@@ -1269,13 +1286,14 @@ async function executeWebsite(
           userId,
           run.id,
           routinePrompt,
+          targetCondition,
           inspection,
         )
-      : await finalizeWebsiteRun(routineId, run.id, inspection);
+      : { run: await finalizeWebsiteRun(routineId, run.id, inspection), notify: true };
 
   return {
-    run: finished,
-    notification: websiteNotification(finished, inspection.change),
+    run: finished.run,
+    notification: websiteNotification(finished.run, inspection.change, finished.notify),
   };
 }
 
@@ -1302,25 +1320,28 @@ async function processWebsiteChange(
   userId: string,
   runId: string,
   routinePrompt: string,
+  targetCondition: string | null,
   inspection: WebsiteInspection,
-): Promise<WebsiteRunOutcome> {
+): Promise<WebsiteChangeOutcome> {
   const { websiteSourceId, baseline, current } = inspection;
 
   if (baseline === null) {
     // Unreachable by construction — `changed` implies a baseline — but the
     // narrowing has to go somewhere, and treating it as a conflict is the
     // reading that writes nothing.
-    return finalizeChecked(routineId, runId, websiteSourceId, null, {
+    return told(finalizeChecked(routineId, runId, websiteSourceId, null, {
       status: "failed",
       message: STATE_CHANGED_DURING_RUN,
-    });
+    }));
   }
 
   const failWithoutAdvancing = (message: string) =>
-    finalizeChecked(routineId, runId, websiteSourceId, baseline, {
-      status: "failed",
-      message,
-    });
+    told(
+      finalizeChecked(routineId, runId, websiteSourceId, baseline, {
+        status: "failed",
+        message,
+      }),
+    );
 
   // **The stand-in cannot be allowed near this.** It answers everything with a
   // fixed sentence; storing that as the summary and advancing the baseline
@@ -1347,13 +1368,17 @@ async function processWebsiteChange(
     return failWithoutAdvancing(INSTRUCTIONS_INVALID);
   }
 
-  const request = buildWebsiteChangeRequest(
-    instruction,
-    buildWebsiteChangeContext(
-      baseline.normalizedContent,
-      current.normalizedContent,
-    ),
+  const context = buildWebsiteChangeContext(
+    baseline.normalizedContent,
+    current.normalizedContent,
   );
+  // **The condition, when there is one, changes only what is asked and how the
+  // answer is read.** Without one the request is the one a website worker has
+  // always sent, answered in free text exactly as before.
+  const request =
+    targetCondition === null
+      ? buildWebsiteChangeRequest(instruction, context)
+      : buildWebsiteTargetRequest(instruction, targetCondition, context);
 
   if (websiteRequestSize(request) > MAX_WEBSITE_AI_REQUEST_CHARS) {
     console.error("[worker] website change request exceeds the limit", routineId);
@@ -1408,6 +1433,17 @@ async function processWebsiteChange(
     result,
   );
 
+  if (targetCondition !== null) {
+    return decideTargetChange(
+      routineId,
+      runId,
+      inspection,
+      baseline,
+      result.text,
+      failWithoutAdvancing,
+    );
+  }
+
   const output = result.text;
 
   // **An answer of nothing is not an answer.** Storing it would leave a run
@@ -1418,7 +1454,7 @@ async function processWebsiteChange(
     return failWithoutAdvancing(CHANGE_PROCESSING_FAILED);
   }
 
-  return advanceWebsiteBaseline(routineId, runId, inspection, baseline, output);
+  return told(advanceWebsiteBaseline(routineId, runId, inspection, baseline, output));
 }
 
 /**
@@ -1434,6 +1470,59 @@ async function processWebsiteChange(
  * a transition from a baseline that no longer exists, so keeping it would mean
  * a run whose output is about something that did not happen from here.
  */
+/** A finished website run, and whether its change is one to tell anybody about. */
+type WebsiteChangeOutcome = { run: RunHistory; notify: boolean };
+
+/** A run whose outcome is told the way website runs always have been. */
+async function told(run: Promise<RunHistory>): Promise<WebsiteChangeOutcome> {
+  return { run: await run, notify: true };
+}
+
+/**
+ * Reads the model's decision for a worker that waits for something, and moves
+ * the baseline past the change either way.
+ *
+ * **Past it whichever way it was judged.** The next comparison is against the
+ * baseline, so a change judged not to be the one waited for has to become the
+ * baseline too — or it would be found again on every run, cost a request each
+ * time, and pile up beside the change that does matter.
+ *
+ * **An answer that cannot be read moves nothing.** The change stays where it
+ * was and the next run asks about it again; the call was made and paid for, and
+ * is already recorded as such.
+ */
+async function decideTargetChange(
+  routineId: string,
+  runId: string,
+  inspection: WebsiteInspection,
+  baseline: NonNullable<WebsiteInspection["baseline"]>,
+  text: string,
+  failWithoutAdvancing: (message: string) => Promise<WebsiteChangeOutcome>,
+): Promise<WebsiteChangeOutcome> {
+  let decision;
+  try {
+    decision = parseWebsiteTargetDecision(text);
+  } catch (error) {
+    console.error(
+      "[worker] website target decision could not be used —",
+      isInvalidWebsiteTargetDecision(error) ? error.detail : "unknown",
+      "—",
+      routineId,
+    );
+    return failWithoutAdvancing(CHANGE_PROCESSING_FAILED);
+  }
+
+  const run = await advanceWebsiteBaseline(
+    routineId,
+    runId,
+    inspection,
+    baseline,
+    decision.notify ? decision.summary : WEBSITE_NOT_TARGET_OUTPUT,
+  );
+
+  return { run, notify: decision.notify };
+}
+
 async function advanceWebsiteBaseline(
   routineId: string,
   runId: string,
@@ -1471,8 +1560,6 @@ async function advanceWebsiteBaseline(
   }
 }
 
-/** A finished website run, whichever way it finished. */
-type WebsiteRunOutcome = RunHistory;
 
 /** What one look at a page produced, and what it was compared against. */
 type WebsiteInspection = {

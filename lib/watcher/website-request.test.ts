@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { WebsiteChangeContext } from "@/lib/watcher/change-context";
 import {
   buildWebsiteChangeRequest,
+  buildWebsiteTargetRequest,
   MAX_WEBSITE_AI_REQUEST_CHARS,
   websiteRequestSize,
 } from "@/lib/watcher/website-request";
@@ -160,5 +161,65 @@ describe("determinism", () => {
     const second = buildWebsiteChangeRequest("task", context());
 
     expect(second).toEqual(first);
+  });
+});
+
+
+/**
+ * The request for a worker that waits for something.
+ *
+ * **The legacy request, plus the condition and how to answer.** The change
+ * data, the deadline and the output limit are the same; only the instruction
+ * grows, so a worker without a condition keeps sending exactly what it sent.
+ */
+describe("asking a worker's condition about a change", () => {
+  const CONDITION = "A room opens for May 2";
+
+  it("keeps the change data, deadline and limit of the legacy request", () => {
+    const legacy = buildWebsiteChangeRequest("Summarise.", context());
+    const target = buildWebsiteTargetRequest("Summarise.", CONDITION, context());
+
+    expect(target.user).toBe(legacy.user);
+    expect(target.timeoutMs).toBe(legacy.timeoutMs);
+    expect(target.maxTokens).toBe(legacy.maxTokens);
+    expect(target.system?.startsWith(legacy.system ?? "")).toBe(true);
+  });
+
+  it("states the condition and asks for the two-key decision", () => {
+    const { system } = buildWebsiteTargetRequest("Summarise.", CONDITION, context());
+
+    expect(system).toContain(`TARGET CONDITION:\n${CONDITION}`);
+    expect(system).toContain('"notify"');
+    expect(system).toContain('"summary"');
+    expect(system).toContain("Judge only the change between PREVIOUS and CURRENT");
+    expect(system).toContain('When you cannot tell whether the change matches, "notify" is true.');
+    expect(system).toContain("No other keys, no Markdown, no code fence");
+  });
+
+  /** The page stays material: none of it moves into the instruction. */
+  it("keeps the page out of the instruction", () => {
+    const { system } = buildWebsiteTargetRequest(
+      "Summarise.",
+      CONDITION,
+      context({ currentExcerpt: "PAGE-TEXT-ONLY" }),
+    );
+
+    expect(system).not.toContain("PAGE-TEXT-ONLY");
+  });
+
+  it("leaves the legacy request with no decision in it", () => {
+    const { system } = buildWebsiteChangeRequest("Summarise.", context());
+
+    expect(system).not.toContain("TARGET CONDITION");
+    expect(system).not.toContain('"notify"');
+  });
+
+  it("counts the condition against the request ceiling", () => {
+    const legacy = buildWebsiteChangeRequest("Summarise.", context());
+    const target = buildWebsiteTargetRequest("Summarise.", CONDITION, context());
+
+    expect(websiteRequestSize(target)).toBeGreaterThan(
+      websiteRequestSize(legacy) + CONDITION.length,
+    );
   });
 });

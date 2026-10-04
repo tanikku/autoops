@@ -2362,3 +2362,72 @@ describe("createRoutineAction — the one emailing worker", () => {
     expect(emailChoice.setChosen).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * What a new worker waits for.
+ *
+ * **Kept only on a website worker, trimmed, and only when given.** A condition
+ * typed and then left behind by switching kind is dropped, and an empty box is
+ * the website worker as it always was.
+ */
+describe("createRoutineAction — the target condition", () => {
+  function website(overrides?: Record<string, string>) {
+    return form({
+      kind: "website",
+      websiteUrl: "https://example.com/news",
+      prompt: "Tell me what changed.",
+      ...overrides,
+    });
+  }
+
+  const saved = () => mocks.createRoutine.mock.calls[0][0] as { targetCondition: unknown };
+
+  it("keeps the condition of a website worker, trimmed", async () => {
+    const result = await createRoutineAction(
+      null,
+      website({ targetCondition: "  A room opens for May 2  " }),
+    );
+
+    expect(result?.status).toBe("success");
+    expect(saved().targetCondition).toBe("A room opens for May 2");
+  });
+
+  it("saves none for a website worker whose box is empty", async () => {
+    await createRoutineAction(null, website({ targetCondition: "   " }));
+
+    expect(saved().targetCondition).toBeNull();
+  });
+
+  it.each([
+    ["prompt", {}],
+    ["discovery", { kind: "discovery", discoverySource: "youtube", discoveryQuery: "hedgehogs" }],
+  ])("drops a condition submitted with a %s worker", async (_kind, fields) => {
+    const result = await createRoutineAction(
+      null,
+      form({ ...fields, targetCondition: "A room opens for May 2" }),
+    );
+
+    expect(result?.status).toBe("success");
+    expect(saved().targetCondition).toBeNull();
+  });
+
+  it("refuses a condition longer than its limit, beside the box", async () => {
+    const result = await createRoutineAction(
+      null,
+      website({ targetCondition: "x".repeat(1_001) }),
+    );
+
+    expect(result?.status).toBe("error");
+    expect(result?.errors?.targetCondition).toBeTruthy();
+    expect(mocks.createRoutine).not.toHaveBeenCalled();
+  });
+
+  it("accepts a condition exactly at its limit", async () => {
+    const result = await createRoutineAction(
+      null,
+      website({ targetCondition: "x".repeat(1_000) }),
+    );
+
+    expect(result?.status).toBe("success");
+  });
+});

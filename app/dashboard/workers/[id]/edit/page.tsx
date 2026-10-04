@@ -114,6 +114,7 @@ export default async function EditWorkerPage({
             runAtWeekday: worker.runAtWeekday,
             runAtDay: worker.runAtDay,
             emailNotificationsEnabled: worker.emailNotificationsEnabled,
+            targetCondition: worker.targetCondition,
           }}
           timezone={timezone}
           language={language}

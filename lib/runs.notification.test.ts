@@ -759,3 +759,76 @@ describe("a plan that lets one worker email", () => {
     expect(emailPlan.getEffectiveEntitlement).toHaveBeenCalledWith("user-a");
   });
 });
+
+
+/**
+ * A website worker waiting for something, through the same send gate.
+ *
+ * **The decision only decides whether there is anything to tell.** A change
+ * judged not to be the one waited for is told to nobody; one that is, or a run
+ * that failed, then goes through the plan's rules exactly as any other run's
+ * message does.
+ */
+describe("a website worker with a target condition", () => {
+  function plan(email: "all-workers" | "one-worker", chosen: string | null = null) {
+    emailPlan.getEffectiveEntitlement.mockResolvedValue({
+      state: "active",
+      entitled: true,
+      plan: email === "one-worker" ? "lite" : "beta",
+      limits: { email },
+      trial: null,
+      period: null,
+      expiresAt: null,
+      notificationWorkerId: chosen,
+    });
+  }
+
+  function waiting() {
+    mocks.findUniqueOrThrow.mockResolvedValue({
+      ...worker(),
+      targetCondition: "A room opens for May 2",
+    });
+    mocks.getWebsiteSnapshot.mockResolvedValue(changedSnapshot());
+  }
+
+  function decides(notify: boolean) {
+    mocks.execute.mockResolvedValue(
+      aiResult(JSON.stringify({ notify, summary: notify ? "May 2 opened." : "Only May 3." })),
+    );
+  }
+
+  it.each([
+    ["not the change, every worker may email", false, "all-workers", null, 0],
+    ["the change, every worker may email", true, "all-workers", null, 1],
+    ["the change, this is the one emailing worker", true, "one-worker", "worker-1", 1],
+    ["the change, another worker emails", true, "one-worker", "worker-9", 0],
+    ["not the change, this is the one emailing worker", false, "one-worker", "worker-1", 0],
+  ] as const)("%s", async (_label, notify, email, chosen, sent) => {
+    plan(email, chosen);
+    waiting();
+    decides(notify);
+
+    await runRoutine("worker-1");
+
+    expect(mocks.send).toHaveBeenCalledTimes(sent);
+    if (sent === 1) {
+      expect(subject()).toBe('[Koqentra] "Careers page" detected a change');
+    }
+  });
+
+  it.each([
+    ["this is the one emailing worker", "worker-1", 1],
+    ["another worker emails", "worker-9", 0],
+  ] as const)("tells a failed decision the usual way when %s", async (_label, chosen, sent) => {
+    plan("one-worker", chosen);
+    waiting();
+    mocks.execute.mockResolvedValue(aiResult("not a decision"));
+
+    await runRoutine("worker-1");
+
+    expect(mocks.send).toHaveBeenCalledTimes(sent);
+    if (sent === 1) {
+      expect(subject()).toBe('[Koqentra] "Careers page" failed');
+    }
+  });
+});

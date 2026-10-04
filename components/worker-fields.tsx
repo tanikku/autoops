@@ -87,6 +87,8 @@ export type WorkerFieldValues = {
   runAtDay?: number | null;
   /** Whether the owner asked to be emailed. Absent reads as off. */
   emailNotificationsEnabled?: boolean;
+  /** What a website worker waits for; empty or absent for none. */
+  targetCondition?: string | null;
   /** What the switch showed when the edit form was first opened; see below. */
   emailNotificationsEnabledInitial?: boolean | null;
 };
@@ -550,6 +552,22 @@ export function WorkerFields({
         )}
         error={errors.prompt}
       />
+
+      {/* **Optional, and only for a website worker.** Empty keeps the worker
+          telling every change, exactly as before; filled, only a change the
+          model judges to match it is emailed. */}
+      {website ? (
+        <CountedField
+          field="targetCondition"
+          label={t(language, "worker.field.targetCondition")}
+          multiline
+          rows={2}
+          help={t(language, "worker.field.targetConditionNote")}
+          defaultValue={values.targetCondition ?? ""}
+          placeholder={t(language, "worker.field.targetConditionPlaceholder")}
+          error={errors.targetCondition}
+        />
+      ) : null}
 
       <div className="grid gap-2">
         <Label htmlFor="frequency">

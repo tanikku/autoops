@@ -833,3 +833,42 @@ describe("the email switch as the form was opened", () => {
     expect(html).toContain('name="emailNotificationsEnabledInitial" value="false"');
   });
 });
+
+/**
+ * What a website worker waits for.
+ *
+ * **Optional, and only on a website worker.** Empty keeps the worker telling
+ * every change; the box says so beside it.
+ */
+describe("the target condition box", () => {
+  it("is offered for a website worker, with what it does said beside it", () => {
+    const html = render({ values: {}, kind: "website", language: "ja" });
+
+    expect(html).toContain('name="targetCondition"');
+    expect(html).toContain("通知したい変化");
+    expect(html).toContain("空欄の場合は、ページに変化があれば従来どおり通知します。");
+  });
+
+  it("shows the condition already saved", () => {
+    const html = render({
+      values: { targetCondition: "A room opens for May 2" },
+      kind: "website",
+    });
+
+    expect(html).toContain("A room opens for May 2");
+  });
+
+  it.each(["prompt", "discovery"] as const)("is not offered for a %s worker", (kind) => {
+    expect(render({ values: {}, kind })).not.toContain('name="targetCondition"');
+  });
+
+  it("shows a refusal beside the box", () => {
+    const html = render({
+      values: {},
+      kind: "website",
+      errors: { targetCondition: "TOO-LONG-CONDITION" },
+    });
+
+    expect(html).toContain("TOO-LONG-CONDITION");
+  });
+});

@@ -43,6 +43,12 @@ export const workerFieldLimits = {
    * and gives the length message the same wording every other field gets.
    */
   discoveryQuery: DISCOVERY_QUERY_MAX_CHARS,
+  /**
+   * What a website worker waits for. A sentence or two describing a state of
+   * the page — longer than a description, a tenth of a prompt — and part of
+   * every request it makes, so it is kept well inside the request's own limit.
+   */
+  targetCondition: 1_000,
 } as const;
 
 export type WorkerFieldName = keyof typeof workerFieldLimits;
@@ -87,6 +93,7 @@ const fieldLabelKeys: Record<WorkerFieldName, TranslationKey> = {
   prompt: "worker.prompt",
   websiteUrl: "worker.field.websiteUrl",
   discoveryQuery: "worker.field.discoveryQuery",
+  targetCondition: "worker.field.targetCondition",
 };
 
 export type WorkerFormInput = {
@@ -100,6 +107,11 @@ export type WorkerFormInput = {
    * **Read through the kind rather than alongside it.** See `readWorkerForm`.
    */
   websiteUrl: string;
+  /**
+   * What a website worker waits for, trimmed; empty when none was given. Read
+   * for every kind and kept only for a website worker — see the actions.
+   */
+  targetCondition: string;
   /**
    * Where a discovery worker looks, what it looks for, and how many it keeps.
    *
@@ -291,6 +303,7 @@ export function readWorkerForm(formData: FormData): WorkerFormInput {
     // is given one, and each action gates its writes on the same one — so a
     // prompt worker still cannot acquire a page to watch.
     websiteUrl: text(formData, "websiteUrl"),
+    targetCondition: text(formData, "targetCondition"),
     discoverySource: text(formData, "discoverySource"),
     discoveryQuery: text(formData, "discoveryQuery"),
     // **Out of range reads as null, not as the nearest allowed value.**
@@ -492,7 +505,21 @@ export function validateWorkerFormForKind(
     errors.prompt = t(language, "worker.validation.changePromptRequired");
   }
 
+  applyLengthLimit(errors, "targetCondition", input.targetCondition, language);
+
   return errors;
+}
+
+/**
+ * What a worker of this kind keeps as its target condition: the trimmed text
+ * for a website worker that was given one, and null for everything else — so
+ * a condition typed before switching kind never outlives the switch.
+ */
+export function targetConditionFor(
+  kind: RoutineKind,
+  targetCondition: string,
+): string | null {
+  return kind === "website" && targetCondition !== "" ? targetCondition : null;
 }
 
 /**

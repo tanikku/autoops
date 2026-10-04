@@ -184,6 +184,11 @@ export const ja: Record<TranslationKey, string> = {
   "worker.field.emailNotificationsPrompt":
     "この Worker の実行が完了したときにメールで通知します。",
   "worker.field.emailNotificationsFailure": "実行に失敗した場合も通知します。",
+  "worker.field.targetCondition": "通知したい変化",
+  "worker.field.targetConditionPlaceholder":
+    "例: 5月2日に宿泊できる部屋が予約可能になったとき",
+  "worker.field.targetConditionNote":
+    "この条件に当てはまる変化だけメール通知します。空欄の場合は、ページに変化があれば従来どおり通知します。",
   "worker.field.emailOneWorker":
     "このプランでは、メール通知は1つのWorkerで利用できます。",
   "worker.field.emailSwitchConfirm":
@@ -664,6 +669,8 @@ export const ja: Record<TranslationKey, string> = {
 
   "run.system.websiteBaseline": "サイトの初回状態を記録しました。",
   "run.system.websiteUnchanged": "サイトの内容に変更はありませんでした。",
+  "run.system.websiteNotTarget":
+    "ページは変化しましたが、待っている条件には該当しませんでした。",
   "run.system.discoveryNoSelection":
     "今回の条件では、おすすめは見つかりませんでした。",
 

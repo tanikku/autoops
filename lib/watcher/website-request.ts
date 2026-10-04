@@ -108,6 +108,53 @@ ${context.currentExcerpt}`,
   };
 }
 
+/**
+ * How a worker that waits for something is asked to answer.
+ *
+ * **The condition decides; the owner's task shapes what is said.** The model is
+ * told to judge the change between the two excerpts — never the page as a
+ * whole — against the condition, to lean towards telling when it cannot tell,
+ * and to answer with nothing but the two-key document `target-decision.ts`
+ * reads.
+ */
+const TARGET_DECISION_INSTRUCTION = `Decide whether this change is what the owner is waiting for.
+
+- Judge only the change between PREVIOUS and CURRENT, not the page as a whole.
+- "notify" is true when the change matches the target condition.
+- "notify" is false when the change has nothing to do with the target condition.
+- When you cannot tell whether the change matches, "notify" is true.
+- When "notify" is true, "summary" tells the owner about the matching change, following the user-configured task.
+- When "notify" is false, "summary" is one short sentence saying why the change does not match.
+- Write "summary" in the language of the user-configured task.
+
+Answer with a single JSON object and nothing else: exactly the keys "notify" (true or false) and "summary" (a non-empty string). No other keys, no Markdown, no code fence, no text before or after it.`;
+
+/**
+ * Builds the request for a detected change on a worker that waits for
+ * something — the same change data as `buildWebsiteChangeRequest`, judged
+ * against the owner's condition and answered as a decision.
+ *
+ * Pure: the same instruction, condition and context always produce the same
+ * request.
+ */
+export function buildWebsiteTargetRequest(
+  instruction: string,
+  targetCondition: string,
+  context: WebsiteChangeContext,
+): AIExecutionRequest {
+  const legacy = buildWebsiteChangeRequest(instruction, context);
+
+  return {
+    ...legacy,
+    system: `${legacy.system}
+
+TARGET CONDITION:
+${targetCondition}
+
+${TARGET_DECISION_INSTRUCTION}`,
+  };
+}
+
 /** How much of a request counts against the ceiling: all of it. */
 export function websiteRequestSize(request: AIExecutionRequest): number {
   return (request.system?.length ?? 0) + request.user.length;

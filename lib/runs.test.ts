@@ -194,6 +194,8 @@ describe("runRoutine — which kind is being run", () => {
         prompt: true,
         kind: true,
         emailNotificationsEnabled: true,
+        // What a website worker waits for, read with the worker it belongs to.
+        targetCondition: true,
       },
     });
   });

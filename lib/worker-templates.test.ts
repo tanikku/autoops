@@ -330,6 +330,7 @@ describe("what the form makes of an applied template", () => {
       description: "",
       prompt: t(language, template.promptKey),
       websiteUrl: "",
+      targetCondition: "",
       // **The source is what the form submits for a discovery worker**, hidden
       // and fixed; the search is the blank it leaves for the person. See the
       // two assertions below.

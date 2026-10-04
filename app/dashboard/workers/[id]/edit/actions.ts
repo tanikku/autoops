@@ -32,6 +32,7 @@ import {
   readWorkerForm,
   emailSwitchRequired,
   summarizeWorkerFormErrors,
+  targetConditionFor,
   validateWorkerFormForKind,
   type WorkerFieldErrors,
   type WorkerFormInput,
@@ -269,6 +270,9 @@ export async function updateRoutineAction(
     runAtMinutes,
     runAtWeekday,
     runAtDay,
+    // The kind is the stored one — it cannot be edited — so a condition only
+    // ever stays on a website worker.
+    targetCondition: targetConditionFor(existing.kind, input.targetCondition),
     // **Written only by a save that moved the switch, in either direction.**
     // An edit that left it as shown writes nothing to it, so a switch another
     // save changed under the account lock while this form was open is not put

@@ -1672,3 +1672,287 @@ describe("a website change summary cut off at its output limit", () => {
     expect(mocks.usageCreate.mock.calls[0][0].data).toMatchObject({ outcome: "error" });
   });
 });
+
+
+/**
+ * A website worker that waits for something.
+ *
+ * **The model's decision is supplied by the test.** What is fixed here is what
+ * the pipeline does with each answer — the run, the baseline, the record of
+ * the call — not whether a real model would judge these pages correctly.
+ */
+const { WEBSITE_NOT_TARGET_OUTPUT } = await import("@/lib/run-display");
+
+describe("a website worker with a target condition", () => {
+  const CONDITION = "5月2日に宿泊できる部屋またはプランが新たに予約可能になったら通知する";
+
+  function page(lines: readonly string[]): string {
+    return `<html><body>${lines.map((line) => `<p>${line}</p>`).join("")}</body></html>`;
+  }
+
+  function snapshotOf(markup: string) {
+    const normalized = normalizeWebsiteContent(markup, "text/html");
+    return {
+      ...matchingSnapshot(),
+      normalizedContent: normalized.normalizedContent,
+      contentHash: normalized.contentHash,
+    };
+  }
+
+  function waitingFor(targetCondition: string | null) {
+    mocks.findUniqueOrThrow.mockResolvedValue({
+      userId: "user-1",
+      prompt: "Summarise what changed in three points.",
+      kind: "website",
+      targetCondition,
+    });
+  }
+
+  function decides(notify: boolean, summary: string) {
+    mocks.execute.mockResolvedValue(aiResult(JSON.stringify({ notify, summary })));
+  }
+
+  function moved(before: readonly string[], after: readonly string[]) {
+    mocks.getWebsiteSnapshot.mockResolvedValue(snapshotOf(page(before)));
+    mocks.fetchWatchedPage.mockResolvedValue(fetched(page(after)));
+  }
+
+  const sent = () =>
+    mocks.execute.mock.calls[0][0] as { system: string; user: string; maxTokens: number };
+
+  const HOTEL_BEFORE = ["5月2日: 全プラン空室なし", "5月3日: 満室"];
+  const HOTEL_IRRELEVANT = ["5月2日: 全プラン空室なし", "5月3日: ダブル空室あり ツイン空室あり"];
+  const HOTEL_TARGET = [
+    "5月2日: ダブル 15,000円 残り11室以上 ツイン 18,000円 残り3室",
+    "5月3日: 満室",
+  ];
+
+  describe("without one — a website worker as it always was", () => {
+    it("asks in free text and keeps the answer as the summary", async () => {
+      waitingFor(null);
+      moved(HOTEL_BEFORE, HOTEL_IRRELEVANT);
+      mocks.execute.mockResolvedValue(aiResult("May 3 now has doubles and twins."));
+
+      await runRoutine("worker-1");
+
+      expect(sent().system).not.toContain("TARGET CONDITION");
+      expect(sent().system).not.toContain('"notify"');
+      expect(written()).toMatchObject({
+        status: "completed",
+        output: "May 3 now has doubles and twins.",
+      });
+      expect(mocks.advanceIfCurrent).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps an answer that happens to look like a decision, verbatim", async () => {
+      waitingFor(null);
+      moved(HOTEL_BEFORE, HOTEL_IRRELEVANT);
+      decides(false, "Only May 3 changed.");
+
+      await runRoutine("worker-1");
+
+      expect(written()).toMatchObject({
+        status: "completed",
+        output: JSON.stringify({ notify: false, summary: "Only May 3 changed." }),
+      });
+    });
+  });
+
+  describe("asking", () => {
+    it("sends the change, the owner's task and the condition, asking for the decision", async () => {
+      waitingFor(CONDITION);
+      moved(HOTEL_BEFORE, HOTEL_TARGET);
+      decides(true, "May 2 opened.");
+
+      await runRoutine("worker-1");
+
+      expect(sent().system).toContain("Summarise what changed in three points.");
+      expect(sent().system).toContain(`TARGET CONDITION:\n${CONDITION}`);
+      expect(sent().system).toContain('"notify"');
+      expect(sent().system).toContain("When you cannot tell whether the change matches");
+      expect(sent().user).toContain("PREVIOUS:");
+      expect(sent().user).toContain("CURRENT:");
+      expect(sent().maxTokens).toBe(2_000);
+    });
+  });
+
+  describe("a change that is the one waited for", () => {
+    it("completes with the summary and moves the baseline past it", async () => {
+      waitingFor(CONDITION);
+      moved(HOTEL_BEFORE, HOTEL_TARGET);
+      decides(true, "May 2: doubles ¥15,000 (11+ left), twins ¥18,000 (3 left).");
+
+      await runRoutine("worker-1");
+
+      expect(written()).toMatchObject({
+        status: "completed",
+        output: "May 2: doubles ¥15,000 (11+ left), twins ¥18,000 (3 left).",
+      });
+      expect(mocks.advanceIfCurrent).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("a change that is not the one waited for", () => {
+    it("completes with the not-the-target sentence, not the model's reason", async () => {
+      waitingFor(CONDITION);
+      moved(HOTEL_BEFORE, HOTEL_IRRELEVANT);
+      decides(false, "Only May 3 changed.");
+
+      await runRoutine("worker-1");
+
+      expect(written()).toMatchObject({ status: "completed", output: WEBSITE_NOT_TARGET_OUTPUT });
+      expect(written().output).not.toContain("May 3");
+    });
+
+    it("still moves the baseline past it", async () => {
+      waitingFor(CONDITION);
+      moved(HOTEL_BEFORE, HOTEL_IRRELEVANT);
+      decides(false, "Only May 3 changed.");
+
+      await runRoutine("worker-1");
+
+      expect(mocks.advanceIfCurrent).toHaveBeenCalledTimes(1);
+      expect(mocks.advanceIfCurrent.mock.calls[0][2]).toEqual(
+        normalizeWebsiteContent(page(HOTEL_IRRELEVANT), "text/html"),
+      );
+    });
+
+    it("spends the unit and records the call it made, against its period", async () => {
+      waitingFor(CONDITION);
+      moved(HOTEL_BEFORE, HOTEL_IRRELEVANT);
+      allowance.reserveAiProcessing.mockResolvedValueOnce({
+        granted: true,
+        usagePeriodId: "period-42",
+      });
+      decides(false, "Only May 3 changed.");
+
+      await runRoutine("worker-1");
+
+      expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
+      expect(mocks.usageCreate).toHaveBeenCalledTimes(1);
+      expect(mocks.usageCreate.mock.calls[0][0].data).toMatchObject({
+        feature: "website",
+        outcome: "ok",
+        usagePeriodId: "period-42",
+      });
+    });
+  });
+
+  /**
+   * **Why the baseline moves even when nothing is told.** The next comparison
+   * is against the baseline: moved, the next run sees only what changed since;
+   * left behind, it would see the May 3 change again beside the one that
+   * matters.
+   */
+  describe("two runs in a row", () => {
+    const BEFORE = ["5月2日: 満室", "5月3日: 満室"];
+    const RUN1 = ["5月2日: 満室", "5月3日: 空室あり"];
+    const RUN2 = ["5月2日: 空室あり", "5月3日: 空室あり"];
+
+    it("asks the second run only about May 2", async () => {
+      waitingFor(CONDITION);
+      moved(BEFORE, RUN1);
+      decides(false, "Only May 3 changed.");
+      await runRoutine("worker-1");
+      expect(mocks.advanceIfCurrent).toHaveBeenCalledTimes(1);
+
+      // The second run starts from where the first moved the baseline to.
+      mocks.execute.mockReset();
+      moved(RUN1, RUN2);
+      decides(true, "May 2 opened.");
+      await runRoutine("worker-1");
+
+      const previous = sent().user.split("CURRENT:")[0];
+      expect(previous).toContain("5月3日: 空室あり");
+      expect(previous).not.toContain("5月3日: 満室");
+      expect(previous).toContain("5月2日: 満室");
+      expect(written()).toMatchObject({ status: "completed", output: "May 2 opened." });
+    });
+  });
+
+  describe("an answer that cannot be used", () => {
+    it.each([
+      ["not JSON", "May 2 opened."],
+      ["an empty summary", JSON.stringify({ notify: true, summary: "  " })],
+      ["no decision", JSON.stringify({ summary: "May 2 opened." })],
+      ["a code fence", '```json\n{"notify": true, "summary": "x"}\n```'],
+    ])("fails the run and leaves the change for next time: %s", async (_label, text) => {
+      waitingFor(CONDITION);
+      moved(HOTEL_BEFORE, HOTEL_TARGET);
+      mocks.execute.mockResolvedValue(aiResult(text));
+
+      await runRoutine("worker-1");
+
+      expect(written().status).toBe("failed");
+      expectChangeNotConsumed();
+      expect(mocks.usageCreate.mock.calls[0][0].data).toMatchObject({ outcome: "ok" });
+    });
+
+    it("fails and leaves the change when the answer was cut off", async () => {
+      waitingFor(CONDITION);
+      moved(HOTEL_BEFORE, HOTEL_TARGET);
+      mocks.execute.mockRejectedValue(
+        new TruncatedAIResponseError({
+          provider: "anthropic",
+          model: "claude-sonnet-5-5",
+          usage: null,
+        }),
+      );
+
+      await runRoutine("worker-1");
+
+      expect(written().status).toBe("failed");
+      expectChangeNotConsumed();
+    });
+
+    it("fails and leaves the change when the provider failed", async () => {
+      waitingFor(CONDITION);
+      moved(HOTEL_BEFORE, HOTEL_TARGET);
+      mocks.execute.mockRejectedValue(
+        new ProviderError("timeout", "took too long", {
+          attempt: { provider: "anthropic", model: "claude-sonnet-5-5", usage: null },
+        }),
+      );
+
+      await runRoutine("worker-1");
+
+      expect(written().status).toBe("failed");
+      expectChangeNotConsumed();
+      expect(mocks.usageCreate.mock.calls[0][0].data).toMatchObject({ outcome: "error" });
+    });
+  });
+
+  /**
+   * Representative pages, with the decision the provider mock returns.
+   *
+   * **These fix the pipeline, not the model.** Each pair shows the change that
+   * reaches the request and what the run does with the decision it is given;
+   * whether a real model decides this way is a separate evaluation.
+   */
+  describe("representative pages (decision supplied by the provider mock)", () => {
+    it.each([
+      ["hotel, another date only", HOTEL_BEFORE, HOTEL_IRRELEVANT, false],
+      ["hotel, the date waited for", HOTEL_BEFORE, HOTEL_TARGET, true],
+      ["restock, description only", ["在庫: 売り切れ", "説明: 綿100%"], ["在庫: 売り切れ", "説明: 綿100% 洗濯機可"], false],
+      ["restock, back in stock", ["在庫: 売り切れ", "説明: 綿100%"], ["在庫: 在庫あり", "説明: 綿100%"], true],
+      ["price, stock count only", ["価格: ¥10,000", "在庫: 残り5点"], ["価格: ¥10,000", "在庫: 残り3点"], false],
+      ["price, dropped", ["価格: ¥10,000", "在庫: 残り5点"], ["価格: ¥8,000", "在庫: 残り5点"], true],
+      ["application, FAQ only", ["受付: 開始前", "FAQ: 3件"], ["受付: 開始前", "FAQ: 4件"], false],
+      ["application, opened", ["受付: 開始前", "FAQ: 3件"], ["受付: 受付中", "FAQ: 3件"], true],
+    ] as const)("%s", async (_label, before, after, notify) => {
+      waitingFor("the change I am waiting for");
+      moved(before, after);
+      decides(notify, notify ? "The awaited change happened." : "Something else changed.");
+
+      await runRoutine("worker-1");
+
+      const changedLine = after.find((line) => !(before as readonly string[]).includes(line));
+      expect(sent().user).toContain(changedLine);
+      expect(written()).toMatchObject({
+        status: "completed",
+        output: notify ? "The awaited change happened." : WEBSITE_NOT_TARGET_OUTPUT,
+      });
+      expect(mocks.advanceIfCurrent).toHaveBeenCalledTimes(1);
+    });
+  });
+});

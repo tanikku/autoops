@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatRunOutputForDisplay,
   WEBSITE_BASELINE_OUTPUT,
+  WEBSITE_NOT_TARGET_OUTPUT,
   WEBSITE_UNCHANGED_OUTPUT,
 } from "@/lib/run-display";
 
@@ -152,6 +153,29 @@ describe("changing the language later", () => {
   it("falls back to English for a language nothing knows", () => {
     expect(formatRunOutputForDisplay(WEBSITE_UNCHANGED_OUTPUT, "website", "fr")).toBe(
       "Website content has not changed.",
+    );
+  });
+});
+
+/**
+ * A change that was read and was not the one the worker waits for.
+ *
+ * **Shown in the reader's language, never as the stored marker**, and only for
+ * a website worker — the same rule as the other sentences a website run keeps.
+ */
+describe("a change that was not the one waited for", () => {
+  it("is shown in Japanese and in English", () => {
+    expect(formatRunOutputForDisplay(WEBSITE_NOT_TARGET_OUTPUT, "website", "ja")).toBe(
+      "ページは変化しましたが、待っている条件には該当しませんでした。",
+    );
+    expect(formatRunOutputForDisplay(WEBSITE_NOT_TARGET_OUTPUT, "website", "en")).toBe(
+      "The page changed, but not in the way this worker is waiting for.",
+    );
+  });
+
+  it("is not rewritten for any other kind", () => {
+    expect(formatRunOutputForDisplay(WEBSITE_NOT_TARGET_OUTPUT, "prompt", "ja")).toBe(
+      WEBSITE_NOT_TARGET_OUTPUT,
     );
   });
 });

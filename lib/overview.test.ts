@@ -38,6 +38,7 @@ function worker(overrides: Partial<Routine> = {}): Routine {
     runAtDay: null,
     nextRunAt: FUTURE,
     emailNotificationsEnabled: false,
+    targetCondition: null,
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,

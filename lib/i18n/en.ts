@@ -351,6 +351,11 @@ export const en = {
     "Email me when this worker finishes.",
   "worker.field.emailNotificationsFailure":
     "You will also be notified if the run fails.",
+  "worker.field.targetCondition": "Change to be notified about",
+  "worker.field.targetConditionPlaceholder":
+    "e.g. A room becomes bookable for May 2",
+  "worker.field.targetConditionNote":
+    "Only changes that match this are emailed. Leave it empty to be notified of any change to the page, as before.",
   "worker.field.emailOneWorker":
     "On this plan, email notifications are available for one worker.",
   "worker.field.emailSwitchConfirm":
@@ -1177,6 +1182,8 @@ Notes for the report:
    */
   "run.system.websiteBaseline": "The website's initial state was recorded.",
   "run.system.websiteUnchanged": "Website content has not changed.",
+  "run.system.websiteNotTarget":
+    "The page changed, but not in the way this worker is waiting for.",
   /**
    * What a discovery run that chose nothing says.
    *
