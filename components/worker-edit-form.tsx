@@ -130,6 +130,7 @@ export function WorkerEditForm({
         timezone={timezone}
         language={language}
         emailEntitlement={emailEntitlement}
+        trackEmailIntent
         websiteUrlNote={t(language, "worker.edit.baselineReset")}
       />
 

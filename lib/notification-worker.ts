@@ -17,10 +17,11 @@ import type { DbClient } from "@/lib/prisma";
  * email switched off.
  *
  * **That holds because every write of a worker's email switch is one of these
- * locked saves**: a hire, an edit that involves email, a switch, a delete. An
- * edit that leaves an off switch off does not write the switch at all (see
- * the edit action), so a form opened before another save chose this worker
- * cannot put its switch back off behind the lock's back.
+ * locked saves**: a hire, an edit in which the owner moved the switch, a
+ * switch, a delete. An edit that leaves the switch as the form showed it does
+ * not write the switch at all (see the edit action), so a form opened before
+ * another save changed this worker cannot put its switch back behind the
+ * lock's back.
  *
  * **Nothing here is chosen behind anybody's back.** The first worker switched
  * on becomes the chosen one when nobody is; moving the choice to another worker

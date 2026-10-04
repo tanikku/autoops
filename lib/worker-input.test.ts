@@ -39,6 +39,7 @@ function input(overrides?: Partial<WorkerFormInput>): WorkerFormInput {
     runAtDay: null,
     emailNotificationsEnabled: false,
     emailSwitchConfirmed: false,
+    emailNotificationsEnabledInitial: null,
     ...overrides,
   };
 }
@@ -568,6 +569,7 @@ describe("in Japanese", () => {
     runAtDay: null,
     emailNotificationsEnabled: false,
     emailSwitchConfirmed: false,
+    emailNotificationsEnabledInitial: null,
   };
 
   const draft = { status: "draft" as const, frequency: "manual" as const };
@@ -668,6 +670,7 @@ describe("what the language does not change", () => {
     runAtDay: null,
     emailNotificationsEnabled: false,
     emailSwitchConfirmed: false,
+    emailNotificationsEnabledInitial: null,
   };
 
   it.each([
@@ -945,4 +948,25 @@ describe("the search field's length", () => {
       expect(errors.discoveryQuery).toBeUndefined();
     },
   );
+});
+
+/** What the edit form said the email switch showed: exactly true, false, or nothing. */
+describe("readWorkerForm — the email switch as the form was opened", () => {
+  function read(value?: string) {
+    const data = new FormData();
+    data.set("name", "Daily digest");
+    if (value !== undefined) {
+      data.set("emailNotificationsEnabledInitial", value);
+    }
+    return readWorkerForm(data).emailNotificationsEnabledInitial;
+  }
+
+  it("reads true and false exactly", () => {
+    expect(read("true")).toBe(true);
+    expect(read("false")).toBe(false);
+  });
+
+  it.each([["on"], ["1"], ["TRUE"], [""], [undefined]])("reads %o as no answer", (value) => {
+    expect(read(value)).toBeNull();
+  });
 });

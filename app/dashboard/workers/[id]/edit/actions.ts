@@ -250,11 +250,15 @@ export async function updateRoutineAction(
       }
     : {};
 
-  // **Email involved means the account's choice may move**: the switch is on
-  // in the form or on the stored worker. Only then does the save take the
-  // account lock, decide, and write the switch — see below.
+  // **Email is involved only when the owner moved the switch** — compared with
+  // what the form showed when it was opened, never with what is stored now. A
+  // form opened before another save changed the switch, and submitted to edit
+  // something else, therefore leaves the switch exactly as the other save left
+  // it. Only an involved save takes the account lock, decides, and writes the
+  // switch. A form that did not say what it showed is read as untouched.
   const emailInvolved =
-    input.emailNotificationsEnabled || existing.emailNotificationsEnabled;
+    input.emailNotificationsEnabledInitial !== null &&
+    input.emailNotificationsEnabledInitial !== input.emailNotificationsEnabled;
 
   const update: Partial<RoutineInput> = {
     name: input.name,
@@ -265,13 +269,11 @@ export async function updateRoutineAction(
     runAtMinutes,
     runAtWeekday,
     runAtDay,
-    // **Written only by a save that involves email, in both directions.** An
-    // edit that leaves an off switch off writes nothing to it: a switch another
-    // save turned on under the account lock while this form was open must not
-    // be put back to the off this form was rendered with. Turning it off is
-    // still written, because a switch being turned off was on — which makes
-    // the save involve email. Every write of this column therefore happens
-    // under the account lock, beside the choice it has to agree with.
+    // **Written only by a save that moved the switch, in either direction.**
+    // An edit that left it as shown writes nothing to it, so a switch another
+    // save changed under the account lock while this form was open is not put
+    // back. Every write of this column therefore happens under the account
+    // lock, beside the choice it has to agree with.
     ...(emailInvolved
       ? { emailNotificationsEnabled: input.emailNotificationsEnabled }
       : {}),

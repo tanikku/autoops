@@ -799,3 +799,37 @@ describe("the email switch on a one-worker plan", () => {
     expect(html).not.toMatch(/name="emailSwitchConfirmed"[^>]*checked/);
   });
 });
+
+/**
+ * What the edit form says the email switch showed when it was opened.
+ *
+ * **Edit form only, and kept from the first render.** A new worker has nothing
+ * to compare with; a form shown again after a refused save still carries the
+ * value it was opened with, so a confirmed move is still read as a move.
+ */
+describe("the email switch as the form was opened", () => {
+  it("is not sent by a form that does not track it", () => {
+    expect(render({ values: { emailNotificationsEnabled: true } })).not.toContain(
+      'name="emailNotificationsEnabledInitial"',
+    );
+  });
+
+  it.each([
+    [true, "true"],
+    [false, "false"],
+    [undefined, "false"],
+  ])("sends the stored switch (%o) as %s on first render", (stored, sent) => {
+    const html = render({ values: { emailNotificationsEnabled: stored }, trackEmailIntent: true });
+
+    expect(html).toContain(`name="emailNotificationsEnabledInitial" value="${sent}"`);
+  });
+
+  it("keeps the first-render value when the form is shown again with what was submitted", () => {
+    const html = render({
+      values: { emailNotificationsEnabled: true, emailNotificationsEnabledInitial: false },
+      trackEmailIntent: true,
+    });
+
+    expect(html).toContain('name="emailNotificationsEnabledInitial" value="false"');
+  });
+});

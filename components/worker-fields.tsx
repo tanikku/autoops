@@ -87,6 +87,8 @@ export type WorkerFieldValues = {
   runAtDay?: number | null;
   /** Whether the owner asked to be emailed. Absent reads as off. */
   emailNotificationsEnabled?: boolean;
+  /** What the switch showed when the edit form was first opened; see below. */
+  emailNotificationsEnabledInitial?: boolean | null;
 };
 
 /**
@@ -331,6 +333,7 @@ export function WorkerFields({
   websiteUrlNote,
   language,
   emailEntitlement,
+  trackEmailIntent = false,
 }: {
   values: WorkerFieldValues;
   errors?: WorkerFieldErrors;
@@ -384,6 +387,16 @@ export function WorkerFields({
    * because another one has it. Omitted means nothing to say.
    */
   emailEntitlement?: EmailEntitlement;
+  /**
+   * Whether to tell the save what the email switch showed when the form was
+   * opened, so an edit can tell a switch the owner moved from one that was
+   * changed elsewhere since. The edit form sets it; a new worker has nothing
+   * to compare with.
+   *
+   * **Kept from the first render.** A form shown again after a refused save
+   * carries the value it was first opened with, not what was submitted.
+   */
+  trackEmailIntent?: boolean;
 }) {
   // The only controlled field, and only because another one depends on it: a
   // time of day is meaningless for a manual worker, so the select has to be
@@ -660,6 +673,17 @@ export function WorkerFields({
           here. */}
       <div className="grid gap-2">
         <div className="flex items-center gap-2">
+          {trackEmailIntent ? (
+            <input
+              type="hidden"
+              name="emailNotificationsEnabledInitial"
+              value={String(
+                values.emailNotificationsEnabledInitial ??
+                  values.emailNotificationsEnabled ??
+                  false,
+              )}
+            />
+          ) : null}
           <input
             id="emailNotificationsEnabled"
             name="emailNotificationsEnabled"

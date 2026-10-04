@@ -158,7 +158,25 @@ export type WorkerFormInput = {
    * form has said which worker that is.
    */
   emailSwitchConfirmed: boolean;
+  /**
+   * What the email switch showed when the edit form was opened — `true` or
+   * `false` exactly, or null when the form did not say (the create form, or a
+   * value that is neither).
+   *
+   * **Intent, never authority.** It only tells an edit whether the owner
+   * touched the switch; who may email is decided on the server from the
+   * account, as always. Null is read as "not touched", so a missing or
+   * malformed value can only ever leave the switch alone.
+   */
+  emailNotificationsEnabledInitial: boolean | null;
 };
+
+/** `"true"` or `"false"` exactly; anything else is no answer. */
+function exactBoolean(formData: FormData, field: string): boolean | null {
+  const raw = formData.get(field);
+
+  return raw === "true" ? true : raw === "false" ? false : null;
+}
 
 function text(formData: FormData, field: string): string {
   return String(formData.get(field) ?? "").trim();
@@ -298,6 +316,10 @@ export function readWorkerForm(formData: FormData): WorkerFormInput {
     // submission would change nothing.
     emailNotificationsEnabled: checkbox(formData, "emailNotificationsEnabled"),
     emailSwitchConfirmed: checkbox(formData, "emailSwitchConfirmed"),
+    emailNotificationsEnabledInitial: exactBoolean(
+      formData,
+      "emailNotificationsEnabledInitial",
+    ),
   };
 }
 

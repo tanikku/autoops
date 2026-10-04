@@ -222,7 +222,8 @@ beforeEach(() => {
 describe("updateRoutineAction — email notifications", () => {
   it("turns them on when the box was ticked", async () => {
     const result = await save(
-      form({ status: "draft", frequency: "manual", emailNotificationsEnabled: "on" }),
+      form({
+      emailNotificationsEnabledInitial: "false", status: "draft", frequency: "manual", emailNotificationsEnabled: "on" }),
     );
 
     expect(result?.status).toBe("success");
@@ -240,7 +241,8 @@ describe("updateRoutineAction — email notifications", () => {
       stored({ emailNotificationsEnabled: true }),
     );
 
-    const result = await save(form({ status: "draft", frequency: "manual" }));
+    const result = await save(form({
+      emailNotificationsEnabledInitial: "true", status: "draft", frequency: "manual" }));
 
     expect(result?.status).toBe("success");
     // Inside the account's transaction: email may move the account's choice.
@@ -1688,7 +1690,8 @@ describe("updateRoutineAction — the one emailing worker", () => {
     emailChoice.findChosen.mockResolvedValue({ id: "worker-0", name: "Morning brief" });
 
     const result = await save(
-      form({ status: "draft", frequency: "manual", emailNotificationsEnabled: "on" }),
+      form({
+      emailNotificationsEnabledInitial: "false", status: "draft", frequency: "manual", emailNotificationsEnabled: "on" }),
     );
 
     expect(result?.status).toBe("error");
@@ -1703,6 +1706,7 @@ describe("updateRoutineAction — the one emailing worker", () => {
 
     const result = await save(
       form({
+      emailNotificationsEnabledInitial: "false",
         status: "draft",
         frequency: "manual",
         emailNotificationsEnabled: "on",
@@ -1725,7 +1729,8 @@ describe("updateRoutineAction — the one emailing worker", () => {
     lite("worker-1");
     mocks.getRoutineForEdit.mockResolvedValue(stored({ emailNotificationsEnabled: true }));
 
-    const result = await save(form({ status: "draft", frequency: "manual" }));
+    const result = await save(form({
+      emailNotificationsEnabledInitial: "true", status: "draft", frequency: "manual" }));
 
     expect(result?.status).toBe("success");
     expect(emailChoice.clearChosen).toHaveBeenCalledWith({
@@ -1811,7 +1816,8 @@ describe("updateRoutineAction — an edit racing the email choice", () => {
     });
     emailChoice.clearChosen.mockReset().mockResolvedValue({ count: 1 });
 
-    await save(form({ status: "draft", frequency: "manual" }));
+    await save(form({
+      emailNotificationsEnabledInitial: "true", status: "draft", frequency: "manual" }));
 
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
     expect(mocks.updateRoutine).toHaveBeenCalledWith(
@@ -1825,4 +1831,173 @@ describe("updateRoutineAction — an edit racing the email choice", () => {
       data: { notificationWorkerId: null },
     });
   });
+});
+
+/**
+ * What the owner meant, read from what the form showed when it was opened.
+ *
+ * **A switch the owner did not move is not written**, whatever the stored
+ * value is by now — another save may have changed it while this form was open.
+ * Only a moved switch takes the account lock and changes the choice. The hidden
+ * value is intent only: who may email is still decided from the account.
+ */
+describe("updateRoutineAction — the email switch as the form showed it", () => {
+  function lite(chosen: string | null) {
+    mocks.findSubscription.mockResolvedValue({
+      userId: "google-sub-1",
+      plan: "lite",
+      state: "active",
+      trialStartedAt: null,
+      trialEndsAt: null,
+      trialConsumedAt: null,
+      trialForfeitedAt: null,
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+      notificationWorkerId: chosen,
+      source: "stripe",
+      expiresAt: null,
+    });
+  }
+
+  /** The stored worker as it is now, and what an update would leave it as. */
+  function storedNow(emailNotificationsEnabled: boolean) {
+    const worker = { ...stored(), emailNotificationsEnabled };
+    mocks.getRoutineForEdit.mockResolvedValue({ ...worker });
+    mocks.updateRoutine.mockImplementation(async (_id: string, update: object) => {
+      Object.assign(worker, update);
+      return { ...worker };
+    });
+    return worker;
+  }
+
+  beforeEach(() => {
+    emailChoice.findChosen.mockReset().mockResolvedValue(null);
+    emailChoice.switchOff.mockReset().mockResolvedValue({ count: 1 });
+    emailChoice.setChosen.mockReset().mockResolvedValue({});
+    emailChoice.clearChosen.mockReset().mockResolvedValue({ count: 1 });
+  });
+
+  it("keeps a switch another save turned on, when a form opened with it off edits something else", async () => {
+    lite("worker-1");
+    const worker = storedNow(true);
+
+    const result = await save(
+      form({
+        name: "Renamed",
+        status: "draft",
+        frequency: "manual",
+        emailNotificationsEnabledInitial: "false",
+      }),
+    );
+
+    expect(result?.status).toBe("success");
+    expect(worker.name).toBe("Renamed");
+    expect(worker.emailNotificationsEnabled).toBe(true);
+    expect(mocks.lockUser).not.toHaveBeenCalled();
+    expect(emailChoice.clearChosen).not.toHaveBeenCalled();
+    expect(emailChoice.setChosen).not.toHaveBeenCalled();
+  });
+
+  it("keeps a switch another save turned off, when a form opened with it on edits something else", async () => {
+    lite(null);
+    const worker = storedNow(false);
+
+    await save(
+      form({
+        name: "Renamed",
+        status: "draft",
+        frequency: "manual",
+        emailNotificationsEnabled: "on",
+        emailNotificationsEnabledInitial: "true",
+      }),
+    );
+
+    expect(worker.emailNotificationsEnabled).toBe(false);
+    expect(emailChoice.setChosen).not.toHaveBeenCalled();
+  });
+
+  it("switches it off and clears the choice when the owner unticks it", async () => {
+    lite("worker-1");
+    const worker = storedNow(true);
+
+    await save(
+      form({ status: "draft", frequency: "manual", emailNotificationsEnabledInitial: "true" }),
+    );
+
+    expect(worker.emailNotificationsEnabled).toBe(false);
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(emailChoice.clearChosen).toHaveBeenCalledWith({
+      where: { userId: "google-sub-1", notificationWorkerId: "worker-1" },
+      data: { notificationWorkerId: null },
+    });
+  });
+
+  it("chooses this worker when the owner ticks it and nobody is chosen", async () => {
+    lite(null);
+    const worker = storedNow(false);
+
+    await save(
+      form({
+        status: "draft",
+        frequency: "manual",
+        emailNotificationsEnabled: "on",
+        emailNotificationsEnabledInitial: "false",
+      }),
+    );
+
+    expect(worker.emailNotificationsEnabled).toBe(true);
+    expect(emailChoice.setChosen).toHaveBeenCalledWith({
+      where: { userId: "google-sub-1" },
+      data: { notificationWorkerId: "worker-1" },
+    });
+  });
+
+  it("writes neither the switch nor the choice for an edit that leaves an on switch on", async () => {
+    lite("worker-1");
+    storedNow(true);
+
+    await save(
+      form({
+        name: "Renamed",
+        status: "draft",
+        frequency: "manual",
+        emailNotificationsEnabled: "on",
+        emailNotificationsEnabledInitial: "true",
+      }),
+    );
+
+    const [, update] = mocks.updateRoutine.mock.calls[0];
+    expect(update).not.toHaveProperty("emailNotificationsEnabled");
+    expect(mocks.lockUser).not.toHaveBeenCalled();
+    expect(emailChoice.setChosen).not.toHaveBeenCalled();
+    expect(emailChoice.clearChosen).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **A malformed or missing value can only leave the switch alone.** It never
+   * turns email on, never chooses a worker, never moves the choice.
+   */
+  it.each([["yes"], ["1"], [""], ["TRUE"], [null]])(
+    "leaves the switch and the choice alone for an initial value of %o",
+    async (initial) => {
+      lite("worker-0");
+      emailChoice.findChosen.mockResolvedValue({ id: "worker-0", name: "Morning brief" });
+      const worker = storedNow(false);
+      const fields: Record<string, string> = {
+        status: "draft",
+        frequency: "manual",
+        emailNotificationsEnabled: "on",
+        emailSwitchConfirmed: "on",
+      };
+      if (initial !== null) {
+        fields.emailNotificationsEnabledInitial = initial;
+      }
+
+      await save(form(fields));
+
+      expect(worker.emailNotificationsEnabled).toBe(false);
+      expect(emailChoice.setChosen).not.toHaveBeenCalled();
+      expect(emailChoice.switchOff).not.toHaveBeenCalled();
+    },
+  );
 });
