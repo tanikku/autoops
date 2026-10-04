@@ -46,7 +46,7 @@ describe("the shared provider's callers", () => {
 
 describe("the adapters", () => {
   it.each([
-    ["lib/ai/claude-provider.ts", '"claude-opus-5"', "16000", "600_000"],
+    ["lib/ai/claude-provider.ts", '"claude-sonnet-5-5"', "16000", "600_000"],
     ["lib/ai/claude-worker-draft-generator.ts", '"claude-opus-5"', "2_000", "30_000"],
     ["lib/creator/claude-creator-analyzer.ts", '"claude-sonnet-5"', "12_000", "60_000"],
     ["lib/creator/claude-memory-synthesizer.ts", '"claude-sonnet-5"', "4_000", "30_000"],

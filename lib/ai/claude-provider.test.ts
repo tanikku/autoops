@@ -1,6 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClaudeProvider } from "@/lib/ai/claude-provider";
+import { buildDiscoverySelectionRequest } from "@/lib/discovery/select";
+import { buildWebsiteChangeRequest } from "@/lib/watcher/website-request";
 import { ProviderError, TruncatedAIResponseError } from "@/lib/ai/provider";
 
 /**
@@ -111,7 +113,7 @@ describe("what a request looks like on the wire", () => {
 
     await provider.execute({ system: "the task", user: "the material" });
 
-    expect(sentRequest().model).toBe("claude-opus-5");
+    expect(sentRequest().model).toBe("claude-sonnet-5-5");
     expect(sentRequest().max_tokens).toBe(16000);
   });
 });
@@ -408,7 +410,7 @@ describe("how long a request is allowed to take", () => {
       timeoutMs: 120_000,
     });
 
-    expect(sentRequest().model).toBe("claude-opus-5");
+    expect(sentRequest().model).toBe("claude-sonnet-5-5");
     expect(sentRequest().max_tokens).toBe(16000);
     expect(sentRequest().system).toBe("the task");
     expect(sentRequest().messages).toEqual([
@@ -434,7 +436,7 @@ describe("what a successful call reports", () => {
     const result = await provider.execute({ user: "prompt" });
 
     expect(result.provider).toBe("anthropic");
-    expect(result.model).toBe("claude-opus-5");
+    expect(result.model).toBe("claude-sonnet-5-5");
   });
 
   it("carries the tokens across under Koqentra's names", async () => {
@@ -479,7 +481,7 @@ describe("what a failed call reports", () => {
 
     expect(thrown.attempt).toEqual({
       provider: "anthropic",
-      model: "claude-opus-5",
+      model: "claude-sonnet-5-5",
       usage: {
         inputTokens: null,
         outputTokens: null,
@@ -566,7 +568,7 @@ describe("the output limit", () => {
     await provider.execute({ user: "prompt", maxTokens: 2_000 });
 
     expect(sentRequest().max_tokens).toBe(2_000);
-    expect(sentRequest().model).toBe("claude-opus-5");
+    expect(sentRequest().model).toBe("claude-sonnet-5-5");
   });
 });
 
@@ -610,7 +612,7 @@ describe("an answer cut off at its output limit", () => {
 
     expect(thrown.call).toEqual({
       provider: "anthropic",
-      model: "claude-opus-5",
+      model: "claude-sonnet-5-5",
       usage: {
         inputTokens: 1_200,
         outputTokens: 340,
@@ -655,5 +657,55 @@ describe("an answer cut off at its output limit", () => {
     await expect(provider.execute({ user: "prompt" })).resolves.toMatchObject({
       text: "an answer",
     });
+  });
+});
+
+/**
+ * The three features this provider serves, each in its own request shape.
+ *
+ * **Every one of them reaches Sonnet 5.5 and reports it**, which is what the
+ * usage ledger records as the call's model — the provider's answer, never a
+ * caller's guess. Worker drafts and Creator features have adapters of their
+ * own and are not affected (see `lib/ai/output-limits.test.ts`).
+ */
+describe("the model each routine feature reaches", () => {
+  it.each([
+    ["prompt", () => ({ user: "hello", timeoutMs: 180_000, maxTokens: 10_000 }), 10_000],
+    [
+      "website",
+      () =>
+        buildWebsiteChangeRequest("Say what changed.", {
+          previousExcerpt: "a",
+          currentExcerpt: "b",
+          truncated: false,
+        }),
+      2_000,
+    ],
+    [
+      "discovery",
+      () =>
+        buildDiscoverySelectionRequest({
+          query: "hedgehogs",
+          maxResults: 1,
+          candidates: [
+            {
+              itemKey: "youtube:a",
+              title: "A",
+              author: "Channel A",
+              url: "https://www.youtube.com/watch?v=a",
+              publishedAt: null,
+            },
+          ],
+        }),
+      4_000,
+    ],
+  ] as const)("%s is sent to and reported as Sonnet 5.5, at its own limit", async (_feature, build, limit) => {
+    create.mockResolvedValue(response());
+
+    const result = await provider.execute(build());
+
+    expect(sentRequest().model).toBe("claude-sonnet-5-5");
+    expect(sentRequest().max_tokens).toBe(limit);
+    expect(result.model).toBe("claude-sonnet-5-5");
   });
 });

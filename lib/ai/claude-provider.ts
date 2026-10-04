@@ -10,7 +10,7 @@ import {
 } from "@/lib/ai/provider";
 import { normalizeAnthropicUsage, UNKNOWN_AI_USAGE } from "@/lib/ai/usage";
 
-const MODEL = "claude-opus-5";
+const MODEL = "claude-sonnet-5-5";
 
 /**
  * Who this adapter reaches.
