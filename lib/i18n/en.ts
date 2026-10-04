@@ -1707,7 +1707,7 @@ Notes for the report:
     "Pausing or deleting a Worker is always allowed, and once fewer than {limit} are active you could add them again.",
 
   // Public Beta purpose-first creation and its watch templates.
-  "create.purpose.heading": "What are you waiting for?",
+  "create.purpose.heading": "What would you like Koqentra to handle?",
   "create.purpose.hotel.title": "Hotel vacancy",
   "create.purpose.hotel.description": "Hear when a room opens up for the date you want.",
   "create.purpose.restock.title": "Product restock",

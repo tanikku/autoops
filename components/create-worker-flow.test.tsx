@@ -62,6 +62,12 @@ describe("the first screen", () => {
     }
   });
 
+  /** Not "what are you waiting for": a worker also finds things and does AI work. */
+  it("asks what Koqentra should handle, not only what to watch", () => {
+    expect(render(null, "ja")).toContain("どんなことをKoqentraに任せますか？");
+    expect(render(null, "en")).toContain("What would you like Koqentra to handle?");
+  });
+
   it("offers no price-drop or application card yet, and no form", () => {
     const html = render();
 

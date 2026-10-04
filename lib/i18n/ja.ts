@@ -948,7 +948,7 @@ export const ja: Record<TranslationKey, string> = {
     "一時停止と削除はいつでもできます。Active が {limit} 件未満になれば、また増やせるようになります。",
 
   // Public Beta の目的別作成と、その監視テンプレート。
-  "create.purpose.heading": "何を待っていますか？",
+  "create.purpose.heading": "どんなことをKoqentraに任せますか？",
   "create.purpose.hotel.title": "ホテルの空室",
   "create.purpose.hotel.description": "希望の日に空室が出たらお知らせします。",
   "create.purpose.restock.title": "商品の再入荷",
