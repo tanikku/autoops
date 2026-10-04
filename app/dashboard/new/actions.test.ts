@@ -2517,3 +2517,26 @@ describe("createRoutineAction — interval cadences", () => {
     expect(saved().runAtDay).toBeNull();
   });
 });
+
+/**
+ * Where a worker came from is not something the form can say.
+ *
+ * Only the template flow sets an origin, on the server. A worker hired here —
+ * of any kind, however the fields were filled — is created without one, even
+ * when a submission carries a field of that name.
+ */
+describe("createRoutineAction — template origin", () => {
+  it.each([
+    ["prompt", {}],
+    ["website", { kind: "website", websiteUrl: "https://example.com/news", prompt: "Tell me what changed." }],
+    ["discovery", { kind: "discovery", discoverySource: "youtube", discoveryQuery: "hedgehogs" }],
+  ])("creates a %s worker with no template", async (_kind, fields) => {
+    const result = await createRoutineAction(
+      null,
+      form({ ...fields, templateId: "hotel-availability" }),
+    );
+
+    expect(result?.status).toBe("success");
+    expect(mocks.createRoutine.mock.calls[0][0]).not.toHaveProperty("templateId");
+  });
+});

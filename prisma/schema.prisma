@@ -143,6 +143,16 @@ model Routine {
   /// any other change is recorded and moved past without a message. Only a
   /// website worker ever has one.
   targetCondition String?
+  /// Which Public Beta template this worker was created from, or null.
+  ///
+  /// **An origin, not a setting.** Nothing about how a worker runs reads it;
+  /// it records where the worker came from so that a template can be measured.
+  /// Set only on the server, from an allowlist of stable identifiers, by the
+  /// template flow that creates the worker — never from a form field — and
+  /// left untouched by an edit. A plain string rather than an enum so that a
+  /// template can be added without a migration. Every worker created before
+  /// templates, and every worker created without one, is null.
+  templateId      String?
   /// Who currently holds the right to execute this worker, as an opaque token
   /// minted per acquisition. Null means nobody does.
   ///

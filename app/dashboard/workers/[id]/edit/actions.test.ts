@@ -2186,3 +2186,30 @@ describe("updateRoutineAction — interval cadences", () => {
     expect(update().runAtDay).toBeNull();
   });
 });
+
+/**
+ * An edit leaves a worker's template origin where it was.
+ *
+ * The update names only what the form edits; a field it does not name is not
+ * written, so an origin recorded at creation survives every save — and a
+ * submission cannot set or clear one.
+ */
+describe("updateRoutineAction — template origin", () => {
+  it("never writes the template origin of a worker that has one", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(stored({ templateId: "hotel-availability" }));
+
+    const result = await save(form({ name: "Renamed", status: "draft", frequency: "manual" }));
+
+    expect(result?.status).toBe("success");
+    expect(mocks.updateRoutine.mock.calls[0][1]).not.toHaveProperty("templateId");
+  });
+
+  it("ignores a template origin in the submission", async () => {
+    const result = await save(
+      form({ status: "draft", frequency: "manual", templateId: "product-restock" }),
+    );
+
+    expect(result?.status).toBe("success");
+    expect(mocks.updateRoutine.mock.calls[0][1]).not.toHaveProperty("templateId");
+  });
+});
