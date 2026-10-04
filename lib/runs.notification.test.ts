@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   routineUpdateMany: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
+  findMany: vi.fn(),
   transaction: vi.fn(),
   getWebsiteSource: vi.fn(),
   getWebsiteSnapshot: vi.fn(),
@@ -121,7 +122,7 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: mocks.routineUpdateMany,
     },
     providerUsageEvent: { create: mocks.usageCreate },
-    runHistory: { create: mocks.create, update: mocks.update },
+    runHistory: { create: mocks.create, update: mocks.update, findMany: mocks.findMany },
     $transaction: mocks.transaction,
   },
 }));
@@ -298,6 +299,8 @@ beforeEach(() => {
   mocks.routineUpdate.mockReset();
   mocks.routineUpdateMany.mockReset();
   mocks.create.mockReset().mockResolvedValue(RUN_ROW);
+  // No earlier runs unless a case says otherwise: every failure is the first.
+  mocks.findMany.mockReset().mockResolvedValue([]);
   mocks.update
     .mockReset()
     .mockImplementation(async ({ data }) => ({ ...RUN_ROW, ...data }));
@@ -830,5 +833,226 @@ describe("a website worker with a target condition", () => {
     if (sent === 1) {
       expect(subject()).toBe('[Koqentra] "Careers page" failed');
     }
+  });
+});
+
+/**
+ * One failure email per streak.
+ *
+ * `findMany` stands for the worker's earlier runs, newest first — what the
+ * streak lookup reads. Each run below is one call of `runRoutine`, so a
+ * sequence is the same worker run again with the history it would then have.
+ */
+describe("a worker that keeps failing", () => {
+  const COMPLETED = { status: "completed", errorMessage: null };
+  const FAILED = { status: "failed", errorMessage: "The site answered with 503." };
+  const RUNNING = { status: "running", errorMessage: null };
+  const ALLOWANCE = { status: "failed", errorMessage: "AI processing limit reached." };
+
+  function failFetch() {
+    mocks.fetchWatchedPage.mockRejectedValue(
+      new WatcherError("http-error", "The site answered with 503."),
+    );
+  }
+
+  async function runWith(earlier: { status: string; errorMessage: string | null }[]) {
+    mocks.findMany.mockResolvedValueOnce(earlier);
+    await runRoutine("worker-1");
+  }
+
+  it("emails the first failure after a completed run", async () => {
+    failFetch();
+
+    await runWith([COMPLETED]);
+
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(subject()).toBe('[Koqentra] "Careers page" failed');
+  });
+
+  it("emails the first failure of a worker with no earlier run", async () => {
+    failFetch();
+
+    await runWith([]);
+
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("emails once over completed → failed → failed, and the run still says failed", async () => {
+    failFetch();
+
+    await runWith([COMPLETED]);
+    await runWith([FAILED, COMPLETED]);
+
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(written().status).toBe("failed");
+    expect(written().errorMessage).toBe("The site answered with 503.");
+  });
+
+  it("emails again after a recovery: completed → failed → failed → completed → failed", async () => {
+    failFetch();
+
+    await runWith([COMPLETED]);
+    await runWith([FAILED, COMPLETED]);
+    await runWith([COMPLETED, FAILED, FAILED, COMPLETED]);
+
+    expect(mocks.send).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the streak when the error changes: fetch, then provider", async () => {
+    failFetch();
+    await runWith([COMPLETED]);
+
+    // The page has moved, and the model now fails on it.
+    mocks.fetchWatchedPage.mockReset().mockResolvedValue(fetched());
+    mocks.getWebsiteSnapshot.mockResolvedValue(changedSnapshot());
+    mocks.execute.mockRejectedValue(new Error("the model refused"));
+    await runWith([FAILED, COMPLETED]);
+
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("emails when the earlier run is still marked running", async () => {
+    failFetch();
+
+    await runWith([RUNNING, FAILED]);
+
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips a silent failure to find the streak: failed → allowance → failed", async () => {
+    failFetch();
+
+    await runWith([ALLOWANCE, FAILED]);
+
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("does not let a silent failure start one: completed → allowance → failed", async () => {
+    failFetch();
+
+    await runWith([ALLOWANCE, COMPLETED]);
+
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks only about earlier runs of this worker, excluding this run, newest first, twenty at most", async () => {
+    failFetch();
+
+    await runWith([]);
+
+    expect(mocks.findMany).toHaveBeenCalledTimes(1);
+    expect(mocks.findMany.mock.calls[0][0]).toMatchObject({
+      where: {
+        routineId: "worker-1",
+        id: { not: RUN_ROW.id },
+        startedAt: { lt: RUN_ROW.startedAt },
+      },
+      orderBy: { startedAt: "desc" },
+      take: 20,
+    });
+  });
+
+  it("sends when the earlier runs cannot be read", async () => {
+    failFetch();
+    mocks.findMany.mockRejectedValueOnce(new Error("the database refused"));
+
+    await runRoutine("worker-1");
+
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("never reads earlier runs for a worker with email off", async () => {
+    failFetch();
+    mocks.findUniqueOrThrow.mockResolvedValue(worker({ emailNotificationsEnabled: false }));
+
+    await runRoutine("worker-1");
+
+    expect(mocks.findMany).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("never reads earlier runs for a silent failure, which sends nothing as before", async () => {
+    mocks.fetchWatchedPage.mockRejectedValue(
+      new WatcherError("throttled", "Koqentra fetched this site a moment ago."),
+    );
+
+    await runRoutine("worker-1");
+
+    expect(mocks.findMany).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("suppresses a prompt worker's repeated failure the same way", async () => {
+    mocks.findUniqueOrThrow.mockResolvedValue(worker({ kind: "prompt" }));
+    mocks.execute.mockRejectedValue(new Error("the model refused"));
+
+    await runWith([COMPLETED]);
+    await runWith([FAILED, COMPLETED]);
+
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+  });
+
+  /** Only failure emails: a streak never silences news that something worked. */
+  it("still emails a changed page while earlier runs failed", async () => {
+    mocks.getWebsiteSnapshot.mockResolvedValue(changedSnapshot());
+
+    await runWith([FAILED, FAILED]);
+
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(subject()).toBe('[Koqentra] "Careers page" detected a change');
+    expect(mocks.findMany).not.toHaveBeenCalled();
+  });
+
+  it("still emails a completed prompt run while earlier runs failed", async () => {
+    mocks.findUniqueOrThrow.mockResolvedValue(worker({ kind: "prompt" }));
+
+    await runWith([FAILED]);
+
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(subject()).toBe('[Koqentra] "Careers page" completed');
+  });
+
+  describe("on a plan that lets one worker email", () => {
+    function lite(chosen: string | null) {
+      emailPlan.getEffectiveEntitlement.mockResolvedValue({
+        state: "active",
+        entitled: true,
+        plan: "lite",
+        limits: { email: "one-worker" },
+        trial: null,
+        period: null,
+        expiresAt: null,
+        notificationWorkerId: chosen,
+      });
+    }
+
+    it("emails the chosen worker's first failure and not its second", async () => {
+      lite("worker-1");
+      failFetch();
+
+      await runWith([COMPLETED]);
+      await runWith([FAILED, COMPLETED]);
+
+      expect(mocks.send).toHaveBeenCalledTimes(1);
+    });
+
+    it("still emails nothing for a worker that is not the chosen one", async () => {
+      lite("worker-9");
+      failFetch();
+
+      await runWith([COMPLETED]);
+
+      expect(mocks.send).not.toHaveBeenCalled();
+    });
+
+    it("does not read the plan for a failure that repeats one already sent", async () => {
+      lite("worker-1");
+      failFetch();
+
+      await runWith([FAILED]);
+
+      expect(emailPlan.getEffectiveEntitlement).not.toHaveBeenCalled();
+      expect(mocks.send).not.toHaveBeenCalled();
+    });
   });
 });

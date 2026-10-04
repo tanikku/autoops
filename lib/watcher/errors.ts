@@ -128,3 +128,14 @@ export class WatcherError extends Error {
 export function isWatcherError(error: unknown): error is WatcherError {
   return error instanceof WatcherError;
 }
+
+/**
+ * What a run records when a fetch gave way to another one of ours.
+ *
+ * Here rather than beside the fetch so that a run can be recognised as
+ * throttled afterwards — by the failure-email streak — from the same string,
+ * without importing the fetch to read it.
+ */
+export const THROTTLED_MESSAGE =
+  "This site was checked very recently, so Koqentra did not fetch it again yet.";
+

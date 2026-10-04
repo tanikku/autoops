@@ -4,7 +4,7 @@ import {
   resolveSafeAddresses,
   systemResolver,
 } from "@/lib/watcher/dns";
-import { WatcherError } from "@/lib/watcher/errors";
+import { THROTTLED_MESSAGE, WatcherError } from "@/lib/watcher/errors";
 import { FETCH_BUDGET_MS, MAX_REDIRECTS } from "@/lib/watcher/limits";
 import { nodeTransport, type Transport } from "@/lib/watcher/transport";
 import { hostAddress, parseWatchUrl } from "@/lib/watcher/url";
@@ -69,10 +69,6 @@ export type FetchDeps = {
   /** How waiting is done. Injectable so a test never waits in real time. */
   sleep?: (ms: number) => Promise<void>;
 };
-
-/** What a run records when a fetch gave way to another one of ours. */
-const THROTTLED_MESSAGE =
-  "This site was checked very recently, so Koqentra did not fetch it again yet.";
 
 const allowAll: DomainThrottle = async () => ({ allowed: true });
 

@@ -22,6 +22,10 @@ import {
   entitlementAllowsEmail,
   shouldSendRunEmail,
 } from "@/lib/notify/email-entitlement";
+import {
+  continuesFailureStreak,
+  FAILURE_STREAK_LOOKBACK,
+} from "@/lib/notify/failure-streak";
 import type { DiscoveryCandidate } from "@/lib/discovery/types";
 import {
   acquireExecutionLease,
@@ -762,6 +766,17 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
     outcome = { ...outcome, notification: null };
   }
 
+  // **One failure email per streak.** A worker already reported broken, and
+  // not working since, is not news again — whichever error it hit this time.
+  // Read only when an email could follow; the run itself is left as recorded.
+  if (
+    outcome.notification === "failed" &&
+    routine.emailNotificationsEnabled &&
+    (await failureAlreadyReported(outcome.run))
+  ) {
+    outcome = { ...outcome, notification: null };
+  }
+
   // **The run decides whether there is anything to tell, the worker whether
   // to tell it, and the plan whether this worker may.** The plan is read last
   // and only when the first two already say yes.
@@ -806,6 +821,42 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
   }
 
   return outcome.run;
+}
+
+/**
+ * Whether this worker was already failing before `run`, so its owner has
+ * already been emailed about it.
+ *
+ * **Earlier runs only, by when they started.** Runs of one worker never
+ * overlap — each holds the execution lease from its row being written to its
+ * outcome being recorded — so every run that started before this one has
+ * already finished, and the answer does not depend on when this is asked.
+ * `run` itself is excluded by id as well as by time.
+ *
+ * At most `FAILURE_STREAK_LOOKBACK` rows are read; see `continuesFailureStreak`
+ * for how they are judged.
+ *
+ * **Not knowing sends.** A read that fails is logged and treated as a first
+ * failure: one extra email is a smaller loss than a failure nobody hears about.
+ */
+async function failureAlreadyReported(run: RunHistory): Promise<boolean> {
+  try {
+    const earlier = await prisma.runHistory.findMany({
+      where: {
+        routineId: run.routineId,
+        id: { not: run.id },
+        startedAt: { lt: run.startedAt },
+      },
+      orderBy: { startedAt: "desc" },
+      take: FAILURE_STREAK_LOOKBACK,
+      select: { status: true, errorMessage: true },
+    });
+
+    return continuesFailureStreak(earlier);
+  } catch (error) {
+    console.error("[worker] earlier runs could not be read — failure email sent", run.routineId, error);
+    return false;
+  }
 }
 
 /**

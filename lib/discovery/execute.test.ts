@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   routineFind: vi.fn(),
   runCreate: vi.fn(),
   runUpdate: vi.fn(),
+  runFindMany: vi.fn(),
   transaction: vi.fn(),
   notify: vi.fn(),
   usageCreate: vi.fn(),
@@ -147,7 +148,11 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     routine: { findUniqueOrThrow: mocks.routineFind },
     providerUsageEvent: { create: mocks.usageCreate },
-    runHistory: { create: mocks.runCreate, update: mocks.runUpdate },
+    runHistory: {
+      create: mocks.runCreate,
+      update: mocks.runUpdate,
+      findMany: mocks.runFindMany,
+    },
     $transaction: mocks.transaction,
   },
 }));
@@ -255,6 +260,8 @@ beforeEach(() => {
   });
   mocks.recordUsageObservation.mockResolvedValue({ recorded: true });
   mocks.runCreate.mockResolvedValue(run({ status: "running" }));
+  // No earlier runs unless a case says otherwise: every failure is the first.
+  mocks.runFindMany.mockResolvedValue([]);
   mocks.runUpdate.mockImplementation(async (args: { data: Record<string, unknown> }) =>
     run(args.data),
   );
@@ -1457,5 +1464,30 @@ describe("a discovery selection cut off at its output limit", () => {
 
     expect(allowance.reserveDiscoveryRun).toHaveBeenCalledTimes(1);
     expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** A discovery worker that keeps failing is emailed once, like any other. */
+describe("a discovery worker that keeps failing", () => {
+  it("emails the first failure and not the next one", async () => {
+    mocks.routineFind.mockResolvedValue({
+      userId: USER_ID,
+      name: "Recommendations",
+      prompt: "",
+      kind: "discovery",
+      emailNotificationsEnabled: true,
+    });
+    mocks.getSource.mockResolvedValue(null);
+
+    mocks.runFindMany.mockResolvedValueOnce([{ status: "completed", errorMessage: null }]);
+    await runRoutine(ROUTINE_ID);
+    mocks.runFindMany.mockResolvedValueOnce([
+      { status: "failed", errorMessage: "Execution failed." },
+      { status: "completed", errorMessage: null },
+    ]);
+    await runRoutine(ROUTINE_ID);
+
+    expect(mocks.notify).toHaveBeenCalledTimes(1);
+    expect(mocks.notify.mock.calls[0][0]).toMatchObject({ kind: "failed" });
   });
 });
