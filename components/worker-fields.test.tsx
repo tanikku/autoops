@@ -757,3 +757,45 @@ describe("the other kinds are unchanged", () => {
     expect(html).not.toContain('id="discoveryMaxResults"');
   });
 });
+
+/**
+ * The email switch on a plan that lets one worker email.
+ *
+ * **Said beside the switch, and only on that plan.** The offer to move email
+ * appears only after a save was refused because another worker has it — it is
+ * the owner's explicit yes, never something ticked for them.
+ */
+describe("the email switch on a one-worker plan", () => {
+  it("says email is for one worker on that plan", () => {
+    const html = render({ values: {}, emailEntitlement: "one-worker" });
+
+    expect(html).toContain("email notifications are available for one worker");
+  });
+
+  it.each(["all-workers", "none", undefined] as const)(
+    "says nothing about it for %s",
+    (emailEntitlement) => {
+      const html = render({ values: {}, emailEntitlement });
+
+      expect(html).not.toContain("available for one worker");
+    },
+  );
+
+  it("offers no move until a save was refused", () => {
+    const html = render({ values: {}, emailEntitlement: "one-worker" });
+
+    expect(html).not.toContain('name="emailSwitchConfirmed"');
+  });
+
+  it("offers the move, unticked, with the refusal beside it", () => {
+    const html = render({
+      values: { emailNotificationsEnabled: true },
+      emailEntitlement: "one-worker",
+      errors: { emailNotificationsEnabled: "MORNING-BRIEF-HAS-EMAIL" },
+    });
+
+    expect(html).toContain("MORNING-BRIEF-HAS-EMAIL");
+    expect(html).toContain('name="emailSwitchConfirmed"');
+    expect(html).not.toMatch(/name="emailSwitchConfirmed"[^>]*checked/);
+  });
+});

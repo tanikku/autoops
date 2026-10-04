@@ -105,6 +105,15 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+// **The emailing-worker choice runs for real**, against these: the chosen
+// worker as the account reads it, and the writes a choice makes.
+const emailChoice = vi.hoisted(() => ({
+  findChosen: vi.fn(),
+  switchOff: vi.fn(),
+  setChosen: vi.fn(),
+  clearChosen: vi.fn(),
+}));
+
 /**
  * The client a transaction hands its callback.
  *
@@ -117,13 +126,19 @@ vi.mock("@/lib/prisma", () => ({
 const TX = {
   tag: "transaction-client",
   user: { update: mocks.lockUser },
-  routine: { count: mocks.countRoutines },
+  routine: {
+    count: mocks.countRoutines,
+    findFirst: emailChoice.findChosen,
+    updateMany: emailChoice.switchOff,
+  },
   // **The trial runs for real, not stubbed.** A worker created active is a
   // first activation as surely as one switched on later, and this is the only
   // place that fact is exercised. See `startTrialOnFirstWorkerActivation`.
   subscription: {
     findUnique: mocks.findSubscription,
     create: mocks.createSubscription,
+    update: emailChoice.setChosen,
+    updateMany: emailChoice.clearChosen,
   },
   usagePeriod: { create: mocks.createUsagePeriod },
   // **What the account already spent on AI, carried into the trial.** Read
@@ -2240,5 +2255,110 @@ describe("createRoutineAction — what the answer says about the trial", () => {
     const result = await createRoutineAction(null, form({ status: "active" }));
 
     expect(result?.message).toBe('Worker "Daily digest" created.');
+  });
+});
+
+/**
+ * Hiring a worker with email on, on a plan that lets one worker email.
+ *
+ * **The choice is decided in the hire's own transaction, before the worker is
+ * written.** Another worker already chosen stops the hire until the owner
+ * confirms the move; nothing is created in the meantime.
+ */
+describe("createRoutineAction — the one emailing worker", () => {
+  function lite(chosen: string | null) {
+    const CHOSEN = chosen;
+    mocks.findSubscription.mockResolvedValue({
+      userId: "google-sub-1",
+      plan: "lite",
+      state: "active",
+      trialStartedAt: null,
+      trialEndsAt: null,
+      trialConsumedAt: null,
+      trialForfeitedAt: null,
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+      notificationWorkerId: CHOSEN,
+      source: "stripe",
+      expiresAt: null,
+    });
+  }
+
+  beforeEach(() => {
+    emailChoice.findChosen.mockReset().mockResolvedValue(null);
+    emailChoice.switchOff.mockReset().mockResolvedValue({ count: 1 });
+    emailChoice.setChosen.mockReset().mockResolvedValue({});
+    emailChoice.clearChosen.mockReset().mockResolvedValue({ count: 0 });
+  });
+
+  it("makes the new worker the chosen one when nobody is", async () => {
+    lite(null);
+
+    const result = await createRoutineAction(
+      null,
+      form({ status: "draft", emailNotificationsEnabled: "on" }),
+    );
+
+    expect(result?.status).toBe("success");
+    expect(emailChoice.setChosen).toHaveBeenCalledWith({
+      where: { userId: "google-sub-1" },
+      data: { notificationWorkerId: "worker-1" },
+    });
+  });
+
+  it("creates nothing while another worker is chosen and the move is unconfirmed", async () => {
+    lite("worker-0");
+    emailChoice.findChosen.mockResolvedValue({ id: "worker-0", name: "Morning brief" });
+
+    const result = await createRoutineAction(
+      null,
+      form({ status: "draft", emailNotificationsEnabled: "on" }),
+    );
+
+    expect(result?.status).toBe("error");
+    expect(result?.errors?.emailNotificationsEnabled).toContain("Morning brief");
+    expect(mocks.createRoutine).not.toHaveBeenCalled();
+    expect(emailChoice.setChosen).not.toHaveBeenCalled();
+    expect(emailChoice.switchOff).not.toHaveBeenCalled();
+  });
+
+  it("moves email to the new worker once the owner confirms", async () => {
+    lite("worker-0");
+    emailChoice.findChosen.mockResolvedValue({ id: "worker-0", name: "Morning brief" });
+
+    const result = await createRoutineAction(
+      null,
+      form({ status: "draft", emailNotificationsEnabled: "on", emailSwitchConfirmed: "on" }),
+    );
+
+    expect(result?.status).toBe("success");
+    expect(emailChoice.switchOff).toHaveBeenCalledWith({
+      where: { id: "worker-0", userId: "google-sub-1" },
+      data: { emailNotificationsEnabled: false },
+    });
+    expect(emailChoice.setChosen).toHaveBeenCalledWith({
+      where: { userId: "google-sub-1" },
+      data: { notificationWorkerId: "worker-1" },
+    });
+  });
+
+  it("chooses nothing for a worker hired with email off", async () => {
+    lite(null);
+
+    await createRoutineAction(null, form({ status: "draft" }));
+
+    expect(emailChoice.setChosen).not.toHaveBeenCalled();
+  });
+
+  it("chooses nothing on a plan that lets every worker email", async () => {
+    mocks.findSubscription.mockResolvedValue(null);
+
+    const result = await createRoutineAction(
+      null,
+      form({ status: "draft", emailNotificationsEnabled: "on" }),
+    );
+
+    expect(result?.status).toBe("success");
+    expect(emailChoice.setChosen).not.toHaveBeenCalled();
   });
 });

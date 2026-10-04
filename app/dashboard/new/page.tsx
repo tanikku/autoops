@@ -3,6 +3,7 @@ import { DashboardNav } from "@/components/dashboard-nav";
 import { RoutineForm } from "@/components/routine-form";
 import { t } from "@/lib/i18n";
 import { getDocumentLanguage } from "@/lib/i18n/server";
+import { readEmailEntitlement } from "@/lib/notification-worker";
 import { requireUserId } from "@/lib/session";
 import { getTrialUsageView } from "@/lib/usage/trial-view";
 import { getUserLanguage, getUserTimezone } from "@/lib/users";
@@ -39,13 +40,15 @@ export default async function NewRoutinePage() {
   // schedule it is about to create. The action reads the same value again when
   // it works out the first slot.
   const userId = await requireUserId();
-  const [timezone, language, trial] = await Promise.all([
+  const [timezone, language, trial, emailEntitlement] = await Promise.all([
     getUserTimezone(userId),
     getUserLanguage(userId),
     // **Read to explain, never to start.** Nothing here begins a trial or
     // opens a period; an account that has done nothing still has no rows after
     // looking at this page.
     getTrialUsageView(userId),
+    // What the email switch may say about the plan. Read only.
+    readEmailEntitlement(userId),
   ]);
 
   return (
@@ -85,7 +88,11 @@ export default async function NewRoutinePage() {
           </div>
         ) : null}
 
-        <RoutineForm timezone={timezone} language={language} />
+        <RoutineForm
+          timezone={timezone}
+          language={language}
+          emailEntitlement={emailEntitlement}
+        />
       </main>
     </div>
   );

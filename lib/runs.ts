@@ -12,7 +12,12 @@ import {
   executeDiscovery,
 } from "@/lib/discovery/execute";
 import { recordSeenItems } from "@/lib/discovery/repository";
+import { getEffectiveEntitlement } from "@/lib/entitlements/index";
 import { requireWorkerExecutionEntitlement } from "@/lib/entitlements/worker-execution";
+import {
+  entitlementAllowsEmail,
+  shouldSendRunEmail,
+} from "@/lib/notify/email-entitlement";
 import type { DiscoveryCandidate } from "@/lib/discovery/types";
 import {
   acquireExecutionLease,
@@ -741,7 +746,20 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
     outcome = { ...outcome, notification: null };
   }
 
-  if (routine.emailNotificationsEnabled && outcome.notification !== null) {
+  // **The run decides whether there is anything to tell, the worker whether
+  // to tell it, and the plan whether this worker may.** The plan is read last
+  // and only when the first two already say yes.
+  if (
+    outcome.notification !== null &&
+    shouldSendRunEmail({
+      notification: outcome.notification,
+      emailNotificationsEnabled: routine.emailNotificationsEnabled,
+      entitlementAllows:
+        outcome.notification !== null &&
+        routine.emailNotificationsEnabled &&
+        (await planAllowsEmail(routineId, routine.userId)),
+    })
+  ) {
     // **Read only when the message will carry it.** A changed page is the one
     // notification whose reader's next move is the page itself, so the address
     // is fetched here rather than threaded through the execution — this branch
@@ -772,6 +790,24 @@ export async function runRoutine(routineId: string): Promise<RunHistory> {
   }
 
   return outcome.run;
+}
+
+/**
+ * Whether the account's plan lets this worker email it, read when the email is
+ * about to go rather than when the run began — a run can take minutes, and the
+ * plan is whatever it is now.
+ *
+ * **Not knowing is not permission.** A read that fails sends nothing and is
+ * logged; the run's own outcome is already recorded and is left exactly as it
+ * is.
+ */
+async function planAllowsEmail(routineId: string, userId: string): Promise<boolean> {
+  try {
+    return entitlementAllowsEmail(await getEffectiveEntitlement(userId), routineId);
+  } catch (error) {
+    console.error("[worker] email entitlement could not be read — not sent", routineId, error);
+    return false;
+  }
 }
 
 /**

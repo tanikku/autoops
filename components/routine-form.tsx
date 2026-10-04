@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { EmailEntitlement } from "@/lib/plans";
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import {
@@ -110,6 +111,7 @@ function SaveButton({ language }: { language: string }) {
 export function RoutineForm({
   timezone,
   language,
+  emailEntitlement,
 }: {
   timezone: string;
   /**
@@ -121,6 +123,8 @@ export function RoutineForm({
    * one of them exactly as it was.
    */
   language: string;
+  /** Which workers the plan lets email, for the email switch to explain. */
+  emailEntitlement?: EmailEntitlement;
 }) {
   const [state, formAction] = useActionState<CreateRoutineState, FormData>(
     createRoutineAction,
@@ -477,6 +481,7 @@ export function RoutineForm({
           kind={kind}
           timezone={timezone}
           language={language}
+          emailEntitlement={emailEntitlement}
           websiteUrlNote={t(language, "worker.create.websiteFirstRunNote")}
         />
 

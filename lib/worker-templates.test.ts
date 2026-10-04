@@ -344,6 +344,7 @@ describe("what the form makes of an applied template", () => {
       runAtWeekday: null,
       runAtDay: null,
       emailNotificationsEnabled: false,
+    emailSwitchConfirmed: false,
     };
   }
 

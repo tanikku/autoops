@@ -1,5 +1,9 @@
 import "server-only";
 
+import {
+  lockAccountForEmailSelection,
+  releaseEmailSelection,
+} from "@/lib/notification-worker";
 import { type DbClient, prisma } from "@/lib/prisma";
 import {
   type CreateRoutineInput,
@@ -207,12 +211,26 @@ export async function updateRoutine(
   return record ? toRoutine(record) : null;
 }
 
+/**
+ * Deletes a worker, and forgets it as the account's emailing worker if it was
+ * the one — together, so an account is never left pointing at a worker that is
+ * gone. The account is locked first, the same order every save takes.
+ */
 export async function deleteRoutine(
   id: string,
   userId: string,
 ): Promise<boolean> {
-  const { count } = await prisma.routine.deleteMany({ where: { id, userId } });
-  return count > 0;
+  return prisma.$transaction(async (tx) => {
+    await lockAccountForEmailSelection(tx, userId);
+
+    const { count } = await tx.routine.deleteMany({ where: { id, userId } });
+
+    if (count > 0) {
+      await releaseEmailSelection(tx, { userId, routineId: id });
+    }
+
+    return count > 0;
+  });
 }
 
 /**

@@ -68,6 +68,15 @@ vi.mock("@/lib/prisma", () => ({
   prisma: { $transaction: mocks.transaction },
 }));
 
+// **The emailing-worker choice runs for real**, against these: the chosen
+// worker as the account reads it, and the writes a choice makes.
+const emailChoice = vi.hoisted(() => ({
+  findChosen: vi.fn(),
+  switchOff: vi.fn(),
+  setChosen: vi.fn(),
+  clearChosen: vi.fn(),
+}));
+
 /**
  * The client a transaction hands its callback.
  *
@@ -79,7 +88,11 @@ vi.mock("@/lib/prisma", () => ({
 const TX = {
   tag: "transaction-client",
   user: { update: mocks.lockUser },
-  routine: { count: mocks.countRoutines },
+  routine: {
+    count: mocks.countRoutines,
+    findFirst: emailChoice.findChosen,
+    updateMany: emailChoice.switchOff,
+  },
   // **The trial runs for real here too**, for the same reason the quota does:
   // turning on an account's first worker is what starts one, and a stub of it
   // would leave the boundary untested in the only place it exists. See
@@ -87,6 +100,8 @@ const TX = {
   subscription: {
     findUnique: mocks.findSubscription,
     create: mocks.createSubscription,
+    update: emailChoice.setChosen,
+    updateMany: emailChoice.clearChosen,
   },
   usagePeriod: { create: mocks.createUsagePeriod },
   // **What the account already spent on AI, carried into the trial.** Read
@@ -211,10 +226,12 @@ describe("updateRoutineAction — email notifications", () => {
     );
 
     expect(result?.status).toBe("success");
+    // Inside the account's transaction: email may move the account's choice.
     expect(mocks.updateRoutine).toHaveBeenCalledWith(
       "worker-1",
       expect.objectContaining({ emailNotificationsEnabled: true }),
       "google-sub-1",
+      TX,
     );
   });
 
@@ -226,10 +243,12 @@ describe("updateRoutineAction — email notifications", () => {
     const result = await save(form({ status: "draft", frequency: "manual" }));
 
     expect(result?.status).toBe("success");
+    // Inside the account's transaction: email may move the account's choice.
     expect(mocks.updateRoutine).toHaveBeenCalledWith(
       "worker-1",
       expect.objectContaining({ emailNotificationsEnabled: false }),
       "google-sub-1",
+      TX,
     );
   });
 
@@ -1628,5 +1647,101 @@ describe("updateRoutineAction — the plan's active-worker limit", () => {
     expect(message).not.toContain("しばらくしてから");
     expect(message).not.toContain("プラン");
     expect(message).not.toContain("アップグレード");
+  });
+});
+
+/**
+ * Editing a worker's email switch, on a plan that lets one worker email.
+ *
+ * **Saved under the account lock, with the choice decided first.** Another
+ * worker already chosen stops the save until the owner confirms; switching the
+ * chosen worker off leaves nobody chosen.
+ */
+describe("updateRoutineAction — the one emailing worker", () => {
+  function lite(chosen: string | null) {
+    const CHOSEN = chosen;
+    mocks.findSubscription.mockResolvedValue({
+      userId: "google-sub-1",
+      plan: "lite",
+      state: "active",
+      trialStartedAt: null,
+      trialEndsAt: null,
+      trialConsumedAt: null,
+      trialForfeitedAt: null,
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+      notificationWorkerId: CHOSEN,
+      source: "stripe",
+      expiresAt: null,
+    });
+  }
+
+  beforeEach(() => {
+    emailChoice.findChosen.mockReset().mockResolvedValue(null);
+    emailChoice.switchOff.mockReset().mockResolvedValue({ count: 1 });
+    emailChoice.setChosen.mockReset().mockResolvedValue({});
+    emailChoice.clearChosen.mockReset().mockResolvedValue({ count: 1 });
+  });
+
+  it("saves nothing while another worker is chosen and the move is unconfirmed", async () => {
+    lite("worker-0");
+    emailChoice.findChosen.mockResolvedValue({ id: "worker-0", name: "Morning brief" });
+
+    const result = await save(
+      form({ status: "draft", frequency: "manual", emailNotificationsEnabled: "on" }),
+    );
+
+    expect(result?.status).toBe("error");
+    expect(result?.errors?.emailNotificationsEnabled).toContain("Morning brief");
+    expect(mocks.updateRoutine).not.toHaveBeenCalled();
+    expect(emailChoice.setChosen).not.toHaveBeenCalled();
+  });
+
+  it("moves email to this worker once the owner confirms", async () => {
+    lite("worker-0");
+    emailChoice.findChosen.mockResolvedValue({ id: "worker-0", name: "Morning brief" });
+
+    const result = await save(
+      form({
+        status: "draft",
+        frequency: "manual",
+        emailNotificationsEnabled: "on",
+        emailSwitchConfirmed: "on",
+      }),
+    );
+
+    expect(result?.status).toBe("success");
+    expect(emailChoice.switchOff).toHaveBeenCalledWith({
+      where: { id: "worker-0", userId: "google-sub-1" },
+      data: { emailNotificationsEnabled: false },
+    });
+    expect(emailChoice.setChosen).toHaveBeenCalledWith({
+      where: { userId: "google-sub-1" },
+      data: { notificationWorkerId: "worker-1" },
+    });
+  });
+
+  it("leaves nobody chosen when the chosen worker's email is switched off", async () => {
+    lite("worker-1");
+    mocks.getRoutineForEdit.mockResolvedValue(stored({ emailNotificationsEnabled: true }));
+
+    const result = await save(form({ status: "draft", frequency: "manual" }));
+
+    expect(result?.status).toBe("success");
+    expect(emailChoice.clearChosen).toHaveBeenCalledWith({
+      where: { userId: "google-sub-1", notificationWorkerId: "worker-1" },
+      data: { notificationWorkerId: null },
+    });
+    expect(emailChoice.setChosen).not.toHaveBeenCalled();
+  });
+
+  /** A rename of a worker that never emailed touches nothing about the account. */
+  it("leaves the account alone for an edit that involves no email", async () => {
+    lite("worker-0");
+
+    await save(form({ name: "Renamed", status: "draft", frequency: "manual" }));
+
+    expect(mocks.lockUser).not.toHaveBeenCalled();
+    expect(mocks.findSubscription).not.toHaveBeenCalled();
   });
 });

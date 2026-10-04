@@ -58,7 +58,10 @@ export type WorkerFieldName = keyof typeof workerFieldLimits;
  * is here for the same reason.
  */
 export type WorkerFieldErrors = Partial<
-  Record<WorkerFieldName | "status" | DiscoveryFieldName, string>
+  Record<
+    WorkerFieldName | "status" | DiscoveryFieldName | "emailNotificationsEnabled",
+    string
+  >
 >;
 
 /**
@@ -149,6 +152,12 @@ export type WorkerFormInput = {
    * make an omitted field mean something different on each form.
    */
   emailNotificationsEnabled: boolean;
+  /**
+   * Whether the owner confirmed moving email from the account's chosen worker
+   * to this one, on a plan that lets one worker email. Only ever sent after the
+   * form has said which worker that is.
+   */
+  emailSwitchConfirmed: boolean;
 };
 
 function text(formData: FormData, field: string): string {
@@ -288,6 +297,7 @@ export function readWorkerForm(formData: FormData): WorkerFormInput {
     // there is no address field on either form, and adding one to the
     // submission would change nothing.
     emailNotificationsEnabled: checkbox(formData, "emailNotificationsEnabled"),
+    emailSwitchConfirmed: checkbox(formData, "emailSwitchConfirmed"),
   };
 }
 
@@ -537,6 +547,38 @@ export function hasWorkerFormErrors(errors: WorkerFieldErrors): boolean {
  *
  * The fields keep the detail; this only has to say that something is wrong.
  */
+/**
+ * The answer to saving a worker with email switched on while the account's one
+ * emailing worker is another.
+ *
+ * **Nothing was saved, and the choice is the owner's.** The message names the
+ * worker that currently emails and sits beside the email switch, where the form
+ * offers to move it; the values go back so nothing typed is lost.
+ */
+export function emailSwitchRequired(
+  currentWorkerName: string,
+  language: string,
+  input: WorkerFormInput,
+): {
+  status: "error";
+  message: string;
+  values: WorkerFormInput;
+  errors: WorkerFieldErrors;
+} {
+  const errors: WorkerFieldErrors = {
+    emailNotificationsEnabled: t(language, "worker.validation.emailSwitchRequired", {
+      name: currentWorkerName,
+    }),
+  };
+
+  return {
+    status: "error",
+    message: summarizeWorkerFormErrors(errors, language),
+    values: input,
+    errors,
+  };
+}
+
 export function summarizeWorkerFormErrors(
   errors: WorkerFieldErrors,
   language: string = DEFAULT_LANGUAGE,

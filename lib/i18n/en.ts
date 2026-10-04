@@ -351,6 +351,12 @@ export const en = {
     "Email me when this worker finishes.",
   "worker.field.emailNotificationsFailure":
     "You will also be notified if the run fails.",
+  "worker.field.emailOneWorker":
+    "On this plan, email notifications are available for one worker.",
+  "worker.field.emailSwitchConfirm":
+    "Move email notifications to this worker (the current one will stop sending them)",
+  "worker.validation.emailSwitchRequired":
+    "Email notifications are available for one worker on this plan, and \"{name}\" currently sends them. To move them to this worker, tick the confirmation below and save.",
   "worker.field.runAt": "Run at",
   "worker.field.timezoneNote":
     "Times use your account timezone: {timezone}. Leave empty to run at whatever time the worker was saved.",

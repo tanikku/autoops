@@ -5,6 +5,7 @@ import { WorkerEditForm } from "@/components/worker-edit-form";
 import { getRoutineForEdit } from "@/lib/routines";
 import { t } from "@/lib/i18n";
 import { getDocumentLanguage } from "@/lib/i18n/server";
+import { readEmailEntitlement } from "@/lib/notification-worker";
 import { requireUserId } from "@/lib/session";
 import { getUserLanguage, getUserTimezone } from "@/lib/users";
 import { getDiscoverySource } from "@/lib/discovery/repository";
@@ -57,9 +58,10 @@ export default async function EditWorkerPage({
 
   // What the form says about the schedule it is editing, and the words it
   // says it in. Read only, both of them.
-  const [timezone, language] = await Promise.all([
+  const [timezone, language, emailEntitlement] = await Promise.all([
     getUserTimezone(userId),
     getUserLanguage(userId),
+    readEmailEntitlement(userId),
   ]);
 
   // **Only a website worker has a page, and only it is asked for one.**
@@ -115,6 +117,7 @@ export default async function EditWorkerPage({
           }}
           timezone={timezone}
           language={language}
+          emailEntitlement={emailEntitlement}
         />
       </main>
     </div>

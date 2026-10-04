@@ -16,6 +16,11 @@ import {
   type WorkerQuotaRejection,
 } from "@/lib/worker-quota";
 import { t } from "@/lib/i18n";
+import {
+  applyEmailSelection,
+  type EmailSelectionPlan,
+  planEmailSelection,
+} from "@/lib/notification-worker";
 import { requireUserId } from "@/lib/session";
 import { getUserLanguage, getUserTimezone } from "@/lib/users";
 import { isWatcherError } from "@/lib/watcher/errors";
@@ -25,6 +30,7 @@ import { getWebsiteSource, updateWebsiteSourceUrl } from "@/lib/website-sources"
 import {
   hasWorkerFormErrors,
   readWorkerForm,
+  emailSwitchRequired,
   summarizeWorkerFormErrors,
   validateWorkerFormForKind,
   type WorkerFieldErrors,
@@ -317,32 +323,69 @@ export async function updateRoutineAction(
   let quotaRejection: WorkerQuotaRejection | null = null;
   // Whether turning this Worker on also began the account's fourteen days.
   let trialStarted = false;
+  // **The chosen emailing worker, on a plan that allows one.** Decided under the
+  // account lock the save already holds, before anything is written; a
+  // different worker already chosen stops the save until the owner says to
+  // switch. See `lib/notification-worker.ts`.
+  let emailSwitchFrom: string | null = null;
+  const decideEmail = async (tx: DbClient): Promise<EmailSelectionPlan | null> => {
+    const decision = await planEmailSelection(tx, {
+      userId: userId,
+      routineId: id,
+      emailEnabled: input.emailNotificationsEnabled,
+      confirmSwitch: input.emailSwitchConfirmed,
+    });
+
+    if (!decision.allowed) {
+      emailSwitchFrom = decision.currentWorkerName;
+      return null;
+    }
+
+    return decision.plan;
+  };
+
+  // **Email involved means the account's choice may move**: the switch is on
+  // in the form or on the stored worker. Only then does the save take the
+  // account lock and decide — every other edit stays the single write it was.
+  const emailInvolved =
+    input.emailNotificationsEnabled || existing.emailNotificationsEnabled;
+  const KEEP: EmailSelectionPlan = { kind: "keep" };
   let saved;
   try {
-    if (activating) {
-      // **The decision and the write commit together.** Checking in one
+    if (activating || emailInvolved) {
+      // **The decisions and the write commit together.** Checking in one
       // transaction and updating in another would be deciding about a moment
-      // that has already passed: something else could take the last slot in
-      // between. The address change, when there is one, joins this transaction
-      // rather than opening a second.
+      // that has already passed: something else could take the last slot, or
+      // the emailing worker, in between. The address change, when there is
+      // one, joins this transaction rather than opening a second.
       saved = await prisma.$transaction(async (tx) => {
-        quotaRejection = await claimWorkerActivation(tx, userId);
+        if (activating) {
+          quotaRejection = await claimWorkerActivation(tx, userId);
 
-        if (quotaRejection !== null) {
+          if (quotaRejection !== null) {
+            return null;
+          }
+        }
+
+        const emailPlan = emailInvolved ? await decideEmail(tx) : KEEP;
+        if (emailPlan === null) {
           return null;
         }
 
-        // **After the claim and before the update.** The claim has taken the
-        // account's row, so the count this reads is one nothing else can be
-        // changing; and it reads "no worker is active yet", which is only true
-        // until the line below makes one. A trial written here and an
-        // activation that then failed cannot come apart — they are this
-        // transaction.
-        const trial = await startTrialOnFirstWorkerActivation(tx, userId);
+        if (activating) {
+          // **After the claim and before the update.** The claim has taken the
+          // account's row, so the count this reads is one nothing else can be
+          // changing; a trial written here and an activation that then failed
+          // cannot come apart — they are this transaction.
+          const trial = await startTrialOnFirstWorkerActivation(tx, userId);
 
-        trialStarted = trial.outcome === "started";
+          trialStarted = trial.outcome === "started";
+        }
 
-        return applyUpdate(tx);
+        const routine = await applyUpdate(tx);
+        await applyEmailSelection(tx, { userId, routineId: id, plan: emailPlan });
+
+        return routine;
       });
     } else if (urlChange === null && discoveryUpdate === null) {
       // **Everything else is one write, including editing a website worker.**
@@ -396,6 +439,10 @@ export async function updateRoutineAction(
       values: input,
       errors,
     };
+  }
+
+  if (emailSwitchFrom !== null) {
+    return emailSwitchRequired(emailSwitchFrom, language, input);
   }
 
   if (!saved) {

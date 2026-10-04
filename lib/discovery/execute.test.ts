@@ -121,6 +121,28 @@ vi.mock("@/lib/notify/run-notification", async () => {
 vi.mock("@/lib/entitlements/worker-execution", () => ({
   requireWorkerExecutionEntitlement: vi.fn(async () => undefined),
 }));
+// **And as a plan that lets every worker email**, unless a case says otherwise.
+// What one-worker plans allow is fixed in `lib/notify/email-entitlement.test.ts`
+// and in the Lite cases below; the rest of these tests are about the run.
+const emailPlan = vi.hoisted(() => ({
+  getEffectiveEntitlement: vi.fn(),
+}));
+vi.mock("@/lib/entitlements/index", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/entitlements/index")>()),
+  getEffectiveEntitlement: emailPlan.getEffectiveEntitlement,
+}));
+beforeEach(() => {
+  emailPlan.getEffectiveEntitlement.mockReset().mockResolvedValue({
+    state: "active",
+    entitled: true,
+    plan: "beta",
+    limits: { email: "all-workers" },
+    trial: null,
+    period: null,
+    expiresAt: null,
+    notificationWorkerId: null,
+  });
+});
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     routine: { findUniqueOrThrow: mocks.routineFind },
@@ -689,6 +711,33 @@ describe("notifications", () => {
       emailNotificationsEnabled: true,
     });
   }
+
+  it.each([
+    ["the chosen worker", ROUTINE_ID, 1],
+    ["another worker", "routine-elsewhere", 0],
+    ["nobody chosen", null, 0],
+  ] as const)(
+    "on a one-worker plan, sends for %s accordingly",
+    async (_label, chosen, sent) => {
+      emailPlan.getEffectiveEntitlement.mockResolvedValue({
+        state: "active",
+        entitled: true,
+        plan: "lite",
+        limits: { email: "one-worker" },
+        trial: null,
+        period: null,
+        expiresAt: null,
+        notificationWorkerId: chosen,
+      });
+      notifying();
+      available([candidate("a")]);
+      mocks.select.mockResolvedValue(chosenBy([{ itemKey: "youtube:a", reason: "ok" }]));
+
+      await runRoutine(ROUTINE_ID);
+
+      expect(mocks.notify).toHaveBeenCalledTimes(sent);
+    },
+  );
 
   it("sends once when something was chosen", async () => {
     notifying();

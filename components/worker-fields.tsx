@@ -10,6 +10,7 @@ import {
   DISCOVERY_MAX_RESULTS_CEILING,
 } from "@/lib/discovery/limits";
 import { t, type TranslationKey } from "@/lib/i18n";
+import type { EmailEntitlement } from "@/lib/plans";
 import { weekdayKeys } from "@/lib/schedule-label";
 import {
   workerFieldLimits,
@@ -329,6 +330,7 @@ export function WorkerFields({
   timezone,
   websiteUrlNote,
   language,
+  emailEntitlement,
 }: {
   values: WorkerFieldValues;
   errors?: WorkerFieldErrors;
@@ -374,6 +376,14 @@ export function WorkerFields({
    * one submit the same values.
    */
   language: string;
+  /**
+   * Which workers the account's plan lets email, as the server read it.
+   *
+   * Only `one-worker` changes anything here: the form says so beside the
+   * switch, and offers to move email to this worker when the save was refused
+   * because another one has it. Omitted means nothing to say.
+   */
+  emailEntitlement?: EmailEntitlement;
 }) {
   // The only controlled field, and only because another one depends on it: a
   // time of day is meaningless for a manual worker, so the select has to be
@@ -670,6 +680,32 @@ export function WorkerFields({
           )}{" "}
           {t(language, "worker.field.emailNotificationsFailure")}
         </p>
+        {emailEntitlement === "one-worker" ? (
+          <p className="text-xs text-muted-foreground">
+            {t(language, "worker.field.emailOneWorker")}
+          </p>
+        ) : null}
+        {/* **Only after a refusal that named the worker that has email now.**
+            Ticking this is the owner's explicit yes to moving it; nothing is
+            switched without it. */}
+        {errors.emailNotificationsEnabled ? (
+          <>
+            <p id="emailNotificationsEnabled-error" className="text-sm text-destructive">
+              {errors.emailNotificationsEnabled}
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                id="emailSwitchConfirmed"
+                name="emailSwitchConfirmed"
+                type="checkbox"
+                className="size-4 rounded border-input accent-primary"
+              />
+              <Label htmlFor="emailSwitchConfirmed">
+                {t(language, "worker.field.emailSwitchConfirm")}
+              </Label>
+            </div>
+          </>
+        ) : null}
       </div>
 
       <div className="grid gap-2">

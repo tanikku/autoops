@@ -17,6 +17,11 @@ import { saveDiscoverySource } from "@/lib/discovery/repository";
 import { t, type TranslationKey } from "@/lib/i18n";
 import { type DbClient, prisma } from "@/lib/prisma";
 import { consumeAiDraftQuota } from "@/lib/rate-limit";
+import {
+  applyEmailSelection,
+  type EmailSelectionPlan,
+  planEmailSelection,
+} from "@/lib/notification-worker";
 import { createRoutine } from "@/lib/routines";
 import { calculateNextRunAt } from "@/lib/schedule";
 import {
@@ -36,6 +41,7 @@ import { createWebsiteSource } from "@/lib/website-sources";
 import {
   hasWorkerFormErrors,
   readWorkerForm,
+  emailSwitchRequired,
   summarizeWorkerFormErrors,
   validateWorkerFormForKind,
   type WorkerFieldErrors,
@@ -302,6 +308,27 @@ export async function createRoutineAction(
     trialStarted = trial.outcome === "started";
   };
 
+  // **The chosen emailing worker, on a plan that allows one.** Decided under the
+  // account lock the save already holds, before anything is written; a
+  // different worker already chosen stops the save until the owner says to
+  // switch. See `lib/notification-worker.ts`.
+  let emailSwitchFrom: string | null = null;
+  const decideEmail = async (tx: DbClient): Promise<EmailSelectionPlan | null> => {
+    const decision = await planEmailSelection(tx, {
+      userId: provisionedUserId,
+      routineId: null,
+      emailEnabled: routine.emailNotificationsEnabled,
+      confirmSwitch: input.emailSwitchConfirmed,
+    });
+
+    if (!decision.allowed) {
+      emailSwitchFrom = decision.currentWorkerName;
+      return null;
+    }
+
+    return decision.plan;
+  };
+
   try {
     if (discovery !== null) {
       // **Both rows or neither**, for the reason a website worker's pair is one
@@ -316,9 +343,19 @@ export async function createRoutineAction(
           return;
         }
 
+        const emailPlan = await decideEmail(tx);
+        if (emailPlan === null) {
+          return;
+        }
+
         await startTrialIfActivating(tx);
 
         const created = await createRoutine(routine, provisionedUserId, tx);
+        await applyEmailSelection(tx, {
+          userId: provisionedUserId,
+          routineId: created.id,
+          plan: emailPlan,
+        });
         // **The existing writer, ownership check and all.** It reads the
         // routine as this account before it writes, which inside this
         // transaction is the row created one statement earlier — so the check
@@ -348,9 +385,19 @@ export async function createRoutineAction(
           return;
         }
 
+        const emailPlan = await decideEmail(tx);
+        if (emailPlan === null) {
+          return;
+        }
+
         await startTrialIfActivating(tx);
 
-        await createRoutine(routine, provisionedUserId, tx);
+        const created = await createRoutine(routine, provisionedUserId, tx);
+        await applyEmailSelection(tx, {
+          userId: provisionedUserId,
+          routineId: created.id,
+          plan: emailPlan,
+        });
       });
     } else {
       // **Both rows or neither.** A website worker is the pair — a routine that
@@ -369,9 +416,19 @@ export async function createRoutineAction(
           return;
         }
 
+        const emailPlan = await decideEmail(tx);
+        if (emailPlan === null) {
+          return;
+        }
+
         await startTrialIfActivating(tx);
 
         const created = await createRoutine(routine, provisionedUserId, tx);
+        await applyEmailSelection(tx, {
+          userId: provisionedUserId,
+          routineId: created.id,
+          plan: emailPlan,
+        });
         await createWebsiteSource(created.id, websiteUrl, tx);
       });
     }
@@ -390,6 +447,10 @@ export async function createRoutineAction(
   // returned before the insert.
   if (rejection !== null) {
     return quotaRejection(rejection, language, input);
+  }
+
+  if (emailSwitchFrom !== null) {
+    return emailSwitchRequired(emailSwitchFrom, language, input);
   }
 
   // The list gains a card and Home's active count may change with it.

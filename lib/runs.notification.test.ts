@@ -88,6 +88,28 @@ vi.mock("@/lib/ai/factory", () => ({
 vi.mock("@/lib/entitlements/worker-execution", () => ({
   requireWorkerExecutionEntitlement: vi.fn(async () => undefined),
 }));
+// **And as a plan that lets every worker email**, unless a case says otherwise.
+// What one-worker plans allow is fixed in `lib/notify/email-entitlement.test.ts`
+// and in the Lite cases below; the rest of these tests are about the run.
+const emailPlan = vi.hoisted(() => ({
+  getEffectiveEntitlement: vi.fn(),
+}));
+vi.mock("@/lib/entitlements/index", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/entitlements/index")>()),
+  getEffectiveEntitlement: emailPlan.getEffectiveEntitlement,
+}));
+beforeEach(() => {
+  emailPlan.getEffectiveEntitlement.mockReset().mockResolvedValue({
+    state: "active",
+    entitled: true,
+    plan: "beta",
+    limits: { email: "all-workers" },
+    trial: null,
+    period: null,
+    expiresAt: null,
+    notificationWorkerId: null,
+  });
+});
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     routine: {
@@ -619,5 +641,121 @@ describe("an answer cut off at its output limit", () => {
 
     const subjects = mocks.send.mock.calls.map((call) => call[0].subject);
     expect(subjects).not.toContain('[Koqentra] "Careers page" detected a change');
+  });
+});
+
+/**
+ * A plan that lets one worker email: only the chosen one does, for every kind
+ * of message a run can send.
+ *
+ * **The run is untouched either way.** Whether an email goes is decided after
+ * the outcome is recorded, so a worker that may not email still completes or
+ * fails exactly as it would have.
+ */
+describe("a plan that lets one worker email", () => {
+  function lite(chosen: string | null) {
+    emailPlan.getEffectiveEntitlement.mockResolvedValue({
+      state: "active",
+      entitled: true,
+      plan: "lite",
+      limits: { email: "one-worker" },
+      trial: null,
+      period: null,
+      expiresAt: null,
+      notificationWorkerId: chosen,
+    });
+  }
+
+  it.each([
+    ["the chosen worker", "worker-1", 1],
+    ["another worker", "worker-9", 0],
+    ["nobody chosen", null, 0],
+  ] as const)("emails a completed prompt run for %s accordingly", async (_label, chosen, sent) => {
+    lite(chosen);
+    mocks.findUniqueOrThrow.mockResolvedValue(worker({ kind: "prompt" }));
+
+    await runRoutine("worker-1");
+
+    expect(mocks.send).toHaveBeenCalledTimes(sent);
+    expect(written().status).toBe("completed");
+  });
+
+  it.each([
+    ["the chosen worker", "worker-1", 1],
+    ["another worker", "worker-9", 0],
+  ] as const)("emails a failed run for %s accordingly", async (_label, chosen, sent) => {
+    lite(chosen);
+    mocks.findUniqueOrThrow.mockResolvedValue(worker({ kind: "prompt" }));
+    mocks.execute.mockRejectedValue(new Error("the model refused"));
+
+    await runRoutine("worker-1");
+
+    expect(mocks.send).toHaveBeenCalledTimes(sent);
+    expect(written().status).toBe("failed");
+  });
+
+  it.each([
+    ["the chosen worker", "worker-1", 1],
+    ["another worker", "worker-9", 0],
+  ] as const)("emails a changed page for %s accordingly", async (_label, chosen, sent) => {
+    lite(chosen);
+    mocks.getWebsiteSnapshot.mockResolvedValue(changedSnapshot());
+
+    await runRoutine("worker-1");
+
+    expect(mocks.send).toHaveBeenCalledTimes(sent);
+  });
+
+  it("sends nothing for the chosen worker when its own switch is off", async () => {
+    lite("worker-1");
+    mocks.findUniqueOrThrow.mockResolvedValue(
+      worker({ kind: "prompt", emailNotificationsEnabled: false }),
+    );
+
+    await runRoutine("worker-1");
+
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(emailPlan.getEffectiveEntitlement).not.toHaveBeenCalled();
+  });
+
+  it.each(["standard", "pro", "trial", "beta"])(
+    "lets every worker on %s email, chosen or not",
+    async (plan) => {
+      emailPlan.getEffectiveEntitlement.mockResolvedValue({
+        state: plan === "trial" ? "trialing" : "active",
+        entitled: true,
+        plan,
+        limits: { email: "all-workers" },
+        trial: null,
+        period: null,
+        expiresAt: null,
+        notificationWorkerId: "worker-9",
+      });
+      mocks.findUniqueOrThrow.mockResolvedValue(worker({ kind: "prompt" }));
+
+      await runRoutine("worker-1");
+
+      expect(mocks.send).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  /** Not knowing is not permission, and it changes nothing about the run. */
+  it("sends nothing when the plan cannot be read, and leaves the run as it was", async () => {
+    emailPlan.getEffectiveEntitlement.mockRejectedValue(new Error("connection lost"));
+    mocks.findUniqueOrThrow.mockResolvedValue(worker({ kind: "prompt" }));
+
+    await runRoutine("worker-1");
+
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(written().status).toBe("completed");
+  });
+
+  it("reads the plan when the email is about to go, for the owner named on the worker", async () => {
+    lite("worker-1");
+    mocks.findUniqueOrThrow.mockResolvedValue(worker({ kind: "prompt", userId: "user-a" }));
+
+    await runRoutine("worker-1");
+
+    expect(emailPlan.getEffectiveEntitlement).toHaveBeenCalledWith("user-a");
   });
 });

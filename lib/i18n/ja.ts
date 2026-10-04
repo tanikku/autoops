@@ -184,6 +184,12 @@ export const ja: Record<TranslationKey, string> = {
   "worker.field.emailNotificationsPrompt":
     "この Worker の実行が完了したときにメールで通知します。",
   "worker.field.emailNotificationsFailure": "実行に失敗した場合も通知します。",
+  "worker.field.emailOneWorker":
+    "このプランでは、メール通知は1つのWorkerで利用できます。",
+  "worker.field.emailSwitchConfirm":
+    "メール通知をこのWorkerに切り替える（現在の通知対象のメール通知はオフになります）",
+  "worker.validation.emailSwitchRequired":
+    "メール通知は1つのWorkerで利用できます。現在は「{name}」が通知対象です。このWorkerに切り替える場合は、下の確認にチェックを入れて保存してください。",
   "worker.field.runAt": "実行時刻",
   "worker.field.timezoneNote":
     "時刻はアカウントのタイムゾーン({timezone})で扱われます。空欄にすると、保存したときの時刻に実行されます。",

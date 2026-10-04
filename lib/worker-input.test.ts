@@ -38,6 +38,7 @@ function input(overrides?: Partial<WorkerFormInput>): WorkerFormInput {
     runAtWeekday: null,
     runAtDay: null,
     emailNotificationsEnabled: false,
+    emailSwitchConfirmed: false,
     ...overrides,
   };
 }
@@ -566,6 +567,7 @@ describe("in Japanese", () => {
     runAtWeekday: null,
     runAtDay: null,
     emailNotificationsEnabled: false,
+    emailSwitchConfirmed: false,
   };
 
   const draft = { status: "draft" as const, frequency: "manual" as const };
@@ -665,6 +667,7 @@ describe("what the language does not change", () => {
     runAtWeekday: null,
     runAtDay: null,
     emailNotificationsEnabled: false,
+    emailSwitchConfirmed: false,
   };
 
   it.each([

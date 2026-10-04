@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { EmailEntitlement } from "@/lib/plans";
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import {
@@ -55,6 +56,7 @@ export function WorkerEditForm({
   worker,
   timezone,
   language,
+  emailEntitlement,
 }: {
   worker: WorkerFieldValues & { id: string; kind: RoutineKind };
   timezone: string;
@@ -64,6 +66,8 @@ export function WorkerEditForm({
    * saved exactly as they are shown.
    */
   language: string;
+  /** Which workers the plan lets email, for the email switch to explain. */
+  emailEntitlement?: EmailEntitlement;
 }) {
   // The id travels with the action rather than the form, so it cannot be
   // swapped by the client.
@@ -125,6 +129,7 @@ export function WorkerEditForm({
         kind={worker.kind}
         timezone={timezone}
         language={language}
+        emailEntitlement={emailEntitlement}
         websiteUrlNote={t(language, "worker.edit.baselineReset")}
       />
 
