@@ -55,6 +55,7 @@ export function toRoutine(record: RoutineRecord): Routine {
     // about a page nobody read.
     kind: isRoutineKind(record.kind) ? record.kind : "prompt",
     targetCondition: record.targetCondition,
+    templateId: record.templateId,
     status: isRoutineStatus(record.status) ? record.status : "draft",
     frequency: isRoutineFrequency(record.frequency)
       ? record.frequency

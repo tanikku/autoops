@@ -62,6 +62,8 @@ export type Routine = {
    * is told. Always null for other kinds.
    */
   targetCondition: string | null;
+  /** The watch template this worker was created from, or null. Read only. */
+  templateId?: string | null;
   status: RoutineStatus;
   frequency: RoutineFrequency;
   /**
@@ -132,6 +134,12 @@ export type RoutineInput = {
  */
 export type CreateRoutineInput = RoutineInput & {
   kind: RoutineKind;
+  /**
+   * The watch template the worker was compiled from, set only by the server
+   * from its allowlist. Absent for every other way of hiring a worker. Not on
+   * `RoutineInput`, so no edit can write it.
+   */
+  templateId?: string | null;
 };
 
 export const weekdays = [

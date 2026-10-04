@@ -112,6 +112,7 @@ export function RoutineForm({
   timezone,
   language,
   emailEntitlement,
+  mode = "free",
 }: {
   timezone: string;
   /**
@@ -125,6 +126,12 @@ export function RoutineForm({
   language: string;
   /** Which workers the plan lets email, for the email switch to explain. */
   emailEntitlement?: EmailEntitlement;
+  /**
+   * `free` is the whole form: the draft, the kind, the examples and the fields.
+   * `website` is the same fields for a page watcher and nothing above them —
+   * the purpose was already chosen, so there is no kind left to ask about.
+   */
+  mode?: "free" | "website";
 }) {
   const [state, formAction] = useActionState<CreateRoutineState, FormData>(
     createRoutineAction,
@@ -142,7 +149,7 @@ export function RoutineForm({
   //
   // Deliberately not part of the form's `key`: switching kind should change
   // which fields are on screen, not empty the ones already filled in.
-  const [kind, setKind] = useState<RoutineKind>("prompt");
+  const [kind, setKind] = useState<RoutineKind>(mode === "website" ? "website" : "prompt");
 
   // **One box, whatever filled it.** A template and an applied draft both want
   // the same fields, so they share the state that holds them: applying either
@@ -244,193 +251,197 @@ export function RoutineForm({
 
   return (
     <>
-      {/* **The first thing on the page, and the only optional one.** Describing
-          the job in a sentence is the shortest route to a worker; the kind
-          selector, the templates and the form below are all still here for
-          somebody who would rather fill them in. It sits above the kind
-          selector because the draft decides the kind — asking first and then
-          answering would be the wrong way round. */}
-      <section className="mt-8 max-w-2xl">
-        <h2 className="text-lg font-medium tracking-tight">
-          {t(language, "worker.create.draftHeading")}
-        </h2>
+      {mode === "free" ? (
+        <>
+        {/* **The first thing on the page, and the only optional one.** Describing
+            the job in a sentence is the shortest route to a worker; the kind
+            selector, the templates and the form below are all still here for
+            somebody who would rather fill them in. It sits above the kind
+            selector because the draft decides the kind — asking first and then
+            answering would be the wrong way round. */}
+        <section className="mt-8 max-w-2xl">
+          <h2 className="text-lg font-medium tracking-tight">
+            {t(language, "worker.create.draftHeading")}
+          </h2>
 
-        <form action={generateDraft} className="mt-4 flex flex-col gap-3">
-          <Textarea
-            id="request"
-            name="request"
-            rows={3}
-            placeholder={t(language, "worker.create.draftPlaceholder")}
-            aria-describedby="request-result"
-          />
+          <form action={generateDraft} className="mt-4 flex flex-col gap-3">
+            <Textarea
+              id="request"
+              name="request"
+              rows={3}
+              placeholder={t(language, "worker.create.draftPlaceholder")}
+              aria-describedby="request-result"
+            />
 
-          <div>
-            <Button type="submit" variant="outline" disabled={drafting}>
-              {t(
-                language,
-                drafting
-                  ? "worker.create.drafting"
-                  : "worker.create.createDraft",
-              )}
-            </Button>
-          </div>
-        </form>
+            <div>
+              <Button type="submit" variant="outline" disabled={drafting}>
+                {t(
+                  language,
+                  drafting
+                    ? "worker.create.drafting"
+                    : "worker.create.createDraft",
+                )}
+              </Button>
+            </div>
+          </form>
 
-        {/* **What came back, where it was asked for.** A toast would carry the
-            answer away while the person was still reading it, and two of the
-            three answers are things to read rather than things that went
-            wrong. */}
-        <div id="request-result" aria-live="polite">
-          {draftState?.status === "supported" ? (
-            <Card size="sm" className="mt-4">
-              <CardHeader>
-                <CardTitle>{draftState.draft.name}</CardTitle>
-                {/* **The name above is the model's and is never looked
-                    up.** So is the address below: what is translated here is
-                    the sentence around them.
-
-                    **The cadence is a stored value and is looked up**, which
-                    is the difference. `weekly` is what the draft carries, what
-                    the form receives and what the column holds; the card says
-                    what that value is called, in the same words the frequency
-                    select uses. Showing the value itself put `weekly` on a
-                    Japanese screen. */}
-                <CardDescription>
-                  {t(language, "worker.create.draftSummary", {
-                    what:
-                      draftState.draft.kind === "website"
-                        ? t(language, "worker.create.draftWatches", {
-                            url: draftState.draft.websiteUrl,
-                          })
-                        : t(language, "worker.create.draftSendsPrompt"),
-                    cadence:
-                      draftState.draft.frequency === "manual"
-                        ? t(language, "worker.create.draftManual")
-                        : t(language, frequencyKeys[draftState.draft.frequency]),
-                  })}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={() => applyDraft(draftState.draft)}
-                >
-                  {t(language, "worker.create.applyToForm")}
-                </Button>
-              </CardContent>
-            </Card>
-          ) : null}
-
-          {/* Neither of these is a failure: one is work AutoOps cannot do yet,
-              the other is a question. Both read as information rather than as
-              something broken. */}
-          {draftState?.status === "unsupported" ? (
-            <p className="mt-4 text-sm text-muted-foreground">
-              {draftState.reason}
-            </p>
-          ) : null}
-
-          {draftState?.status === "needs_input" ? (
-            <p className="mt-4 text-sm text-muted-foreground">
-              {draftState.message}
-            </p>
-          ) : null}
-
-          {draftState?.status === "error" ? (
-            <p className="mt-4 text-sm text-destructive">{draftState.message}</p>
-          ) : null}
-        </div>
-      </section>
-
-      <section className="mt-8 max-w-2xl">
-        <h2 className="text-lg font-medium tracking-tight">
-          {t(language, "worker.create.kindHeading")}
-        </h2>
-
-        <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          {kindOptions.map((option) => (
-            <label key={option.value} className="cursor-pointer">
-              <input
-                type="radio"
-                name="kind"
-                form={FORM_ID}
-                value={option.value}
-                checked={kind === option.value}
-                onChange={() => setKind(option.value)}
-                className="peer sr-only"
-              />
-              <Card
-                size="sm"
-                className="h-full peer-focus-visible:ring-3 peer-focus-visible:ring-ring/50 peer-checked:ring-2 peer-checked:ring-primary"
-              >
+          {/* **What came back, where it was asked for.** A toast would carry the
+              answer away while the person was still reading it, and two of the
+              three answers are things to read rather than things that went
+              wrong. */}
+          <div id="request-result" aria-live="polite">
+            {draftState?.status === "supported" ? (
+              <Card size="sm" className="mt-4">
                 <CardHeader>
-                  <CardTitle>{t(language, option.label)}</CardTitle>
+                  <CardTitle>{draftState.draft.name}</CardTitle>
+                  {/* **The name above is the model's and is never looked
+                      up.** So is the address below: what is translated here is
+                      the sentence around them.
+
+                      **The cadence is a stored value and is looked up**, which
+                      is the difference. `weekly` is what the draft carries, what
+                      the form receives and what the column holds; the card says
+                      what that value is called, in the same words the frequency
+                      select uses. Showing the value itself put `weekly` on a
+                      Japanese screen. */}
                   <CardDescription>
-                    {t(language, option.description)}
+                    {t(language, "worker.create.draftSummary", {
+                      what:
+                        draftState.draft.kind === "website"
+                          ? t(language, "worker.create.draftWatches", {
+                              url: draftState.draft.websiteUrl,
+                            })
+                          : t(language, "worker.create.draftSendsPrompt"),
+                      cadence:
+                        draftState.draft.frequency === "manual"
+                          ? t(language, "worker.create.draftManual")
+                          : t(language, frequencyKeys[draftState.draft.frequency]),
+                    })}
                   </CardDescription>
                 </CardHeader>
-              </Card>
-            </label>
-          ))}
-        </div>
-      </section>
-
-      {/* **Both kinds have examples now, so the list is always on screen.** It
-          used to be hidden whenever the website kind was chosen, because every
-          template was a prompt worker and offering one there would have been
-          offering the wrong thing. What replaced that is a `kind` on the
-          template itself: the list is grouped by it, and choosing one sets it.
-
-          **Two headed groups, and nothing more than that.** They are the same
-          card in the same grid under a heading — no new component, no registry,
-          and no shape a future template has to be described in twice. */}
-      <section className="mt-8 max-w-2xl">
-        <h2 className="text-lg font-medium tracking-tight">
-          {t(language, "worker.create.templatesHeading")}
-        </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {t(language, "worker.create.templatesHelp")}
-        </p>
-
-        {templateGroups.map((group) => (
-          <div key={group.kind} className="mt-6">
-            <h3 className="text-sm font-medium text-muted-foreground">
-              {t(language, group.heading)}
-            </h3>
-
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              {templatesOfKind(group.kind).map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  aria-pressed={template?.id === item.id}
-                  onClick={() => selectTemplate(item)}
-                  className="rounded-xl text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-                >
-                  <Card
+                <CardContent>
+                  <Button
+                    type="button"
                     size="sm"
-                    className={
-                      template?.id === item.id
-                        ? "h-full ring-2 ring-primary"
-                        : "h-full"
-                    }
+                    onClick={() => applyDraft(draftState.draft)}
                   >
-                    <CardHeader>
-                      {/* Both are the dictionary's now. What stays untranslated
-                          is whatever is typed in after one is applied. */}
-                      <CardTitle>{t(language, item.nameKey)}</CardTitle>
-                      <CardDescription>
-                        {t(language, item.descriptionKey)}
-                      </CardDescription>
-                    </CardHeader>
-                  </Card>
-                </button>
-              ))}
-            </div>
+                    {t(language, "worker.create.applyToForm")}
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : null}
+
+            {/* Neither of these is a failure: one is work AutoOps cannot do yet,
+                the other is a question. Both read as information rather than as
+                something broken. */}
+            {draftState?.status === "unsupported" ? (
+              <p className="mt-4 text-sm text-muted-foreground">
+                {draftState.reason}
+              </p>
+            ) : null}
+
+            {draftState?.status === "needs_input" ? (
+              <p className="mt-4 text-sm text-muted-foreground">
+                {draftState.message}
+              </p>
+            ) : null}
+
+            {draftState?.status === "error" ? (
+              <p className="mt-4 text-sm text-destructive">{draftState.message}</p>
+            ) : null}
           </div>
-        ))}
-      </section>
+        </section>
+
+        <section className="mt-8 max-w-2xl">
+          <h2 className="text-lg font-medium tracking-tight">
+            {t(language, "worker.create.kindHeading")}
+          </h2>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            {kindOptions.map((option) => (
+              <label key={option.value} className="cursor-pointer">
+                <input
+                  type="radio"
+                  name="kind"
+                  form={FORM_ID}
+                  value={option.value}
+                  checked={kind === option.value}
+                  onChange={() => setKind(option.value)}
+                  className="peer sr-only"
+                />
+                <Card
+                  size="sm"
+                  className="h-full peer-focus-visible:ring-3 peer-focus-visible:ring-ring/50 peer-checked:ring-2 peer-checked:ring-primary"
+                >
+                  <CardHeader>
+                    <CardTitle>{t(language, option.label)}</CardTitle>
+                    <CardDescription>
+                      {t(language, option.description)}
+                    </CardDescription>
+                  </CardHeader>
+                </Card>
+              </label>
+            ))}
+          </div>
+        </section>
+
+        {/* **Both kinds have examples now, so the list is always on screen.** It
+            used to be hidden whenever the website kind was chosen, because every
+            template was a prompt worker and offering one there would have been
+            offering the wrong thing. What replaced that is a `kind` on the
+            template itself: the list is grouped by it, and choosing one sets it.
+
+            **Two headed groups, and nothing more than that.** They are the same
+            card in the same grid under a heading — no new component, no registry,
+            and no shape a future template has to be described in twice. */}
+        <section className="mt-8 max-w-2xl">
+          <h2 className="text-lg font-medium tracking-tight">
+            {t(language, "worker.create.templatesHeading")}
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t(language, "worker.create.templatesHelp")}
+          </p>
+
+          {templateGroups.map((group) => (
+            <div key={group.kind} className="mt-6">
+              <h3 className="text-sm font-medium text-muted-foreground">
+                {t(language, group.heading)}
+              </h3>
+
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                {templatesOfKind(group.kind).map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    aria-pressed={template?.id === item.id}
+                    onClick={() => selectTemplate(item)}
+                    className="rounded-xl text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                  >
+                    <Card
+                      size="sm"
+                      className={
+                        template?.id === item.id
+                          ? "h-full ring-2 ring-primary"
+                          : "h-full"
+                      }
+                    >
+                      <CardHeader>
+                        {/* Both are the dictionary's now. What stays untranslated
+                            is whatever is typed in after one is applied. */}
+                        <CardTitle>{t(language, item.nameKey)}</CardTitle>
+                        <CardDescription>
+                          {t(language, item.descriptionKey)}
+                        </CardDescription>
+                      </CardHeader>
+                    </Card>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </section>
+        </>
+      ) : null}
 
       <form
         id={FORM_ID}
@@ -444,6 +455,7 @@ export function RoutineForm({
         }}
         className="mt-8 flex max-w-2xl flex-col gap-6"
       >
+        {mode === "website" ? <input type="hidden" name="kind" value="website" /> : null}
         {/* **`websiteUrlNote` is the same slot the edit form uses, saying the
             other half of the story.** Both notes are about the watched address
             and the state kept for it: editing says that moving the address

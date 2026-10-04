@@ -947,4 +947,77 @@ export const ja: Record<TranslationKey, string> = {
   "pricing.guardrail.overLimit.recovery":
     "一時停止と削除はいつでもできます。Active が {limit} 件未満になれば、また増やせるようになります。",
 
+  // Public Beta の目的別作成と、その監視テンプレート。
+  "create.purpose.heading": "何を待っていますか？",
+  "create.purpose.hotel.title": "ホテルの空室",
+  "create.purpose.hotel.description": "希望の日に空室が出たらお知らせします。",
+  "create.purpose.restock.title": "商品の再入荷",
+  "create.purpose.restock.description": "売り切れの商品が買えるようになったらお知らせします。",
+  "create.purpose.website.title": "その他のページ変化",
+  "create.purpose.website.description": "指定したページを見張り、変化があればお知らせします。",
+  "create.purpose.free.title": "自由に作る",
+  "create.purpose.free.description": "AIへの依頼文から作る、Worker の種類を選ぶ、例から始める。",
+  "create.purpose.back": "目的を選び直す",
+  "template.hotel.title": "ホテルの空室をチェック",
+  "template.hotel.helper": "ホテルサイトで希望条件を検索し、その結果ページのURLを貼り付けてください。",
+  "template.hotel.limitation": "Koqentraはページを定期的に確認します。予約操作やログインは行いません。",
+  "template.hotel.field.url": "空室照会ページのURL",
+  "template.hotel.field.stayDate": "宿泊日",
+  "template.hotel.field.room": "部屋タイプ・プラン(任意)",
+  "template.hotel.field.roomPlaceholder": "例: ツイン・禁煙",
+  "template.hotel.field.maxPrice": "料金上限(任意・円)",
+  "template.restock.title": "商品の再入荷をチェック",
+  "template.restock.helper": "ページを開いた時点で在庫情報が表示される商品ページに向いています。",
+  "template.restock.limitation": "ログインや画面操作が必要なサイトでは確認できない場合があります。",
+  "template.restock.field.url": "商品ページのURL",
+  "template.restock.field.product": "商品名",
+  "template.restock.field.variant": "バリエーション(任意)",
+  "template.restock.field.variantPlaceholder": "例: ブラック M",
+  "template.restock.field.includePreorder": "予約販売も購入可能として扱う",
+  "template.field.notes": "補足(任意)",
+  "template.field.name": "Worker名(任意)",
+  "template.field.nameHelp": "空欄の場合は、入力内容から自動で名前を付けます。",
+  "template.common.emailLabel": "条件に合う変化があったらメールで知らせる",
+  "template.common.start": "この監視を開始する",
+  "template.common.saveDraft": "下書き保存",
+  "template.edit.note": "このWorkerはテンプレートから作成されています。条件を大きく変更する場合は、新しく作り直すこともできます。",
+  "template.validation.stayDateRequired": "宿泊日を入力してください。",
+  "template.validation.stayDateInvalid": "宿泊日を正しい日付で入力してください。",
+  "template.validation.stayDatePast": "宿泊日は今日以降の日付を指定してください。",
+  "template.validation.maxPriceInvalid": "料金上限は1〜99,999,999の整数で入力してください。",
+  "template.validation.productRequired": "商品名を入力してください。",
+  "template.validation.includePreorderInvalid": "予約販売の指定を読み取れませんでした。",
+  "template.validation.unknownTemplate": "このテンプレートは利用できません。",
+  "template.validation.frequencyNotOffered": "確認頻度は、3時間ごと・6時間ごと・1日1回から選んでください。",
+  "template.date": "{month}月{day}日",
+  "template.price": "{amount}円",
+  "template.prompt.notes": "補足: {notes}",
+  "template.hotel.defaultName": "{date}のホテル空室をチェック",
+  "template.hotel.prompt.base":
+    "このページは、ホテルの空室照会ページです。{date}の空室状況を確認してください。新たに予約可能になった部屋タイプやプラン、料金、残室数を簡潔に報告してください。満室になった、料金が変わったなどの変化は分けて書いてください。{date}以外の日付の変化は、{date}の変化と混同しないでください。",
+  "template.hotel.prompt.room": "希望の部屋タイプ: {room}。該当するかどうかを明記してください。",
+  "template.hotel.prompt.price": "料金上限: {price}。料金が分かる場合は上限以下かどうかを明記してください。",
+  "template.hotel.condition.date": "{date}に宿泊できる部屋またはプランが新たに予約可能になったら通知する。",
+  "template.hotel.condition.room":
+    "{date}に{room}の部屋またはプランが新たに予約可能になったら通知する。それ以外の部屋タイプの空室は通知対象にしない。",
+  "template.hotel.condition.roomPrice":
+    "{date}に{room}で{price}以下の部屋またはプランが新たに予約可能になったら通知する。料金が表示されていない場合は、予約可能になった時点で通知する。",
+  "template.hotel.condition.price":
+    "{date}に{price}以下で宿泊できる部屋またはプランが新たに予約可能になったら通知する。料金が表示されていない場合は、予約可能になった時点で通知する。",
+  "template.restock.defaultName": "{product}の再入荷をチェック",
+  "template.restock.prompt.base":
+    "このページは「{product}」の商品ページです。在庫状況と購入可否の変化を、価格とあわせて簡潔に報告してください。「在庫あり」「カートに入れる」「購入する」などは購入可能の強い手がかりです。「近日再入荷予定」「再入荷通知を受け取る」だけの場合は、購入可能とは扱わないでください。",
+  "template.restock.prompt.variant": "対象のバリエーション: {variant}。他の色やサイズの在庫と区別してください。",
+  "template.restock.prompt.preorderExcluded": "予約販売・予約注文は購入可能に含めません。",
+  "template.restock.prompt.preorderIncluded": "予約販売・予約注文も購入可能に含めます。",
+  "template.restock.condition.basic":
+    "この商品が売り切れ・在庫なしの状態から、実際に購入可能な状態になったら通知する。",
+  "template.restock.condition.variant":
+    "{product}の{variant}が実際に購入可能になったら通知する。他の色やサイズの在庫変化は通知対象にしない。",
+  "template.restock.condition.variantNoPreorder":
+    "{product}の{variant}が、予約販売ではなく通常購入できる状態になったら通知する。他の色やサイズ、予約受付の開始は通知対象にしない。",
+  "template.restock.condition.noPreorder":
+    "{product}が、予約販売ではなく通常購入できる状態になったら通知する。予約受付の開始だけでは通知しない。",
+  "template.restock.condition.preorderIncluded": "予約注文できる状態になった場合も通知する。",
+
 };

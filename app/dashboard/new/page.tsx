@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { DashboardNav } from "@/components/dashboard-nav";
-import { RoutineForm } from "@/components/routine-form";
+import { CreateWorkerFlow } from "@/components/create-worker-flow";
 import { t } from "@/lib/i18n";
 import { getDocumentLanguage } from "@/lib/i18n/server";
 import { readEmailEntitlement } from "@/lib/notification-worker";
@@ -65,33 +65,33 @@ export default async function NewRoutinePage() {
           {t(language, "worker.create.description")}
         </p>
 
-        {/* **Said here because here is where a trial starts.** Activating the
-            first Worker begins the fourteen days, and somebody who learns that
-            only afterwards has been surprised by their own account.
+        {/* **Said where a trial starts.** Activating the first Worker begins the
+            fourteen days, and somebody who learns that only afterwards has been
+            surprised by their own account. The flow places it: above the form,
+            or beside a template's start button.
 
             **The carried-in line appears only when there is something to
             carry.** An account that has used no AI processing is told nothing
             about a number that is zero. */}
-        {trial.kind === "pre-trial" ? (
-          <div className="mt-4 rounded-lg border border-border bg-muted/40 p-4">
-            <p className="text-sm text-muted-foreground">
-              {t(language, "trial.preStart.explanation")}
-            </p>
-            {trial.aiUsed > 0 ? (
-              <p className="mt-2 text-sm text-muted-foreground">
-                {t(language, "trial.preStart.carryIn", {
-                  used: trial.aiUsed,
-                  limit: trial.aiLimit,
-                })}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
-
-        <RoutineForm
+        <CreateWorkerFlow
           timezone={timezone}
           language={language}
           emailEntitlement={emailEntitlement}
+          trialNote={
+            trial.kind === "pre-trial"
+              ? [
+                  t(language, "trial.preStart.explanation"),
+                  trial.aiUsed > 0
+                    ? t(language, "trial.preStart.carryIn", {
+                        used: trial.aiUsed,
+                        limit: trial.aiLimit,
+                      })
+                    : null,
+                ]
+                  .filter((line) => line !== null)
+                  .join(" ")
+              : null
+          }
         />
       </main>
     </div>

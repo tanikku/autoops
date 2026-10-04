@@ -97,6 +97,13 @@ export default async function EditWorkerPage({
         <p className="mt-2 text-sm text-muted-foreground">
           {t(language, "worker.edit.description")}
         </p>
+        {/* A template's answers are not kept, so its worker is edited as the
+            instructions and condition it was compiled into. */}
+        {worker.templateId ? (
+          <p className="mt-2 text-sm text-muted-foreground">
+            {t(language, "template.edit.note")}
+          </p>
+        ) : null}
 
         <WorkerEditForm
           worker={{

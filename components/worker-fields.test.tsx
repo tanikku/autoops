@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 // keeps reading one string from pulling in a framework runtime.
 vi.mock("@/auth", () => ({ auth: vi.fn(), signIn: vi.fn(), signOut: vi.fn() }));
 
-const { WorkerFields } = await import("@/components/worker-fields");
+const { EmailNotificationField, WorkerFields } = await import("@/components/worker-fields");
 const { t } = await import("@/lib/i18n");
 
 /**
@@ -942,3 +942,36 @@ describe("interval cadences in the form", () => {
     expect(html).toContain("RUNAT-ERR");
   });
 });
+
+/**
+ * The email switch, shared by the generic forms and the watch templates.
+ *
+ * A template names it in its own words; the field it submits, the one-worker
+ * note and the confirmation a refused switch asks for are the same.
+ */
+describe("the shared email switch", () => {
+  const field = (props: Partial<Parameters<typeof EmailNotificationField>[0]> = {}) =>
+    renderToStaticMarkup(
+      <EmailNotificationField language="ja" values={{}} website {...props} />,
+    );
+
+  it("takes a form's own label and still submits the same field", () => {
+    const html = field({ label: "TEMPLATE-LABEL" });
+
+    expect(html).toContain("TEMPLATE-LABEL");
+    expect(html).toContain('name="emailNotificationsEnabled"');
+    expect(html).not.toContain(t("ja", "worker.field.emailNotifications"));
+  });
+
+  it("explains the one-worker plan and asks to confirm a refused switch", () => {
+    const html = field({
+      emailEntitlement: "one-worker",
+      errors: { emailNotificationsEnabled: "SWITCH-REFUSED" },
+    });
+
+    expect(html).toContain(t("ja", "worker.field.emailOneWorker"));
+    expect(html).toContain("SWITCH-REFUSED");
+    expect(html).toContain('name="emailSwitchConfirmed"');
+  });
+});
+

@@ -726,6 +726,71 @@ export function WorkerFields({
           and does not mention the one failure that is not notified, which is a
           decision about AutoOps' own politeness rather than anything set
           here. */}
+      <EmailNotificationField
+        language={language}
+        values={values}
+        errors={errors}
+        emailEntitlement={emailEntitlement}
+        trackEmailIntent={trackEmailIntent}
+        website={website}
+      />
+
+      <div className="grid gap-2">
+        <Label htmlFor="status">{t(language, "common.statusLabel")}</Label>
+        <select
+          id="status"
+          name="status"
+          value={status}
+          onChange={(event) => setStatus(event.target.value as RoutineStatus)}
+          className={selectClassName}
+        >
+          {routineStatuses.map((option) => (
+            <option key={option} value={option}>
+              {t(language, statusKeys[option])}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-muted-foreground">
+          {t(language, statusDescriptionKeys[status])}
+        </p>
+        {/* The account's active-worker limit is the one rule this control can
+            break, and the message belongs next to the choice that broke it. */}
+        {errors.status ? (
+          <p id="status-error" className="text-sm text-destructive">
+            {errors.status}
+          </p>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+/**
+ * Whether to be emailed, with what that means for this kind and this plan.
+ *
+ * **Shared by every form that hires or edits a worker**, so the switch, its
+ * description, the one-worker note and the confirmation a refusal asks for are
+ * the same wherever they appear. A form may name the switch in its own words;
+ * what it submits does not change.
+ */
+export function EmailNotificationField({
+  language,
+  values,
+  errors = {},
+  emailEntitlement,
+  trackEmailIntent = false,
+  website,
+  label,
+}: {
+  language: string;
+  values: WorkerFieldValues;
+  errors?: WorkerFieldErrors;
+  emailEntitlement?: EmailEntitlement;
+  trackEmailIntent?: boolean;
+  website: boolean;
+  label?: string;
+}) {
+  return (
       <div className="grid gap-2">
         <div className="flex items-center gap-2">
           {trackEmailIntent ? (
@@ -747,7 +812,7 @@ export function WorkerFields({
             className="size-4 rounded border-input accent-primary"
           />
           <Label htmlFor="emailNotificationsEnabled">
-            {t(language, "worker.field.emailNotifications")}
+            {label ?? t(language, "worker.field.emailNotifications")}
           </Label>
         </div>
         <p className="text-xs text-muted-foreground">
@@ -786,33 +851,5 @@ export function WorkerFields({
           </>
         ) : null}
       </div>
-
-      <div className="grid gap-2">
-        <Label htmlFor="status">{t(language, "common.statusLabel")}</Label>
-        <select
-          id="status"
-          name="status"
-          value={status}
-          onChange={(event) => setStatus(event.target.value as RoutineStatus)}
-          className={selectClassName}
-        >
-          {routineStatuses.map((option) => (
-            <option key={option} value={option}>
-              {t(language, statusKeys[option])}
-            </option>
-          ))}
-        </select>
-        <p className="text-xs text-muted-foreground">
-          {t(language, statusDescriptionKeys[status])}
-        </p>
-        {/* The account's active-worker limit is the one rule this control can
-            break, and the message belongs next to the choice that broke it. */}
-        {errors.status ? (
-          <p id="status-error" className="text-sm text-destructive">
-            {errors.status}
-          </p>
-        ) : null}
-      </div>
-    </>
   );
 }

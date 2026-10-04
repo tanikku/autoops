@@ -323,3 +323,38 @@ describe("edit worker page — the other kinds are unchanged", () => {
     expect(mocks.getDiscoverySource).not.toHaveBeenCalled();
   });
 });
+
+/** Every string anywhere in the rendered tree, for looking a sentence up. */
+function texts(node: unknown): string[] {
+  if (typeof node === "string") {
+    return [node];
+  }
+  if (Array.isArray(node)) {
+    return node.flatMap(texts);
+  }
+  if (!node || typeof node !== "object") {
+    return [];
+  }
+  const props = (node as { props?: Record<string, unknown> }).props;
+  return props ? texts(props.children) : [];
+}
+
+/**
+ * A worker made from a template is edited in the generic form, with one line
+ * saying so. The template's answers are not kept, so nothing else changes.
+ */
+describe("a worker created from a template", () => {
+  const NOTE =
+    "This Worker was created from a template. To change its condition a lot, you can also create a new one.";
+
+  it("says so in one line above the form", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(worker({ templateId: "hotel-availability" }));
+
+    expect(texts(await render())).toContain(NOTE);
+  });
+
+  it("says nothing for a worker made any other way", async () => {
+    expect(texts(await render())).not.toContain(NOTE);
+  });
+});
+

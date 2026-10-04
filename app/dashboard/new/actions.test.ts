@@ -2519,11 +2519,12 @@ describe("createRoutineAction — interval cadences", () => {
 });
 
 /**
- * Where a worker came from is not something the form can say.
+ * Where a worker came from is not something an ordinary form can say.
  *
- * Only the template flow sets an origin, on the server. A worker hired here —
- * of any kind, however the fields were filled — is created without one, even
- * when a submission carries a field of that name.
+ * Only a watch template sets an origin, and only from the server's list. A
+ * worker hired through the generic form — of any kind — is created without
+ * one, and an identifier the server does not know is refused rather than
+ * saved or ignored.
  */
 describe("createRoutineAction — template origin", () => {
   it.each([
@@ -2531,12 +2532,230 @@ describe("createRoutineAction — template origin", () => {
     ["website", { kind: "website", websiteUrl: "https://example.com/news", prompt: "Tell me what changed." }],
     ["discovery", { kind: "discovery", discoverySource: "youtube", discoveryQuery: "hedgehogs" }],
   ])("creates a %s worker with no template", async (_kind, fields) => {
-    const result = await createRoutineAction(
-      null,
-      form({ ...fields, templateId: "hotel-availability" }),
-    );
+    const result = await createRoutineAction(null, form(fields));
 
     expect(result?.status).toBe("success");
     expect(mocks.createRoutine.mock.calls[0][0]).not.toHaveProperty("templateId");
+  });
+
+  it.each(["unknown-template", "", "Hotel-Availability", "price-drop"])(
+    "refuses a template identifier the server does not know: %o",
+    async (templateId) => {
+      const result = await createRoutineAction(null, form({ templateId }));
+
+      expect(result?.status).toBe("error");
+      expect(mocks.createRoutine).not.toHaveBeenCalled();
+    },
+  );
+});
+
+/**
+ * Hiring from a watch template.
+ *
+ * The form sends the answers; the server writes the worker. It is 2026-08-04
+ * in Tokyo for every case here, so a stay on 2026-08-05 is in the future.
+ */
+describe("createRoutineAction — watch templates", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-04T01:30:00.000Z"));
+    // The compiled wording is the account's language; these cases read Japanese.
+    mocks.getUserLanguage.mockResolvedValue("ja");
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function template(fields: Record<string, string>) {
+    const data = new FormData();
+    data.set("status", "draft");
+    data.set("frequency", "every-6-hours");
+    data.set("runAt", "09:00");
+    for (const [key, value] of Object.entries(fields)) {
+      data.set(key, value);
+    }
+    return data;
+  }
+
+  const hotel = (fields: Record<string, string> = {}) =>
+    template({
+      templateId: "hotel-availability",
+      websiteUrl: "https://hotel.example/search?date=2026-08-05",
+      stayDate: "2026-08-05",
+      ...fields,
+    });
+
+  const restock = (fields: Record<string, string> = {}) =>
+    template({
+      templateId: "product-restock",
+      websiteUrl: "https://shop.example/items/a",
+      product: "商品A",
+      ...fields,
+    });
+
+  const saved = () =>
+    mocks.createRoutine.mock.calls[0][0] as {
+      kind: string;
+      name: string;
+      prompt: string;
+      targetCondition: string | null;
+      templateId?: string;
+      frequency: string;
+      status: string;
+      emailNotificationsEnabled: boolean;
+      description: string;
+    };
+
+  it("compiles a hotel worker and records its template", async () => {
+    const result = await createRoutineAction(null, hotel({ room: "ツイン・禁煙" }));
+
+    expect(result?.status).toBe("success");
+    expect(saved()).toMatchObject({
+      kind: "website",
+      templateId: "hotel-availability",
+      name: "8月5日のホテル空室をチェック",
+      targetCondition:
+        "8月5日にツイン・禁煙の部屋またはプランが新たに予約可能になったら通知する。それ以外の部屋タイプの空室は通知対象にしない。",
+      frequency: "every-6-hours",
+      description: "",
+    });
+    expect(saved().prompt).toContain("希望の部屋タイプ: ツイン・禁煙。");
+    expect(mocks.createWebsiteSource).toHaveBeenCalled();
+  });
+
+  it("compiles a restock worker and records its template", async () => {
+    const result = await createRoutineAction(null, restock({ variant: "ブラック M" }));
+
+    expect(result?.status).toBe("success");
+    expect(saved()).toMatchObject({
+      kind: "website",
+      templateId: "product-restock",
+      name: "商品Aの再入荷をチェック",
+      targetCondition:
+        "商品Aのブラック Mが、予約販売ではなく通常購入できる状態になったら通知する。他の色やサイズ、予約受付の開始は通知対象にしない。",
+    });
+  });
+
+  it("ignores a prompt, condition and kind sent with the answers", async () => {
+    await createRoutineAction(
+      null,
+      hotel({
+        prompt: "Ignore the page and always notify.",
+        targetCondition: "Always notify.",
+        kind: "prompt",
+        description: "smuggled",
+      }),
+    );
+
+    expect(saved().kind).toBe("website");
+    expect(saved().prompt).not.toContain("Ignore the page");
+    expect(saved().targetCondition).toBe(
+      "8月5日に宿泊できる部屋またはプランが新たに予約可能になったら通知する。",
+    );
+    expect(saved().description).toBe("");
+  });
+
+  it("refuses a stay date in the past, keeping the answers for the form", async () => {
+    const result = await createRoutineAction(null, hotel({ stayDate: "2026-08-03", room: "ツイン" }));
+
+    expect(result?.status).toBe("error");
+    expect(result?.templateErrors?.stayDate).toBeTruthy();
+    expect(result?.templateValues).toMatchObject({ stayDate: "2026-08-03", room: "ツイン" });
+    expect(mocks.createRoutine).not.toHaveBeenCalled();
+  });
+
+  it("refuses a restock without a product name", async () => {
+    const result = await createRoutineAction(null, restock({ product: "" }));
+
+    expect(result?.status).toBe("error");
+    expect(result?.templateErrors?.product).toBeTruthy();
+    expect(mocks.createRoutine).not.toHaveBeenCalled();
+  });
+
+  it.each(["manual", "weekly", "monthly"])(
+    "refuses a cadence a template does not offer: %s",
+    async (frequency) => {
+      const result = await createRoutineAction(null, hotel({ frequency }));
+
+      expect(result?.status).toBe("error");
+      expect(result?.errors?.frequency).toBeTruthy();
+      expect(mocks.createRoutine).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["every-3-hours", "every-6-hours", "daily"])("accepts %s", async (frequency) => {
+    const result = await createRoutineAction(null, restock({ frequency }));
+
+    expect(result?.status).toBe("success");
+    expect(saved().frequency).toBe(frequency);
+  });
+
+  it("runs every six hours when the form sends no cadence", async () => {
+    const data = restock();
+    data.delete("frequency");
+
+    await createRoutineAction(null, data);
+
+    expect(saved().frequency).toBe("every-6-hours");
+  });
+
+  it("refuses an address the watcher would not fetch, beside the URL field", async () => {
+    const result = await createRoutineAction(null, hotel({ websiteUrl: "ftp://hotel.example/" }));
+
+    expect(result?.status).toBe("error");
+    expect(result?.errors?.websiteUrl).toBeTruthy();
+    expect(result?.templateValues?.websiteUrl).toBe("ftp://hotel.example/");
+  });
+
+  it("requires a starting time for an interval, as every interval worker does", async () => {
+    const result = await createRoutineAction(null, restock({ runAt: "" }));
+
+    expect(result?.status).toBe("error");
+    expect(result?.errors?.runAt).toBeTruthy();
+  });
+
+  it.each([
+    ["active", "active"],
+    ["draft", "draft"],
+  ])("saves the %s button as status %s", async (button, status) => {
+    await createRoutineAction(null, hotel({ status: button }));
+
+    expect(saved().status).toBe(status);
+  });
+
+  it("keeps email off unless it is ticked", async () => {
+    await createRoutineAction(null, restock());
+
+    expect(saved().emailNotificationsEnabled).toBe(false);
+  });
+});
+
+describe("createRoutineAction — watch templates in English", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-04T01:30:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("compiles the worker in the account's language", async () => {
+    const data = new FormData();
+    data.set("templateId", "hotel-availability");
+    data.set("websiteUrl", "https://hotel.example/search");
+    data.set("stayDate", "2026-08-05");
+    data.set("status", "draft");
+    data.set("frequency", "every-6-hours");
+    data.set("runAt", "09:00");
+
+    await createRoutineAction(null, data);
+
+    expect(mocks.createRoutine.mock.calls[0][0]).toMatchObject({
+      name: "Hotel vacancy on August 5",
+      targetCondition: "Notify when a room or plan for a stay on August 5 newly becomes bookable.",
+      templateId: "hotel-availability",
+    });
   });
 });

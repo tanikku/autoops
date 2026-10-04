@@ -35,6 +35,16 @@ import {
 } from "@/lib/usage/ai-allowance";
 import { recordAIExecution, recordAIFailure } from "@/lib/usage/record";
 import { getUserLanguage, getUserTimezone } from "@/lib/users";
+import { datePartsIn } from "@/lib/datetime";
+import {
+  compileWatchTemplate,
+  isWatchTemplateId,
+  readWatchTemplateValues,
+  type WatchTemplateErrors,
+  type WatchTemplateId,
+  type WatchTemplateValues,
+  watchTemplateFrequencies,
+} from "@/lib/worker-template-compiler";
 import { isWatcherError } from "@/lib/watcher/errors";
 import { parseWatchUrl } from "@/lib/watcher/url";
 import { createWebsiteSource } from "@/lib/website-sources";
@@ -72,8 +82,105 @@ import type { ActionResult, CreateRoutineInput } from "@/types";
  * errors let each field say what is wrong with it, next to the input.
  */
 export type CreateRoutineState =
-  | (ActionResult & { values?: WorkerFormInput; errors?: WorkerFieldErrors })
+  | (ActionResult & {
+      values?: WorkerFormInput;
+      errors?: WorkerFieldErrors;
+      /** A watch template's own answers, sent back with a refusal of one. */
+      templateValues?: WatchTemplateValues;
+      templateErrors?: WatchTemplateErrors;
+    })
   | null;
+
+/**
+ * A watch template submission, compiled into the worker it describes.
+ *
+ * **Only the person's answers are read from the form.** The kind, the
+ * instructions and the condition come from the compiler, so a submission
+ * carrying its own prompt, condition or kind produces the same worker as one
+ * that does not. The schedule, the email switch and the status are the form's,
+ * exactly as for any other worker; the cadences a template offers are checked
+ * here because the shared rules allow more.
+ *
+ * Null when the submission is not a template's. A template that is not on the
+ * server's list is refused rather than treated as an ordinary worker.
+ */
+async function compileTemplateSubmission(
+  formData: FormData,
+  userId: string,
+  language: string,
+): Promise<
+  | { input: WorkerFormInput; templateId: WatchTemplateId }
+  | { refusal: CreateRoutineState }
+  | null
+> {
+  if (!formData.has("templateId")) {
+    return null;
+  }
+
+  const templateId = String(formData.get("templateId") ?? "").trim();
+  const common = readWorkerForm(formData);
+
+  if (!isWatchTemplateId(templateId)) {
+    return {
+      refusal: {
+        status: "error",
+        message: t(language, "template.validation.unknownTemplate"),
+        values: common,
+      },
+    };
+  }
+
+  // "Today or later" is the account's today, read without writing anything.
+  const today = datePartsIn(new Date(), await getUserTimezone(userId));
+  const compiled = compileWatchTemplate(templateId, readWatchTemplateValues(formData), {
+    language,
+    today,
+  });
+  const frequency = common.frequency ?? watchTemplateFrequencies[0];
+  const errors: WorkerFieldErrors = (watchTemplateFrequencies as readonly string[]).includes(
+    frequency,
+  )
+    ? {}
+    : { frequency: t(language, "template.validation.frequencyNotOffered") };
+
+  if (!compiled.ok || hasWorkerFormErrors(errors)) {
+    const templateErrors = compiled.ok ? {} : compiled.errors;
+    const messages = [...Object.values(errors), ...Object.values(templateErrors)];
+
+    return {
+      refusal: {
+        status: "error",
+        message:
+          messages.length === 1
+            ? messages[0]
+            : t(language, "worker.validation.summary", { count: messages.length }),
+        values: common,
+        errors,
+        templateErrors,
+      },
+    };
+  }
+
+  const { worker } = compiled;
+
+  return {
+    templateId,
+    input: {
+      ...common,
+      kind: worker.kind,
+      name: worker.name,
+      description: "",
+      prompt: worker.prompt,
+      websiteUrl: worker.websiteUrl,
+      targetCondition: worker.targetCondition,
+      discoverySource: "",
+      discoveryQuery: "",
+      discoveryMaxResults: null,
+      discoveryMaxResultsSubmitted: false,
+      frequency,
+    },
+  };
+}
 
 /**
  * What a submission gets back when the account has no room for it.
@@ -119,6 +226,19 @@ function quotaRejection(
 }
 
 export async function createRoutineAction(
+  prevState: CreateRoutineState,
+  formData: FormData,
+): Promise<CreateRoutineState> {
+  const state = await createWorker(prevState, formData);
+
+  // **A template's own answers go back with any refusal**, wherever it came
+  // from, so its form is filled in again exactly as it was sent.
+  return state?.status === "error" && formData.has("templateId")
+    ? { ...state, templateValues: readWatchTemplateValues(formData) }
+    : state;
+}
+
+async function createWorker(
   _prevState: CreateRoutineState,
   formData: FormData,
 ): Promise<CreateRoutineState> {
@@ -135,7 +255,12 @@ export async function createRoutineAction(
   // provision, write.
   const language = await getUserLanguage(userId);
 
-  const input = readWorkerForm(formData);
+  const template = await compileTemplateSubmission(formData, userId, language);
+  if (template !== null && "refusal" in template) {
+    return template.refusal;
+  }
+
+  const input = template?.input ?? readWorkerForm(formData);
 
   // A new worker starts as a draft that nothing schedules, so both fall back
   // to the quietest option rather than to a previous value.
@@ -264,6 +389,8 @@ export async function createRoutineAction(
     // finishes, and nothing in the submission can name anybody.
     emailNotificationsEnabled: input.emailNotificationsEnabled,
     targetCondition: targetConditionFor(kind, input.targetCondition),
+    // Only a compiled template has an origin, and only from the allowlist.
+    ...(template ? { templateId: template.templateId } : {}),
     nextRunAt: calculateNextRunAt({
       frequency,
       runAtMinutes,

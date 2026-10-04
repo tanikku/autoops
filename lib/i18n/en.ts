@@ -1706,6 +1706,79 @@ Notes for the report:
   "pricing.guardrail.overLimit.recovery":
     "Pausing or deleting a Worker is always allowed, and once fewer than {limit} are active you could add them again.",
 
+  // Public Beta purpose-first creation and its watch templates.
+  "create.purpose.heading": "What are you waiting for?",
+  "create.purpose.hotel.title": "Hotel vacancy",
+  "create.purpose.hotel.description": "Hear when a room opens up for the date you want.",
+  "create.purpose.restock.title": "Product restock",
+  "create.purpose.restock.description": "Hear when a sold-out product can be bought again.",
+  "create.purpose.website.title": "Other page changes",
+  "create.purpose.website.description": "Watch any page and hear when it changes.",
+  "create.purpose.free.title": "Build your own",
+  "create.purpose.free.description": "Describe a job to AI, choose a kind of Worker, or start from an example.",
+  "create.purpose.back": "Choose a different purpose",
+  "template.hotel.title": "Check hotel vacancy",
+  "template.hotel.helper": "Search the hotel site for the stay you want, then paste the URL of the results page.",
+  "template.hotel.limitation": "Koqentra checks the page regularly. It does not book, sign in, or use the site for you.",
+  "template.hotel.field.url": "Availability page URL",
+  "template.hotel.field.stayDate": "Stay date",
+  "template.hotel.field.room": "Room type or plan (optional)",
+  "template.hotel.field.roomPlaceholder": "e.g. Twin, non-smoking",
+  "template.hotel.field.maxPrice": "Price limit (optional)",
+  "template.restock.title": "Check a product restock",
+  "template.restock.helper": "Works best on product pages that show stock as soon as they open.",
+  "template.restock.limitation": "Sites that need you to sign in or click through before stock appears may not be checked correctly.",
+  "template.restock.field.url": "Product page URL",
+  "template.restock.field.product": "Product name",
+  "template.restock.field.variant": "Variant (optional)",
+  "template.restock.field.variantPlaceholder": "e.g. Black, M",
+  "template.restock.field.includePreorder": "Count pre-orders as available to buy",
+  "template.field.notes": "Notes (optional)",
+  "template.field.name": "Worker name (optional)",
+  "template.field.nameHelp": "Leave empty and a name is made from your answers.",
+  "template.common.emailLabel": "Email me when a matching change appears",
+  "template.common.start": "Start watching",
+  "template.common.saveDraft": "Save as draft",
+  "template.edit.note": "This Worker was created from a template. To change its condition a lot, you can also create a new one.",
+  "template.validation.stayDateRequired": "Enter a stay date.",
+  "template.validation.stayDateInvalid": "Enter the stay date as a real date.",
+  "template.validation.stayDatePast": "Choose a stay date of today or later.",
+  "template.validation.maxPriceInvalid": "Enter the price limit as a whole number from 1 to 99,999,999.",
+  "template.validation.productRequired": "Enter the product name.",
+  "template.validation.includePreorderInvalid": "The pre-order choice could not be read.",
+  "template.validation.unknownTemplate": "This template is not available.",
+  "template.validation.frequencyNotOffered": "Choose every 3 hours, every 6 hours or once a day.",
+  "template.date": "{monthName} {day}",
+  "template.price": "{amount}",
+  "template.prompt.notes": "Additional notes: {notes}",
+  "template.hotel.defaultName": "Hotel vacancy on {date}",
+  "template.hotel.prompt.base":
+    "This page is a hotel availability page. Check availability for {date}. Briefly report room types or plans that have newly become bookable, with their price and the number of rooms left. Report other changes, such as rooms selling out or prices changing, separately. Do not confuse changes for dates other than {date} with changes for {date}.",
+  "template.hotel.prompt.room": "Preferred room type: {room}. State whether it matches.",
+  "template.hotel.prompt.price": "Price limit: {price}. When the price is shown, state whether it is within the limit.",
+  "template.hotel.condition.date": "Notify when a room or plan for a stay on {date} newly becomes bookable.",
+  "template.hotel.condition.room":
+    "Notify when a {room} room or plan for {date} newly becomes bookable. Do not notify about availability of other room types.",
+  "template.hotel.condition.roomPrice":
+    "Notify when a {room} room or plan for {date} at {price} or less newly becomes bookable. If no price is shown, notify when it becomes bookable.",
+  "template.hotel.condition.price":
+    "Notify when a room or plan for a stay on {date} at {price} or less newly becomes bookable. If no price is shown, notify when it becomes bookable.",
+  "template.restock.defaultName": "Restock check: {product}",
+  "template.restock.prompt.base":
+    "This page is the product page for \"{product}\". Briefly report changes in stock and whether it can be bought, together with the price. \"In stock\", \"Add to cart\" and \"Buy now\" are strong signs that it can be bought. \"Coming soon\" or \"Notify me when available\" on its own does not mean it can be bought.",
+  "template.restock.prompt.variant": "Variant to watch: {variant}. Keep it apart from stock of other colours and sizes.",
+  "template.restock.prompt.preorderExcluded": "Pre-orders do not count as available to buy.",
+  "template.restock.prompt.preorderIncluded": "Pre-orders count as available to buy.",
+  "template.restock.condition.basic":
+    "Notify when this product goes from sold out or out of stock to actually available to buy.",
+  "template.restock.condition.variant":
+    "Notify when {variant} of {product} actually becomes available to buy. Do not notify about stock changes for other colours or sizes.",
+  "template.restock.condition.variantNoPreorder":
+    "Notify when {variant} of {product} can be bought normally, not as a pre-order. Do not notify about other colours or sizes, or about pre-orders opening.",
+  "template.restock.condition.noPreorder":
+    "Notify when {product} can be bought normally, not as a pre-order. Pre-orders opening alone is not notified.",
+  "template.restock.condition.preorderIncluded": " Becoming available to pre-order also counts.",
+
 } as const;
 
 /**
