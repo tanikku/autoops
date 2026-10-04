@@ -115,3 +115,19 @@ describe("what the language does not change", () => {
     expect(scheduleLabel("weekly", null, 9, null, "ja")).toBe("毎週");
   });
 });
+
+/** An interval reads as counted from its time, never as one time a day. */
+describe("scheduleLabel — interval cadences", () => {
+  it.each([
+    ["every-3-hours", "en", "Every 3 hours from 09:00"],
+    ["every-6-hours", "en", "Every 6 hours from 09:00"],
+    ["every-3-hours", "ja", "3時間ごと(09:00 起点)"],
+    ["every-6-hours", "ja", "6時間ごと(09:00 起点)"],
+  ] as const)("describes %s in %s", (frequency, language, expected) => {
+    expect(scheduleLabel(frequency, 540, null, null, language)).toBe(expected);
+  });
+
+  it("keeps the daily wording as it was", () => {
+    expect(scheduleLabel("daily", 540, null, null, "en")).toBe("Every day at 09:00");
+  });
+});

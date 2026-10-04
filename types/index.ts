@@ -42,6 +42,8 @@ export const routineFrequencies = [
   "daily",
   "weekly",
   "monthly",
+  "every-3-hours",
+  "every-6-hours",
 ] as const;
 
 export type RoutineFrequency = (typeof routineFrequencies)[number];
@@ -174,6 +176,13 @@ export function isRoutineStatus(value: string): value is RoutineStatus {
 
 export function isRoutineFrequency(value: string): value is RoutineFrequency {
   return (routineFrequencies as readonly string[]).includes(value);
+}
+
+/** The cadences that repeat within a day, counted from the worker's time. */
+export const intervalFrequencies = ["every-3-hours", "every-6-hours"] as const;
+
+export function isIntervalFrequency(frequency: RoutineFrequency): boolean {
+  return (intervalFrequencies as readonly string[]).includes(frequency);
 }
 
 export const runStatuses = ["running", "completed", "failed"] as const;

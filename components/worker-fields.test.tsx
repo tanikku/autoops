@@ -872,3 +872,73 @@ describe("the target condition box", () => {
     expect(html).toContain("TOO-LONG-CONDITION");
   });
 });
+
+/**
+ * The interval cadences, and what checking more often costs.
+ *
+ * The allowance note is a website worker's: its checks are free and only a
+ * change spends. Said for a prompt worker, which spends on every run, the same
+ * sentence would be false.
+ */
+describe("interval cadences in the form", () => {
+  it.each(["en", "ja"])("offers both intervals in %s", (language) => {
+    const html = render({ kind: "website", language, values: {} });
+
+    expect(html).toContain('value="every-3-hours"');
+    expect(html).toContain('value="every-6-hours"');
+    expect(html).toContain(t(language, "worker.frequency.every3Hours"));
+    expect(html).toContain(t(language, "worker.frequency.every6Hours"));
+    expect(html).not.toContain('value="hourly"');
+  });
+
+  it("calls the time a starting time for an interval, and says checks may be late", () => {
+    const html = render({ kind: "website", values: { frequency: "every-3-hours" } });
+
+    expect(html).toContain(t("en", "worker.field.intervalRunAt"));
+    expect(html).toContain(t("en", "worker.field.intervalNote"));
+    expect(html).not.toContain(t("en", "worker.field.runAt"));
+    expect(html).not.toContain("Leave empty to run");
+  });
+
+  it("keeps the daily time field as it was", () => {
+    const html = render({ kind: "website", values: { frequency: "daily" } });
+
+    expect(html).toContain(t("en", "worker.field.runAt"));
+    expect(html).not.toContain(t("en", "worker.field.intervalNote"));
+  });
+
+  it.each(["en", "ja"])("tells a website worker what checking more often costs, in %s", (language) => {
+    const html = render({ kind: "website", language, values: {} });
+
+    expect(html).toContain(t(language, "worker.field.frequencyAllowanceNote"));
+  });
+
+  it("does not tell a prompt worker its checks are free", () => {
+    const html = render({ kind: "prompt", values: {} });
+
+    expect(html).not.toContain(t("en", "worker.field.frequencyAllowanceNote"));
+  });
+
+  /** It says a change spends and an unchanged check does not — never "every check". */
+  it("states the allowance rule as change-driven, not per check", () => {
+    const en = t("en", "worker.field.frequencyAllowanceNote");
+    const ja = t("ja", "worker.field.frequencyAllowanceNote");
+
+    expect(en).toContain("changes a lot");
+    expect(en).toContain("finds no change uses none");
+    expect(en).not.toMatch(/every check|each check uses|always/i);
+    expect(ja).toContain("変更がない確認ではAI利用枠は消費しません");
+    expect(ja).not.toMatch(/確認するたび|毎回|必ず/);
+  });
+
+  it("shows a refused frequency and a missing starting time beside their fields", () => {
+    const html = render({
+      kind: "website",
+      values: { frequency: "every-6-hours" },
+      errors: { frequency: "FREQ-ERR", runAt: "RUNAT-ERR" },
+    });
+
+    expect(html).toContain("FREQ-ERR");
+    expect(html).toContain("RUNAT-ERR");
+  });
+});

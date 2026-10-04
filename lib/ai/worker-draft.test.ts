@@ -396,3 +396,22 @@ describe("addresses found in a request", () => {
     expect(extractUrlCandidates(text)).toHaveLength(10);
   });
 });
+
+/**
+ * A draft keeps the four cadences it was built for.
+ *
+ * The app now has interval cadences too; a model answering with one is
+ * answering outside what a draft offers, and is refused like any other value.
+ */
+describe("a draft's frequencies", () => {
+  it.each(["every-3-hours", "every-6-hours"])("refuses %s", (frequency) => {
+    const read = () => readPrompt({ frequency });
+
+    expect(read).toThrow();
+    try {
+      read();
+    } catch (error) {
+      expect(isInvalidWorkerDraftResponse(error)).toBe(true);
+    }
+  });
+});

@@ -97,6 +97,9 @@ export const ja: Record<TranslationKey, string> = {
   // The plain number, not the ordinal: 「毎月3日」rather than「毎月3rd」.
   "schedule.onDay": "毎月{day}日",
   "schedule.atTime": "{cadence} {time}",
+  "schedule.every3Hours": "3時間ごと",
+  "schedule.every6Hours": "6時間ごと",
+  "schedule.intervalFrom": "{cadence}({time} 起点)",
 
   "common.weekday.sunday": "日曜日",
   "common.weekday.monday": "月曜日",
@@ -130,6 +133,8 @@ export const ja: Record<TranslationKey, string> = {
   "worker.frequency.daily": "毎日",
   "worker.frequency.weekly": "毎週",
   "worker.frequency.monthly": "毎月",
+  "worker.frequency.every3Hours": "3時間ごと",
+  "worker.frequency.every6Hours": "6時間ごと",
 
   "worker.status.draftDescription":
     "下書きの Worker は自動実行されません。自動で動かすには、ステータスを「稼働中」にしてください。",
@@ -200,6 +205,12 @@ export const ja: Record<TranslationKey, string> = {
     "時刻はアカウントのタイムゾーン({timezone})で扱われます。空欄にすると、保存したときの時刻に実行されます。",
   /** 「未設定です」とは言わない — DB は既定の UTC と明示的な UTC を区別できない。 */
   "worker.field.timezoneSettingsLink": "設定から変更できます",
+  "worker.field.intervalRunAt": "基準時刻",
+  "worker.field.frequencyAllowanceNote":
+    "確認頻度を高くすると、ページに変更が多い場合はAI利用枠を早く消費することがあります。変更がない確認ではAI利用枠は消費しません。",
+  "worker.field.intervalNote":
+    "この時刻を起点に一定の間隔で確認します(例: 9:00 起点の3時間ごとなら 9:00・12:00・15:00…)。確認時刻は数分ずれることがあります。",
+  "worker.field.intervalTimezoneNote": "時刻はアカウントのタイムゾーン({timezone})で扱われます。",
 
   "worker.create.description":
     "Worker は一度定義すれば、あとは Koqentra がスケジュールどおりに実行します。",
@@ -647,6 +658,9 @@ export const ja: Record<TranslationKey, string> = {
   "worker.validation.websiteUrlInvalid":
     "https://example.com/news のような完全なアドレスを入力してください。",
   "worker.validation.summary": "{count} 件の入力を確認してください。",
+  "worker.validation.frequencyInvalid": "実行頻度を一覧から選んでください。",
+  "worker.validation.runAtRequiredForInterval":
+    "3時間ごと・6時間ごとの場合は基準時刻を指定してください。",
 
   "worker.validation.totalLimitReached":
     "Worker の数が上限（{limit}）に達しています。追加するには既存の Worker を削除してください。",

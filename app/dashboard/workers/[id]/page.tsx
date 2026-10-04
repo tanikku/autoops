@@ -75,6 +75,8 @@ const frequencyKeys: Record<RoutineFrequency, TranslationKey> = {
   daily: "worker.frequency.daily",
   weekly: "worker.frequency.weekly",
   monthly: "worker.frequency.monthly",
+  "every-3-hours": "worker.frequency.every3Hours",
+  "every-6-hours": "worker.frequency.every6Hours",
 };
 
 /**

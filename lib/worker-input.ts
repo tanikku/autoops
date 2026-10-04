@@ -5,6 +5,7 @@ import {
 import { isDiscoverySourceKind } from "@/lib/discovery/types";
 import { DEFAULT_LANGUAGE, t, type TranslationKey } from "@/lib/i18n";
 import {
+  isIntervalFrequency,
   isRoutineFrequency,
   isRoutineKind,
   isRoutineStatus,
@@ -65,7 +66,12 @@ export type WorkerFieldName = keyof typeof workerFieldLimits;
  */
 export type WorkerFieldErrors = Partial<
   Record<
-    WorkerFieldName | "status" | DiscoveryFieldName | "emailNotificationsEnabled",
+    | WorkerFieldName
+    | "status"
+    | "frequency"
+    | "runAt"
+    | DiscoveryFieldName
+    | "emailNotificationsEnabled",
     string
   >
 >;
@@ -149,6 +155,8 @@ export type WorkerFormInput = {
   /** null when the field is absent or holds a value the app does not accept. */
   status: RoutineStatus | null;
   frequency: RoutineFrequency | null;
+  /** Whether a frequency was submitted that is not one the app offers. */
+  frequencyUnrecognized?: boolean;
   /** Minutes into the day, or null when no time was given. */
   runAtMinutes: number | null;
   /** 0 (Sunday) to 6 (Saturday), or null when no day was given. */
@@ -320,6 +328,7 @@ export function readWorkerForm(formData: FormData): WorkerFormInput {
     kind: isRoutineKind(kind) ? kind : null,
     status: isRoutineStatus(status) ? status : null,
     frequency: isRoutineFrequency(frequency) ? frequency : null,
+    frequencyUnrecognized: frequency !== "" && !isRoutineFrequency(frequency),
     runAtMinutes: timeOfDay(formData, "runAt"),
     runAtWeekday: weekday(formData, "runAtWeekday"),
     runAtDay: wholeNumberInRange(formData, "runAtDay", 1, 31),
@@ -426,6 +435,17 @@ export function validateWorkerForm(
 
   if (!input.name) {
     errors.name = t(language, "worker.validation.nameRequired");
+  }
+
+  // **A cadence nobody offered is refused rather than read as manual.** Left
+  // out entirely, the frequency still falls back as it always has.
+  if (input.frequencyUnrecognized) {
+    errors.frequency = t(language, "worker.validation.frequencyInvalid");
+  }
+
+  // An interval is counted from a time of day, so it needs one stated.
+  if (isIntervalFrequency(context.frequency) && input.runAtMinutes === null) {
+    errors.runAt = t(language, "worker.validation.runAtRequiredForInterval");
   }
 
   if (

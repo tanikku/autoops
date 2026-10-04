@@ -154,6 +154,9 @@ export const en = {
   "schedule.everyWeekday": "Every {day}",
   "schedule.onDay": "On the {ordinal}",
   "schedule.atTime": "{cadence} at {time}",
+  "schedule.every3Hours": "Every 3 hours",
+  "schedule.every6Hours": "Every 6 hours",
+  "schedule.intervalFrom": "{cadence} from {time}",
 
   "common.weekday.sunday": "Sunday",
   "common.weekday.monday": "Monday",
@@ -229,6 +232,8 @@ export const en = {
   "worker.frequency.daily": "Daily",
   "worker.frequency.weekly": "Weekly",
   "worker.frequency.monthly": "Monthly",
+  "worker.frequency.every3Hours": "Every 3 hours",
+  "worker.frequency.every6Hours": "Every 6 hours",
 
   /** What choosing a status means, shown under the select. */
   "worker.status.draftDescription":
@@ -379,6 +384,12 @@ export const en = {
    * a cadence. A manual worker has no time of day to interpret.
    */
   "worker.field.timezoneSettingsLink": "Change it in Settings",
+  "worker.field.intervalRunAt": "Starting time",
+  "worker.field.frequencyAllowanceNote":
+    "Checking more often can use up your AI processing allowance faster on a page that changes a lot. A check that finds no change uses none of it.",
+  "worker.field.intervalNote":
+    "Checks repeat at a fixed interval counted from this time (every 3 hours from 9:00 means 9:00, 12:00, 15:00…). A check may start a few minutes late.",
+  "worker.field.intervalTimezoneNote": "Times use your account timezone: {timezone}.",
 
   "worker.create.description":
     "Define the worker once. Koqentra runs it on your schedule.",
@@ -1104,6 +1115,9 @@ Notes for the report:
     "Enter a full website address, like https://example.com/news.",
   /** One line for the toast when several fields are wrong at once. */
   "worker.validation.summary": "{count} fields need attention.",
+  "worker.validation.frequencyInvalid": "Choose a frequency from the list.",
+  "worker.validation.runAtRequiredForInterval":
+    "Set a starting time for a schedule that repeats every 3 or 6 hours.",
 
   /**
    * What saving, deleting or running a worker says back.

@@ -514,3 +514,189 @@ describe("advanceSchedule", () => {
     ).toBeUndefined();
   });
 });
+
+/**
+ * The cadences that repeat within a day.
+ *
+ * **A grid in local time, anchored on the worker's time.** Ten o'clock in Tokyo
+ * every three hours is 01, 04, 07, 10, 13, 16, 19, 22 local — 16, 19, 22, 01,
+ * 04, 07, 10, 13 UTC — every day. Each answer is the next point on that grid,
+ * never "an interval after the run", so lateness does not accumulate.
+ */
+describe("interval cadences", () => {
+  const TEN_AM = 600;
+  const every3Tokyo: Partial<ScheduleInput> = {
+    frequency: "every-3-hours",
+    runAtMinutes: TEN_AM,
+    timezone: TOKYO,
+  };
+  const every6Tokyo: Partial<ScheduleInput> = {
+    frequency: "every-6-hours",
+    runAtMinutes: TEN_AM,
+    timezone: TOKYO,
+  };
+
+  describe("every 3 hours", () => {
+    it("lands on the base slot", () => {
+      // 09:30 Tokyo → 10:00 Tokyo.
+      expect(nextRun(every3Tokyo, "2026-08-04T00:30:00.000Z")).toBe(
+        "2026-08-04T01:00:00.000Z",
+      );
+    });
+
+    it("steps three hours past a slot", () => {
+      expect(nextRun(every3Tokyo, "2026-08-04T02:15:00.000Z")).toBe(
+        "2026-08-04T04:00:00.000Z",
+      );
+    });
+
+    it("answers the next slot, not the same one, from a slot exactly", () => {
+      expect(nextRun(every3Tokyo, "2026-08-04T01:00:00.000Z")).toBe(
+        "2026-08-04T04:00:00.000Z",
+      );
+    });
+
+    it("rolls over into the next local day", () => {
+      // 23:00 Tokyo → 01:00 Tokyo the next day.
+      expect(nextRun(every3Tokyo, "2026-08-04T14:00:00.000Z")).toBe(
+        "2026-08-04T16:00:00.000Z",
+      );
+    });
+
+    it("keeps slots before the anchor time on the grid", () => {
+      // 02:00 Tokyo → 04:00 Tokyo, three hours before ten.
+      expect(nextRun(every3Tokyo, "2026-08-03T17:00:00.000Z")).toBe(
+        "2026-08-03T19:00:00.000Z",
+      );
+    });
+
+    it("counts in UTC for an account on UTC", () => {
+      const utc = { frequency: "every-3-hours" as const, runAtMinutes: 0, timezone: "UTC" };
+
+      expect(nextRun(utc, "2026-08-04T22:00:00.000Z")).toBe("2026-08-05T00:00:00.000Z");
+      expect(nextRun(utc, "2026-08-04T07:59:00.000Z")).toBe("2026-08-04T09:00:00.000Z");
+    });
+
+    it("uses the time of day it is given rather than the hour it is asked", () => {
+      expect(
+        nextRun(
+          { frequency: "every-3-hours", runAtMinutes: 45, timezone: "UTC" },
+          "2026-08-04T10:00:00.000Z",
+        ),
+      ).toBe("2026-08-04T12:45:00.000Z");
+    });
+  });
+
+  describe("every 6 hours", () => {
+    it("lands on the base slot", () => {
+      expect(nextRun(every6Tokyo, "2026-08-04T00:30:00.000Z")).toBe(
+        "2026-08-04T01:00:00.000Z",
+      );
+    });
+
+    it("steps six hours past a slot", () => {
+      expect(nextRun(every6Tokyo, "2026-08-04T02:15:00.000Z")).toBe(
+        "2026-08-04T07:00:00.000Z",
+      );
+    });
+
+    it("answers the next slot from a slot exactly", () => {
+      expect(nextRun(every6Tokyo, "2026-08-04T01:00:00.000Z")).toBe(
+        "2026-08-04T07:00:00.000Z",
+      );
+    });
+
+    it("rolls over into the next local day", () => {
+      // 22:30 Tokyo → 04:00 Tokyo the next day.
+      expect(nextRun(every6Tokyo, "2026-08-04T13:30:00.000Z")).toBe(
+        "2026-08-04T19:00:00.000Z",
+      );
+    });
+
+    it("counts in UTC for an account on UTC", () => {
+      const utc = { frequency: "every-6-hours" as const, runAtMinutes: NINE_AM, timezone: "UTC" };
+
+      expect(nextRun(utc, "2026-08-04T10:00:00.000Z")).toBe("2026-08-04T15:00:00.000Z");
+      expect(nextRun(utc, "2026-08-04T21:00:00.000Z")).toBe("2026-08-05T03:00:00.000Z");
+    });
+  });
+
+  /**
+   * Each slot is a wall-clock time on its own day, so a change of clocks
+   * shortens or lengthens the one gap that crosses it and leaves the rest of
+   * the grid where it was. The rules for a time that never happens or happens
+   * twice are the daily ones above.
+   */
+  describe("daylight saving", () => {
+    it("shortens the gap that crosses the spring change", () => {
+      const ny = { frequency: "every-3-hours" as const, runAtMinutes: 0, timezone: NEW_YORK };
+
+      // 00:00 EST → 03:00 EDT is two real hours; 03:00 → 06:00 EDT is three.
+      expect(nextRun(ny, "2026-03-08T04:30:00.000Z")).toBe("2026-03-08T05:00:00.000Z");
+      expect(nextRun(ny, "2026-03-08T05:00:00.000Z")).toBe("2026-03-08T07:00:00.000Z");
+      expect(nextRun(ny, "2026-03-08T07:00:00.000Z")).toBe("2026-03-08T10:00:00.000Z");
+    });
+
+    it("lands a slot inside the spring gap just before it, still in order", () => {
+      const ny = { frequency: "every-3-hours" as const, runAtMinutes: 150, timezone: NEW_YORK };
+
+      // 23:30 EST, then 02:30 (which never happens → 01:30 EST), then 05:30 EDT.
+      expect(nextRun(ny, "2026-03-08T04:00:00.000Z")).toBe("2026-03-08T04:30:00.000Z");
+      expect(nextRun(ny, "2026-03-08T04:30:00.000Z")).toBe("2026-03-08T06:30:00.000Z");
+      expect(nextRun(ny, "2026-03-08T06:30:00.000Z")).toBe("2026-03-08T09:30:00.000Z");
+    });
+
+    it("lengthens the gap that crosses the autumn change", () => {
+      const ny = { frequency: "every-3-hours" as const, runAtMinutes: 0, timezone: NEW_YORK };
+
+      // 00:00 EDT → 03:00 EST is four real hours.
+      expect(nextRun(ny, "2026-11-01T04:00:00.000Z")).toBe("2026-11-01T08:00:00.000Z");
+      expect(nextRun(ny, "2026-11-01T08:00:00.000Z")).toBe("2026-11-01T11:00:00.000Z");
+    });
+
+    it("runs a repeated time once, on its first occurrence", () => {
+      const ny = { frequency: "every-6-hours" as const, runAtMinutes: 90, timezone: NEW_YORK };
+
+      // 01:30 happens twice; the slot is the EDT one, and the next is 07:30 EST.
+      expect(nextRun(ny, "2026-11-01T01:00:00.000Z")).toBe("2026-11-01T05:30:00.000Z");
+      expect(nextRun(ny, "2026-11-01T05:30:00.000Z")).toBe("2026-11-01T12:30:00.000Z");
+    });
+  });
+
+  describe("advancing from a dispatched slot", () => {
+    it("moves one interval on from the slot, however late the tick", () => {
+      expect(
+        advanced(every3Tokyo, "2026-08-04T01:00:00.000Z", "2026-08-04T01:07:00.000Z"),
+      ).toBe("2026-08-04T04:00:00.000Z");
+      expect(
+        advanced(every6Tokyo, "2026-08-04T01:00:00.000Z", "2026-08-04T01:07:00.000Z"),
+      ).toBe("2026-08-04T07:00:00.000Z");
+    });
+
+    it("skips missed slots to the next one ahead instead of catching up", () => {
+      // Slots at 04:00, 07:00 and 10:00Z were missed; the next is 13:00Z, on
+      // the same grid, and nothing runs for the ones skipped.
+      expect(
+        advanced(every3Tokyo, "2026-08-04T01:00:00.000Z", "2026-08-04T12:30:00.000Z"),
+      ).toBe("2026-08-04T13:00:00.000Z");
+      expect(
+        advanced(every6Tokyo, "2026-08-04T01:00:00.000Z", "2026-08-04T12:30:00.000Z"),
+      ).toBe("2026-08-04T13:00:00.000Z");
+    });
+
+    it("does not drift when every tick is late", () => {
+      let slot = "2026-08-04T01:00:00.000Z";
+      const seen: string[] = [];
+
+      for (let i = 0; i < 8; i += 1) {
+        // Each tick arrives four minutes after its slot.
+        const now = new Date(new Date(slot).getTime() + 4 * 60_000).toISOString();
+        slot = advanced(every3Tokyo, slot, now) ?? "";
+        seen.push(slot.slice(11, 16));
+      }
+
+      expect(seen).toEqual(["04:00", "07:00", "10:00", "13:00", "16:00", "19:00", "22:00", "01:00"]);
+    });
+  });
+});
+

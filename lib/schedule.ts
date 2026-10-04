@@ -34,6 +34,20 @@ const DAYS_PER_WEEK = 7;
 const DAYS_PER_MONTH_MAX = 31;
 
 /**
+ * The cadences that repeat within a day, and how many hours apart.
+ *
+ * **A grid in local time, anchored on the worker's time of day.** Nine o'clock
+ * every three hours is 09, 12, 15, 18, 21, 00, 03, 06 — the same hours every
+ * day, because both intervals divide a day evenly. Stepping from the slot
+ * rather than from when a run finished is what keeps a late tick from pushing
+ * every later check later too.
+ */
+const INTERVAL_HOURS: Partial<Record<RoutineFrequency, number>> = {
+  "every-3-hours": 3,
+  "every-6-hours": 6,
+};
+
+/**
  * Where a schedule goes once `slot` has been taken, catching up at most once.
  *
  * One step forward is the normal answer, and it is the one a punctual tick
@@ -106,6 +120,16 @@ export function calculateNextRunAt(
     return null;
   }
 
+  const intervalHours = INTERVAL_HOURS[frequency];
+  if (intervalHours !== undefined) {
+    return nextIntervalSlot(
+      from,
+      runAtMinutes ?? minutesIntoDayIn(from, timezone),
+      intervalHours,
+      timezone,
+    );
+  }
+
   // No chosen time means the slot keeps the one it already had — read on the
   // owner's clock, which is where a time of day was ever chosen. Reading the
   // UTC instant instead would hold the stored value still while their wall
@@ -141,6 +165,48 @@ export function calculateNextRunAt(
     clampToDay(minutesIntoDay),
     timezone,
   );
+}
+
+/**
+ * The first slot of an interval cadence strictly after `from`.
+ *
+ * **Strictly after, as every other cadence here.** A `from` that is itself a
+ * slot is the slot just dispatched, so the answer is the one after it.
+ *
+ * Each slot is a wall-clock time converted on its own day, so a daylight-saving
+ * change moves the gap across it rather than every later slot. Today's slots
+ * are tried first and then the next day's; the first of those always lies
+ * ahead of `from`.
+ */
+function nextIntervalSlot(
+  from: Date,
+  minutesIntoDay: number,
+  intervalHours: number,
+  timezone: string,
+): Date {
+  const step = intervalHours * 60;
+  const firstOfDay = clampToDay(minutesIntoDay) % step;
+  const { year, month, day } = datePartsIn(from, timezone);
+
+  for (let days = 0; days <= 2; days += 1) {
+    const local = new Date(Date.UTC(year, month - 1, day + days));
+
+    for (let minutes = firstOfDay; minutes < MINUTES_PER_DAY; minutes += step) {
+      const slot = zonedTimeToUtc(
+        local.getUTCFullYear(),
+        local.getUTCMonth() + 1,
+        local.getUTCDate(),
+        minutes,
+        timezone,
+      );
+
+      if (slot > from) {
+        return slot;
+      }
+    }
+  }
+
+  throw new Error("No interval slot within two days — the time zone is not one this can read.");
 }
 
 /**

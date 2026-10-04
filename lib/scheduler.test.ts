@@ -251,3 +251,13 @@ describe("a tick with several accounts waiting", () => {
     expect(JSON.stringify(where)).not.toContain("userId");
   });
 });
+
+describe("getDueWorkers — interval cadences", () => {
+  it.each(["every-3-hours", "every-6-hours"])("keeps %s as it is stored", async (frequency) => {
+    findMany.mockResolvedValue([dueRecord({ frequency })]);
+
+    const [worker] = await getDueWorkers(NOW);
+
+    expect(worker.frequency).toBe(frequency);
+  });
+});

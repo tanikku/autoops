@@ -12,9 +12,9 @@ import {
   type WorkerDraftGeneration,
   type WorkerDraftGenerator,
   type WorkerDraftRequest,
+  draftFrequencies,
 } from "@/lib/ai/worker-draft";
 import { workerFieldLimits } from "@/lib/worker-input";
-import { routineFrequencies } from "@/types";
 
 /**
  * The model that turns a request into a draft.
@@ -110,7 +110,7 @@ const draftProperties = {
   },
   frequency: {
     type: "string",
-    enum: [...routineFrequencies],
+    enum: [...draftFrequencies],
     description:
       "How often the worker runs. Use manual when the person did not ask for a schedule.",
   },

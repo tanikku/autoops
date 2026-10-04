@@ -1,6 +1,5 @@
 import type { ProviderCallMetadata } from "@/lib/ai/provider";
 import { workerFieldLimits } from "@/lib/worker-input";
-import { isRoutineFrequency, type RoutineFrequency } from "@/types";
 
 /**
  * Turning a sentence into a worker somebody can look at before it exists.
@@ -39,12 +38,27 @@ export const MAX_WORKER_DRAFT_REQUEST_CHARS = 2_000;
 /** The most addresses read out of one request. Past this, the ask is not a worker. */
 const MAX_URL_CANDIDATES = 10;
 
+/**
+ * The cadences a draft may propose.
+ *
+ * **Not `routineFrequencies`, on purpose.** A worker can repeat every few hours
+ * now, but a draft keeps the four cadences it was built and tested for; adding
+ * a value to the app does not widen what the model may answer.
+ */
+export const draftFrequencies = ["manual", "daily", "weekly", "monthly"] as const;
+
+export type DraftFrequency = (typeof draftFrequencies)[number];
+
+function isDraftFrequency(value: string): value is DraftFrequency {
+  return (draftFrequencies as readonly string[]).includes(value);
+}
+
 /** What both kinds of worker are described by. */
 type WorkerDraftBase = {
   name: string;
   description: string;
   prompt: string;
-  frequency: RoutineFrequency;
+  frequency: DraftFrequency;
   runAtMinutes: number | null;
   runAtWeekday: number | null;
   runAtDay: number | null;
@@ -330,10 +344,10 @@ function readOptionalInteger(
   return raw;
 }
 
-function readFrequency(input: Record<string, unknown>): RoutineFrequency {
+function readFrequency(input: Record<string, unknown>): DraftFrequency {
   const raw = input.frequency;
 
-  if (typeof raw !== "string" || !isRoutineFrequency(raw)) {
+  if (typeof raw !== "string" || !isDraftFrequency(raw)) {
     invalid("the model answered with a frequency this does not recognise");
   }
 

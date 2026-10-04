@@ -1028,3 +1028,72 @@ describe("validateWorkerFormForKind — the target condition", () => {
     expect(withOversized).not.toHaveProperty("targetCondition");
   });
 });
+
+/**
+ * The cadences that repeat within a day.
+ *
+ * **Accepted like any other, with a time of day required.** The time is where
+ * the interval is counted from, so there is no "whenever it was saved" to fall
+ * back on. A frequency nobody offered is refused rather than read as manual.
+ */
+describe("interval frequencies", () => {
+  function submitted(frequency: string, runAt = "09:00") {
+    const data = new FormData();
+    data.set("name", "Watch");
+    data.set("frequency", frequency);
+    data.set("runAt", runAt);
+    return readWorkerForm(data);
+  }
+
+  it.each(["every-3-hours", "every-6-hours"] as const)("reads %s as itself", (frequency) => {
+    const read = submitted(frequency);
+
+    expect(read.frequency).toBe(frequency);
+    expect(read.frequencyUnrecognized).toBe(false);
+  });
+
+  it.each(["every-3-hours", "every-6-hours"] as const)(
+    "accepts %s with a time of day",
+    (frequency) => {
+      expect(
+        validateWorkerForm(input({ runAtMinutes: 540 }), context({ frequency })),
+      ).toEqual({});
+    },
+  );
+
+  it.each(["every-3-hours", "every-6-hours"] as const)(
+    "requires a time of day for %s",
+    (frequency) => {
+      const errors = validateWorkerForm(input({ runAtMinutes: null }), context({ frequency }));
+
+      expect(Object.keys(errors)).toEqual(["runAt"]);
+    },
+  );
+
+  it.each(["manual", "daily", "weekly", "monthly"] as const)(
+    "still lets %s go without a time",
+    (frequency) => {
+      expect(
+        validateWorkerForm(input({ runAtMinutes: null }), context({ frequency })),
+      ).toEqual({});
+    },
+  );
+
+  it.each(["hourly", "every-1-hours", "Daily"])("refuses %s as a frequency", (frequency) => {
+    const read = submitted(frequency);
+
+    expect(read.frequency).toBeNull();
+    expect(read.frequencyUnrecognized).toBe(true);
+    expect(Object.keys(validateWorkerForm(read, context()))).toEqual(["frequency"]);
+  });
+
+  it("still reads a form with no frequency as one that did not say", () => {
+    const data = new FormData();
+    data.set("name", "Watch");
+    const read = readWorkerForm(data);
+
+    expect(read.frequency).toBeNull();
+    expect(read.frequencyUnrecognized).toBe(false);
+    expect(validateWorkerForm(read, context())).toEqual({});
+  });
+});

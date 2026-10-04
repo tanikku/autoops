@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Hiring a worker, now that provisioning has a name.
@@ -2448,5 +2448,72 @@ describe("createRoutineAction — a target condition on another kind", () => {
     expect(
       (mocks.createRoutine.mock.calls[0][0] as { targetCondition: unknown }).targetCondition,
     ).toBeNull();
+  });
+});
+
+/**
+ * Hiring a worker on an interval cadence.
+ *
+ * 09:00 in Tokyo is midnight UTC, so every three hours is 00, 03, 06 … UTC
+ * and every six is 00, 06, 12, 18.
+ */
+describe("createRoutineAction — interval cadences", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-04T01:30:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const saved = () =>
+    mocks.createRoutine.mock.calls[0][0] as {
+      frequency: string;
+      runAtMinutes: number | null;
+      runAtWeekday: number | null;
+      runAtDay: number | null;
+      nextRunAt: Date | null;
+    };
+
+  it.each([
+    ["every-3-hours", "2026-08-04T03:00:00.000Z"],
+    ["every-6-hours", "2026-08-04T06:00:00.000Z"],
+  ])("accepts %s and schedules its next slot", async (frequency, expected) => {
+    const result = await createRoutineAction(null, form({ frequency }));
+
+    expect(result?.status).toBe("success");
+    expect(saved().frequency).toBe(frequency);
+    expect(saved().runAtMinutes).toBe(540);
+    expect(saved().nextRunAt?.toISOString()).toBe(expected);
+  });
+
+  it("requires a starting time", async () => {
+    const result = await createRoutineAction(
+      null,
+      form({ frequency: "every-3-hours", runAt: "" }),
+    );
+
+    expect(result?.status).toBe("error");
+    expect(result?.errors?.runAt).toBeTruthy();
+    expect(mocks.createRoutine).not.toHaveBeenCalled();
+  });
+
+  it("refuses a frequency nobody offered rather than saving it as manual", async () => {
+    const result = await createRoutineAction(null, form({ frequency: "hourly" }));
+
+    expect(result?.status).toBe("error");
+    expect(result?.errors?.frequency).toBeTruthy();
+    expect(mocks.createRoutine).not.toHaveBeenCalled();
+  });
+
+  it("keeps no weekday or day of the month on an interval worker", async () => {
+    await createRoutineAction(
+      null,
+      form({ frequency: "every-6-hours", runAtWeekday: "3", runAtDay: "15" }),
+    );
+
+    expect(saved().runAtWeekday).toBeNull();
+    expect(saved().runAtDay).toBeNull();
   });
 });

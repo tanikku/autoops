@@ -445,3 +445,28 @@ describe("when the provider itself fails", () => {
     expect((error as ProviderError).cause).toBe(thrown);
   });
 });
+
+/** Adding a cadence to the app must not widen what the model is offered. */
+describe("the cadences a draft may propose", () => {
+  beforeEach(() => {
+    create.mockResolvedValue(
+      reply([toolUse(workerDraftToolNames.prompt, draftInput)]),
+    );
+  });
+
+  it("offers every tool with a frequency exactly the four legacy cadences", async () => {
+    await generator.generate(request());
+
+    const tools = sentRequest().tools as {
+      input_schema: { properties?: { frequency?: { enum?: string[] } } };
+    }[];
+    const enums = tools
+      .map((tool) => tool.input_schema.properties?.frequency?.enum)
+      .filter((values) => values !== undefined);
+
+    expect(enums.length).toBeGreaterThan(0);
+    for (const values of enums) {
+      expect(values).toEqual(["manual", "daily", "weekly", "monthly"]);
+    }
+  });
+});

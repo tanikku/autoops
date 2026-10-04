@@ -685,3 +685,34 @@ describe("a scheduled run the AI processing allowance refused", () => {
     );
   });
 });
+
+/**
+ * An interval worker takes the same path as every other cadence.
+ *
+ * The claim is the same compare-and-set against the slot it read; only the
+ * slot it moves to differs. Losing the claim still hands nothing off.
+ */
+describe("dispatchDueWorkers — interval cadences", () => {
+  it.each([
+    ["every-3-hours", "2026-08-10T12:00:00.000Z"],
+    ["every-6-hours", "2026-08-10T15:00:00.000Z"],
+  ] as const)("claims a %s worker's slot and moves it one interval on", async (frequency, next) => {
+    mocks.getDueWorkers.mockResolvedValue([due("worker-1", { frequency })]);
+
+    await dispatchDueWorkers(NOW);
+
+    const [id, expected, moved] = mocks.claimRoutineSlot.mock.calls[0];
+    expect(id).toBe("worker-1");
+    expect(expected).toEqual(SLOT);
+    expect(moved).toEqual(new Date(next));
+    expect(mocks.enqueueRoutine).toHaveBeenCalledWith("worker-1");
+  });
+
+  it("hands off nothing when another tick already won an interval slot", async () => {
+    mocks.getDueWorkers.mockResolvedValue([due("worker-1", { frequency: "every-3-hours" })]);
+    mocks.claimRoutineSlot.mockResolvedValue(false);
+
+    expect(await dispatchDueWorkers(NOW)).toEqual({ dispatched: [], failed: 0 });
+    expect(mocks.enqueueRoutine).not.toHaveBeenCalled();
+  });
+});

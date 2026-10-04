@@ -18,6 +18,7 @@ import {
   type WorkerFieldName,
 } from "@/lib/worker-input";
 import {
+  isIntervalFrequency,
   monthDays,
   ordinal,
   routineFrequencies,
@@ -54,6 +55,8 @@ export const frequencyKeys: Record<RoutineFrequency, TranslationKey> = {
   daily: "worker.frequency.daily",
   weekly: "worker.frequency.weekly",
   monthly: "worker.frequency.monthly",
+  "every-3-hours": "worker.frequency.every3Hours",
+  "every-6-hours": "worker.frequency.every6Hours",
 };
 
 const statusDescriptionKeys: Record<RoutineStatus, TranslationKey> = {
@@ -406,6 +409,7 @@ export function WorkerFields({
   const [frequency, setFrequency] = useState<RoutineFrequency>(
     values.frequency ?? "manual",
   );
+  const interval = isIntervalFrequency(frequency);
 
   // Controlled for the same reason as frequency: the description below the
   // select has to track whatever is currently chosen, not just what the form
@@ -588,6 +592,19 @@ export function WorkerFields({
             </option>
           ))}
         </select>
+        {/* **A website worker's checks are free; its changes are not.** Said
+            for that kind only: a prompt worker spends on every run, so the
+            same sentence there would be false. */}
+        {website ? (
+          <p className="text-xs text-muted-foreground">
+            {t(language, "worker.field.frequencyAllowanceNote")}
+          </p>
+        ) : null}
+        {errors.frequency ? (
+          <p id="frequency-error" className="text-sm text-destructive">
+            {errors.frequency}
+          </p>
+        ) : null}
       </div>
 
       {/* Only a weekly worker has a week to place a day in. Rendering these
@@ -649,14 +666,30 @@ export function WorkerFields({
 
       {frequency !== "manual" ? (
         <div className="grid gap-2">
-          <Label htmlFor="runAt">{t(language, "worker.field.runAt")}</Label>
+          {/* For an interval the time is where counting starts, not the one
+              time of day it runs, and it has no empty-means-now fallback. */}
+          <Label htmlFor="runAt">
+            {t(language, interval ? "worker.field.intervalRunAt" : "worker.field.runAt")}
+          </Label>
           <Input
             id="runAt"
             name="runAt"
             type="time"
             defaultValue={values.runAt}
             className="w-40"
+            aria-invalid={errors.runAt ? true : undefined}
+            aria-describedby={errors.runAt ? "runAt-error" : undefined}
           />
+          {interval ? (
+            <p className="text-xs text-muted-foreground">
+              {t(language, "worker.field.intervalNote")}
+            </p>
+          ) : null}
+          {errors.runAt ? (
+            <p id="runAt-error" className="text-sm text-destructive">
+              {errors.runAt}
+            </p>
+          ) : null}
           {/* **The zone was already named here; what was missing is where to
               change it.** The sentence states the account's current zone as a
               fact — it does not say the zone is unset, because a new account is
@@ -667,7 +700,11 @@ export function WorkerFields({
               of day for a zone to interpret, and the whole block is already
               inside that condition. */}
           <p className="text-xs text-muted-foreground">
-            {t(language, "worker.field.timezoneNote", { timezone })}{" "}
+            {t(
+              language,
+              interval ? "worker.field.intervalTimezoneNote" : "worker.field.timezoneNote",
+              { timezone },
+            )}{" "}
             <Link
               href="/dashboard/settings"
               className="underline underline-offset-4 hover:text-foreground"

@@ -1,12 +1,14 @@
 import { t, type TranslationKey } from "@/lib/i18n";
 import { minutesToTimeValue } from "@/lib/worker-input";
-import { ordinal, type RoutineFrequency } from "@/types";
+import { isIntervalFrequency, ordinal, type RoutineFrequency } from "@/types";
 
 const cadenceKeys: Record<RoutineFrequency, TranslationKey> = {
   manual: "schedule.manual",
   daily: "schedule.daily",
   weekly: "schedule.weekly",
   monthly: "schedule.monthly",
+  "every-3-hours": "schedule.every3Hours",
+  "every-6-hours": "schedule.every6Hours",
 };
 
 /**
@@ -55,8 +57,17 @@ export function scheduleLabel(
 
   const cadence = describeCadence(language, frequency, runAtWeekday, runAtDay);
 
-  return runAtMinutes === null
-    ? cadence
+  if (runAtMinutes === null) {
+    return cadence;
+  }
+
+  // "Every 3 hours at 09:00" would read as one check a day; the time is where
+  // the interval is counted from.
+  return isIntervalFrequency(frequency)
+    ? t(language, "schedule.intervalFrom", {
+        cadence,
+        time: minutesToTimeValue(runAtMinutes) ?? "",
+      })
     : t(language, "schedule.atTime", {
         cadence,
         time: minutesToTimeValue(runAtMinutes) ?? "",

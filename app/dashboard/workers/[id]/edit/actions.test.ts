@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Saving an edit, and the prompt contract it has to enforce.
@@ -2109,5 +2109,80 @@ describe("updateRoutineAction — a target condition on another kind", () => {
     expect(result?.status).toBe("error");
     expect(result?.errors?.targetCondition).toBeTruthy();
     expect(mocks.updateRoutine).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Moving a worker onto, off and between interval cadences.
+ *
+ * The account is on UTC and it is 10:00, so 09:00 every three hours next
+ * lands at 12:00, every six at 15:00, and daily tomorrow at 09:00.
+ */
+describe("updateRoutineAction — interval cadences", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-04T10:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const update = () =>
+    mocks.updateRoutine.mock.calls[0][1] as {
+      frequency: string;
+      nextRunAt?: Date | null;
+      runAtWeekday: number | null;
+      runAtDay: number | null;
+    };
+
+  it.each([
+    ["every-3-hours", "every-6-hours", "2026-08-04T15:00:00.000Z"],
+    ["every-6-hours", "daily", "2026-08-05T09:00:00.000Z"],
+    ["daily", "every-3-hours", "2026-08-04T12:00:00.000Z"],
+    ["manual", "every-6-hours", "2026-08-04T15:00:00.000Z"],
+  ])("recalculates %s → %s", async (from, to, expected) => {
+    mocks.getRoutineForEdit.mockResolvedValue(
+      stored({
+        frequency: from,
+        runAtMinutes: from === "manual" ? null : 540,
+        nextRunAt: from === "manual" ? null : new Date("2026-08-04T11:00:00.000Z"),
+      }),
+    );
+
+    const result = await save(form({ status: "draft", frequency: to, runAt: "09:00" }));
+
+    expect(result?.status).toBe("success");
+    expect(update().frequency).toBe(to);
+    expect(update().nextRunAt?.toISOString()).toBe(expected);
+  });
+
+  it("requires a starting time when moving onto an interval", async () => {
+    const result = await save(form({ status: "draft", frequency: "every-3-hours" }));
+
+    expect(result?.status).toBe("error");
+    expect(result?.errors?.runAt).toBeTruthy();
+    expect(mocks.updateRoutine).not.toHaveBeenCalled();
+  });
+
+  it("refuses a frequency nobody offered rather than keeping the stored one", async () => {
+    const result = await save(form({ status: "draft", frequency: "hourly", runAt: "09:00" }));
+
+    expect(result?.status).toBe("error");
+    expect(result?.errors?.frequency).toBeTruthy();
+    expect(mocks.updateRoutine).not.toHaveBeenCalled();
+  });
+
+  it("drops a weekly worker's weekday when it moves to an interval", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(
+      stored({ frequency: "weekly", runAtMinutes: 540, runAtWeekday: 2 }),
+    );
+
+    await save(
+      form({ status: "draft", frequency: "every-6-hours", runAt: "09:00", runAtWeekday: "2" }),
+    );
+
+    expect(update().runAtWeekday).toBeNull();
+    expect(update().runAtDay).toBeNull();
   });
 });
