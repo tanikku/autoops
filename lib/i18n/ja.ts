@@ -949,6 +949,17 @@ export const ja: Record<TranslationKey, string> = {
 
   // Public Beta の目的別作成と、その監視テンプレート。
   "create.purpose.heading": "どんなことをKoqentraに任せますか？",
+  "create.purpose.ai.title": "AIに定期的に仕事をしてもらう",
+  "create.purpose.ai.description": "決まったタイミングで、アイデア出しや整理などをAIに任せます。",
+  "create.purpose.web.title": "Webを見ておいてもらう",
+  "create.purpose.web.description": "ページを定期的に確認し、価格や在庫などの変化を見つけます。",
+  "create.purpose.youtube.title": "YouTubeでおすすめ動画を探す",
+  "create.purpose.youtube.description": "テーマに合う新しいYouTube動画を定期的に探して、おすすめします。",
+  "create.purpose.youtube.note": "YouTubeの動画だけを探します。Web全体は探しません。",
+  "create.purpose.web.heading": "何を見ておいてもらいますか？",
+  "create.purpose.price.title": "商品価格をチェック",
+  "create.purpose.price.description": "商品ページを定期的に確認し、価格や内容が変わったら、何が変わったかをまとめてお知らせします。",
+  "create.purpose.backToWeb": "Webの用途を選び直す",
   "create.purpose.hotel.title": "ホテルの空室",
   "create.purpose.hotel.description": "希望の日に空室が出たらお知らせします。",
   "create.purpose.restock.title": "商品の再入荷",

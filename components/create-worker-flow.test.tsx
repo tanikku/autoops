@@ -9,10 +9,11 @@ import { renderToStaticMarkup } from "react-dom/server";
  */
 
 vi.mock("@/auth", () => ({ auth: vi.fn(), signIn: vi.fn(), signOut: vi.fn() }));
-vi.mock("@/app/dashboard/new/actions", () => ({
+const actions = vi.hoisted(() => ({
   createRoutineAction: vi.fn(),
   generateWorkerDraftAction: vi.fn(),
 }));
+vi.mock("@/app/dashboard/new/actions", () => actions);
 vi.mock("@/components/notification/use-action-result", () => ({
   useActionResult: () => {},
 }));
@@ -47,25 +48,53 @@ function frequencyOptions(html: string): string[] {
   return [...select.matchAll(/value="([^"]+)"/g)].map((match) => match[1]);
 }
 
+/** The value of the hidden input with this name, or null when there is none. */
+function hidden(html: string, name: string): string | null {
+  return new RegExp(`<input type="hidden" name="${name}" value="([^"]*)"`).exec(html)?.[1] ?? null;
+}
+
+const TOP_LEVEL = [
+  "create.purpose.ai.title",
+  "create.purpose.web.title",
+  "create.purpose.youtube.title",
+  "create.purpose.free.title",
+] as const;
+
+const WEB_CHOICES = [
+  "create.purpose.price.title",
+  "create.purpose.hotel.title",
+  "create.purpose.restock.title",
+  "create.purpose.website.title",
+] as const;
+
 describe("the first screen", () => {
-  it.each(["ja", "en"])("asks what the person is waiting for, in %s", (language) => {
+  it.each(["ja", "en"])("asks what Koqentra should handle, with four cards, in %s", (language) => {
     const html = render(null, language);
 
     expect(html).toContain(t(language, "create.purpose.heading"));
-    for (const key of [
-      "create.purpose.hotel.title",
-      "create.purpose.restock.title",
-      "create.purpose.website.title",
-      "create.purpose.free.title",
-    ] as const) {
+    for (const key of TOP_LEVEL) {
       expect(html).toContain(t(language, key));
     }
   });
 
   /** Not "what are you waiting for": a worker also finds things and does AI work. */
-  it("asks what Koqentra should handle, not only what to watch", () => {
-    expect(render(null, "ja")).toContain("どんなことをKoqentraに任せますか？");
+  it("words the heading and the cards as the three kinds of work plus the builder", () => {
+    const html = render(null, "ja");
+
+    expect(html).toContain("どんなことをKoqentraに任せますか？");
+    expect(html).toContain("AIに定期的に仕事をしてもらう");
+    expect(html).toContain("Webを見ておいてもらう");
+    expect(html).toContain("YouTubeでおすすめ動画を探す");
+    expect(html).toContain("自由に作る");
     expect(render(null, "en")).toContain("What would you like Koqentra to handle?");
+  });
+
+  it("keeps the individual watches one level down", () => {
+    const html = render();
+
+    for (const key of WEB_CHOICES) {
+      expect(html).not.toContain(t("ja", key));
+    }
   });
 
   it("offers no price-drop or application card yet, and no form", () => {
@@ -78,6 +107,92 @@ describe("the first screen", () => {
 
   it("puts the AI draft away until the person builds their own", () => {
     expect(render()).not.toContain(t("ja", "worker.create.draftHeading"));
+  });
+
+  it("says the video search is YouTube's", () => {
+    expect(t("ja", "create.purpose.youtube.description")).toContain("YouTube");
+    expect(t("en", "create.purpose.youtube.description")).toContain("YouTube");
+  });
+});
+
+describe("watching a web page", () => {
+  it.each(["ja", "en"])("offers the four watches, price first, in %s", (language) => {
+    const html = render("web", language);
+
+    expect(html).toContain(t(language, "create.purpose.web.heading"));
+    // As rendered: an apostrophe comes out escaped.
+    const positions = WEB_CHOICES.map((key) =>
+      html.indexOf(t(language, key).replaceAll("'", "&#x27;")),
+    );
+    expect(positions.every((position) => position > -1)).toBe(true);
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+    expect(html).not.toContain("<form");
+  });
+
+  it("goes back to the first choice from here", () => {
+    expect(render("web")).toContain(t("ja", "create.purpose.back"));
+  });
+
+  it.each(["price", "hotel", "restock", "website"] as const)(
+    "goes back to the web choices from %s",
+    (purpose) => {
+      const html = render(purpose);
+
+      expect(html).toContain(t("ja", "create.purpose.backToWeb"));
+      expect(html).not.toContain(t("ja", "create.purpose.back"));
+    },
+  );
+});
+
+describe("checking a product's price", () => {
+  const html = render("price");
+
+  it("is the generic website form with the existing product-page example applied", () => {
+    expect(hidden(html, "kind")).toBe("website");
+    expect(html).toContain(`value="${t("ja", "template.productPage.name")}"`);
+    expect(html).toContain("この商品ページで変わったところを、簡潔に分かりやすくまとめてください。");
+    expect(html).toContain('name="websiteUrl"');
+  });
+
+  it("adds no condition, no template origin and no draft", () => {
+    expect(tag(html, "targetCondition")).not.toContain("value=");
+    expect(html).not.toContain('name="templateId"');
+    expect(html).not.toContain(t("ja", "worker.create.draftHeading"));
+  });
+});
+
+describe("recurring AI work", () => {
+  const html = render("ai");
+
+  it("is the generic prompt form with the existing idea example applied", () => {
+    expect(hidden(html, "kind")).toBe("prompt");
+    expect(html).toContain(`value="${t("ja", "template.ideaGenerator.name")}"`);
+    expect(html).toContain("下のテーマについて、新しいアイデアを5つ考えてください。");
+  });
+
+  it("drafts nothing, records no template origin, and shows no kind picker", () => {
+    expect(actions.generateWorkerDraftAction).not.toHaveBeenCalled();
+    expect(actions.createRoutineAction).not.toHaveBeenCalled();
+    expect(html).not.toContain('name="templateId"');
+    expect(html).not.toContain(t("ja", "worker.create.draftHeading"));
+    expect(html).not.toContain(t("ja", "worker.create.kindHeading"));
+  });
+});
+
+describe("finding YouTube videos", () => {
+  const html = render("youtube");
+
+  it("is the generic discovery form with the existing recommendation example applied", () => {
+    expect(hidden(html, "kind")).toBe("discovery");
+    expect(hidden(html, "discoverySource")).toBe("youtube");
+    expect(html).toContain(`value="${t("ja", "template.recommendationFinder.name")}"`);
+    expect(html).toContain('name="discoveryQuery"');
+    expect(html).not.toContain('name="templateId"');
+  });
+
+  it("says it searches YouTube only, not the whole web", () => {
+    expect(html).toContain(t("ja", "create.purpose.youtube.note"));
+    expect(t("ja", "create.purpose.youtube.note")).toContain("YouTube");
   });
 });
 
@@ -175,7 +290,8 @@ describe("other page changes", () => {
   const html = render("website");
 
   it("is the website form on its own", () => {
-    expect(html).toContain('<input type="hidden" name="kind" value="website"/>');
+    expect(hidden(html, "kind")).toBe("website");
+    expect(tag(html, "name")).not.toContain("value=");
     expect(html).toContain('name="websiteUrl"');
     expect(html).toContain('name="targetCondition"');
     expect(html).not.toContain(t("ja", "worker.create.draftHeading"));

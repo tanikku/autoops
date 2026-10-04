@@ -34,7 +34,11 @@ import {
 import type { WorkerDraft } from "@/lib/ai/worker-draft";
 import { t, type TranslationKey } from "@/lib/i18n";
 import { minutesToTimeValue } from "@/lib/worker-input";
-import { templatesOfKind, type WorkerTemplate } from "@/lib/worker-templates";
+import {
+  templatesOfKind,
+  type WorkerTemplate,
+  workerTemplates,
+} from "@/lib/worker-templates";
 import { isRoutineStatus, type RoutineKind, type RoutineStatus } from "@/types";
 
 /**
@@ -113,6 +117,7 @@ export function RoutineForm({
   language,
   emailEntitlement,
   mode = "free",
+  initialTemplateId,
 }: {
   timezone: string;
   /**
@@ -128,16 +133,23 @@ export function RoutineForm({
   emailEntitlement?: EmailEntitlement;
   /**
    * `free` is the whole form: the draft, the kind, the examples and the fields.
-   * `website` is the same fields for a page watcher and nothing above them —
-   * the purpose was already chosen, so there is no kind left to ask about.
+   * A kind is the same fields for that kind and nothing above them — the
+   * purpose was already chosen, so there is no kind left to ask about.
    */
-  mode?: "free" | "website";
+  mode?: "free" | RoutineKind;
+  /**
+   * An existing example to start from, applied exactly as choosing it from the
+   * list would: it fills the fields and nothing more — no request is made.
+   */
+  initialTemplateId?: string;
 }) {
+  const initialTemplate =
+    workerTemplates.find((item) => item.id === initialTemplateId) ?? null;
   const [state, formAction] = useActionState<CreateRoutineState, FormData>(
     createRoutineAction,
     null,
   );
-  const [template, setTemplate] = useState<WorkerTemplate | null>(null);
+  const [template, setTemplate] = useState<WorkerTemplate | null>(initialTemplate);
 
   // **Held here rather than left to the form, because two things read it**: the
   // fields, which show an address box for one kind and not the other, and the
@@ -149,18 +161,24 @@ export function RoutineForm({
   //
   // Deliberately not part of the form's `key`: switching kind should change
   // which fields are on screen, not empty the ones already filled in.
-  const [kind, setKind] = useState<RoutineKind>(mode === "website" ? "website" : "prompt");
+  const [kind, setKind] = useState<RoutineKind>(
+    mode === "free" ? (initialTemplate?.kind ?? "prompt") : mode,
+  );
 
   // **One box, whatever filled it.** A template and an applied draft both want
   // the same fields, so they share the state that holds them: applying either
   // replaces the other, and "the last one wins" needs no rule of its own.
   // Submitting clears it so the action's result takes over.
-  const [injected, setInjected] = useState<InjectedValues | null>(null);
+  const [injected, setInjected] = useState<InjectedValues | null>(() =>
+    initialTemplate
+      ? injectTemplate(initialTemplate, language, injectionToken("template", 0))
+      : null,
+  );
 
   // What separates one application from the next. Applying the same template
   // twice has to fill the fields twice, and a token built from its id alone
   // would leave the second press changing nothing.
-  const [injections, setInjections] = useState(0);
+  const [injections, setInjections] = useState(initialTemplate ? 1 : 0);
 
   // Bumped on every submit so the form remounts with the result. `defaultValue`
   // is read once at initialisation; feeding rejected input back through it on
@@ -455,7 +473,7 @@ export function RoutineForm({
         }}
         className="mt-8 flex max-w-2xl flex-col gap-6"
       >
-        {mode === "website" ? <input type="hidden" name="kind" value="website" /> : null}
+        {mode !== "free" ? <input type="hidden" name="kind" value={mode} /> : null}
         {/* **`websiteUrlNote` is the same slot the edit form uses, saying the
             other half of the story.** Both notes are about the watched address
             and the state kept for it: editing says that moving the address
