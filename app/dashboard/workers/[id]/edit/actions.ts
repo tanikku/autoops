@@ -250,6 +250,12 @@ export async function updateRoutineAction(
       }
     : {};
 
+  // **Email involved means the account's choice may move**: the switch is on
+  // in the form or on the stored worker. Only then does the save take the
+  // account lock, decide, and write the switch — see below.
+  const emailInvolved =
+    input.emailNotificationsEnabled || existing.emailNotificationsEnabled;
+
   const update: Partial<RoutineInput> = {
     name: input.name,
     description: input.description,
@@ -259,10 +265,16 @@ export async function updateRoutineAction(
     runAtMinutes,
     runAtWeekday,
     runAtDay,
-    // **Written on every save, in both directions.** A checkbox that is not
-    // ticked submits nothing, so leaving the field out of the update when it
-    // reads false would make turning notifications off impossible.
-    emailNotificationsEnabled: input.emailNotificationsEnabled,
+    // **Written only by a save that involves email, in both directions.** An
+    // edit that leaves an off switch off writes nothing to it: a switch another
+    // save turned on under the account lock while this form was open must not
+    // be put back to the off this form was rendered with. Turning it off is
+    // still written, because a switch being turned off was on — which makes
+    // the save involve email. Every write of this column therefore happens
+    // under the account lock, beside the choice it has to agree with.
+    ...(emailInvolved
+      ? { emailNotificationsEnabled: input.emailNotificationsEnabled }
+      : {}),
     ...scheduleUpdate,
   };
 
@@ -344,11 +356,7 @@ export async function updateRoutineAction(
     return decision.plan;
   };
 
-  // **Email involved means the account's choice may move**: the switch is on
-  // in the form or on the stored worker. Only then does the save take the
-  // account lock and decide — every other edit stays the single write it was.
-  const emailInvolved =
-    input.emailNotificationsEnabled || existing.emailNotificationsEnabled;
+  // Every other edit stays the single write it was, without the switch.
   const KEEP: EmailSelectionPlan = { kind: "keep" };
   let saved;
   try {

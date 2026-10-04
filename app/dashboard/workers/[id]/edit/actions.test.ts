@@ -1745,3 +1745,84 @@ describe("updateRoutineAction — the one emailing worker", () => {
     expect(mocks.findSubscription).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * An ordinary edit racing a save that makes this worker the emailing one.
+ *
+ * **The edit read the worker with its switch off; by the time it writes, the
+ * switch is on and the account has chosen it.** An edit that leaves the switch
+ * as it found it must not write the old value back — otherwise the account
+ * would be left pointing at a worker whose email is off.
+ */
+describe("updateRoutineAction — an edit racing the email choice", () => {
+  function race() {
+    const worker = { ...stored(), emailNotificationsEnabled: false };
+    const account = { notificationWorkerId: null as string | null };
+
+    mocks.getRoutineForEdit.mockImplementation(async () => {
+      const seen = { ...worker };
+      // The other save commits between this read and the write below.
+      worker.emailNotificationsEnabled = true;
+      account.notificationWorkerId = "worker-1";
+      return seen;
+    });
+    mocks.updateRoutine.mockImplementation(async (_id: string, update: object) => {
+      Object.assign(worker, update);
+      return { ...worker };
+    });
+
+    return { worker, account };
+  }
+
+  it("does not put a switch another save turned on back to off", async () => {
+    const { worker, account } = race();
+
+    const result = await save(form({ name: "Renamed", status: "draft", frequency: "manual" }));
+
+    expect(result?.status).toBe("success");
+    expect(worker.name).toBe("Renamed");
+    expect(worker.emailNotificationsEnabled).toBe(true);
+    expect(account.notificationWorkerId).toBe("worker-1");
+  });
+
+  it("writes no email switch at all for an edit that leaves it off", async () => {
+    await save(form({ name: "Renamed", status: "draft", frequency: "manual" }));
+
+    const [, update] = mocks.updateRoutine.mock.calls[0];
+    expect(update).not.toHaveProperty("emailNotificationsEnabled");
+  });
+
+  /** Switching the chosen worker off is still written, with the choice, at once. */
+  it("still switches the chosen worker off and clears the choice in one transaction", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(stored({ emailNotificationsEnabled: true }));
+    mocks.findSubscription.mockResolvedValue({
+      userId: "google-sub-1",
+      plan: "lite",
+      state: "active",
+      trialStartedAt: null,
+      trialEndsAt: null,
+      trialConsumedAt: null,
+      trialForfeitedAt: null,
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+      notificationWorkerId: "worker-1",
+      source: "stripe",
+      expiresAt: null,
+    });
+    emailChoice.clearChosen.mockReset().mockResolvedValue({ count: 1 });
+
+    await save(form({ status: "draft", frequency: "manual" }));
+
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.updateRoutine).toHaveBeenCalledWith(
+      "worker-1",
+      expect.objectContaining({ emailNotificationsEnabled: false }),
+      "google-sub-1",
+      TX,
+    );
+    expect(emailChoice.clearChosen).toHaveBeenCalledWith({
+      where: { userId: "google-sub-1", notificationWorkerId: "worker-1" },
+      data: { notificationWorkerId: null },
+    });
+  });
+});

@@ -16,6 +16,12 @@ import type { DbClient } from "@/lib/prisma";
  * there is never a moment with two chosen workers, or a chosen worker with its
  * email switched off.
  *
+ * **That holds because every write of a worker's email switch is one of these
+ * locked saves**: a hire, an edit that involves email, a switch, a delete. An
+ * edit that leaves an off switch off does not write the switch at all (see
+ * the edit action), so a form opened before another save chose this worker
+ * cannot put its switch back off behind the lock's back.
+ *
  * **Nothing here is chosen behind anybody's back.** The first worker switched
  * on becomes the chosen one when nobody is; moving the choice to another worker
  * needs the owner to say so; switching the chosen worker off, or deleting it,
