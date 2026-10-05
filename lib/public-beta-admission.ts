@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@/lib/generated/prisma/client";
 import {
+  type AccessMode,
   type PublicBetaSignup,
   SIGNUP_CLOSED_PATH,
   SIGNUP_FULL_PATH,
@@ -62,20 +63,26 @@ export async function isKnownSubject(client: PrismaClient, userId: string): Prom
 }
 
 /**
- * The Public Beta answer to a sign-in: `true`, `false`, or where to send a new
- * participant who cannot be taken in.
+ * The answer to a sign-in: `true`, `false`, or where to send a new participant
+ * the Public Beta cannot take in.
  *
- * In order, and the order is the point:
+ * In order:
  *
- * 1. A verified Google address is required of everybody.
+ * 1. A verified Google address and a subject are required, as every sign-in
+ *    has always required a verified address.
  * 2. An address on the internal allowlist is let in without taking a place.
- * 3. Somebody with an account or a place already is let in, however full the
- *    beta is — the cap never locks out an existing user.
- * 4. Only then is a new participant considered: refused while signup is
- *    closed, otherwise admitted if a place is left.
+ * 3. Somebody with an account or a place already is let in, in either mode and
+ *    however full the beta is — neither the mode nor the cap locks out an
+ *    existing user.
+ * 4. Anybody else is refused in Closed Beta. In Public Beta they are refused
+ *    while signup is closed, and otherwise admitted if a place is left.
+ *
+ * The allowlist is looked at before the database only because it needs no
+ * query; an address on it would be let in either way.
  */
-export async function decidePublicBetaSignIn(
+export async function decideSignIn(
   input: {
+    mode: AccessMode;
     profile: { email?: string | null; email_verified?: boolean | null } | undefined;
     userId: string | undefined;
     allowlist: Set<string>;
@@ -86,7 +93,7 @@ export async function decidePublicBetaSignIn(
     admit: (userId: string, limit: number) => Promise<AdmissionOutcome>;
   },
 ): Promise<boolean | string> {
-  const { profile, userId, allowlist, signup } = input;
+  const { mode, profile, userId, allowlist, signup } = input;
 
   if (!profile || profile.email_verified !== true || !userId) {
     return false;
@@ -101,26 +108,13 @@ export async function decidePublicBetaSignIn(
     return true;
   }
 
-  if (!signup.enabled) {
+  if (mode !== "public-beta") {
+    return false;
+  }
+
+  if (!signup.enabled || signup.limit <= 0) {
     return SIGNUP_CLOSED_PATH;
   }
 
   return (await deps.admit(userId, signup.limit)) === "admitted" ? true : SIGNUP_FULL_PATH;
 }
-
-/**
- * One line an operator can read: how many places are taken out of how many,
- * and whether new participants are taken in at all. Counts only — nobody is
- * named.
- */
-export function describePublicBetaAdmissions(input: {
-  admitted: number;
-  mode: "closed-beta" | "public-beta";
-  signup: PublicBetaSignup;
-}): string {
-  const { admitted, mode, signup } = input;
-  const open = mode === "public-beta" && signup.enabled;
-
-  return `public-beta admissions: ${admitted} / ${signup.limit} (mode=${mode}, signup=${open ? "open" : "closed"})`;
-}
-

@@ -4,14 +4,14 @@ import { readFileSync } from "node:fs";
 /**
  * Which sign-in rule `auth.ts` runs, chosen by the mode it was started in.
  *
- * `next-auth` is replaced to capture the configuration; the database and the
- * admission are replaced so a Closed Beta sign-in can be shown never to reach
- * them. The environment is read when the module loads, so each case loads it
- * fresh.
+ * `next-auth` is replaced to capture the configuration, and the decision is
+ * replaced to see what it is handed. The decision itself is `lib/public-beta-admission.test.ts`'s; this
+ * fixes what it is given. The environment is read when the module loads, so
+ * each case loads it fresh.
  */
 
 const mocks = vi.hoisted(() => ({
-  config: null as null | { callbacks: { signIn: (args: unknown) => unknown } },
+  config: null as null | { callbacks: { signIn: (args: unknown) => Promise<unknown> | unknown } },
   decide: vi.fn(),
   isKnown: vi.fn(),
   admit: vi.fn(),
@@ -26,7 +26,7 @@ vi.mock("next-auth", () => ({
 vi.mock("next-auth/providers/google", () => ({ default: {} }));
 vi.mock("@/lib/prisma", () => ({ prisma: { tag: "prisma" } }));
 vi.mock("@/lib/public-beta-admission", () => ({
-  decidePublicBetaSignIn: mocks.decide,
+  decideSignIn: mocks.decide,
   isKnownSubject: mocks.isKnown,
   admitToPublicBeta: mocks.admit,
 }));
@@ -52,7 +52,6 @@ async function load(env: Partial<Record<(typeof ENV_KEYS)[number], string>>) {
   return mocks.config!.callbacks.signIn;
 }
 
-const invited = { profile: { email: "qa@example.com", email_verified: true }, account: { providerAccountId: "sub-qa" } };
 const stranger = { profile: { email: "new@example.com", email_verified: true }, account: { providerAccountId: "sub-new" } };
 
 beforeEach(() => {
@@ -67,27 +66,21 @@ afterEach(() => {
   }
 });
 
-describe("Closed Beta, which is what an unset mode means", () => {
-  it.each([undefined, "closed-beta", "public_beta"])(
-    "keeps the allowlist rule for mode %o, reading nothing from the database",
-    async (mode) => {
-      const signIn = await load({ AUTH_ACCESS_MODE: mode, BETA_ALLOWED_EMAILS: "qa@example.com" });
+describe("the mode the decision is given", () => {
+  it.each([
+    [undefined, "closed-beta"],
+    ["closed-beta", "closed-beta"],
+    ["public_beta", "closed-beta"],
+    ["public-beta", "public-beta"],
+  ])("passes mode %o on as %s", async (mode, expected) => {
+    const signIn = await load({ AUTH_ACCESS_MODE: mode, BETA_ALLOWED_EMAILS: "qa@example.com" });
 
-      expect(signIn(invited)).toBe(true);
-      expect(signIn(stranger)).toBe(false);
-      expect(mocks.decide).not.toHaveBeenCalled();
-    },
-  );
+    await signIn(stranger);
 
-  it("still refuses everybody when the allowlist is empty", async () => {
-    const signIn = await load({});
-
-    expect(signIn(invited)).toBe(false);
+    expect(mocks.decide.mock.calls[0][0].mode).toBe(expected);
   });
-});
 
-describe("Public Beta", () => {
-  it("hands the decision to the admission rule with the subject, list and cap", async () => {
+  it("hands over the subject, the list and the cap", async () => {
     const signIn = await load({
       AUTH_ACCESS_MODE: "public-beta",
       PUBLIC_BETA_SIGNUP_ENABLED: "true",
@@ -116,6 +109,13 @@ describe("Public Beta", () => {
     await signIn(stranger);
 
     expect(mocks.decide.mock.calls[0][0].signup).toEqual({ enabled: false, limit: 0 });
+  });
+
+  it("returns the decision's answer as the sign-in's", async () => {
+    mocks.decide.mockResolvedValue("/?signup=full");
+    const signIn = await load({ AUTH_ACCESS_MODE: "public-beta" });
+
+    expect(await signIn(stranger)).toBe("/?signup=full");
   });
 });
 

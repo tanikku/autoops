@@ -5,13 +5,10 @@ import {
   SIGNUP_CLOSED_PATH,
   SIGNUP_FULL_PATH,
 } from "@/lib/beta-access";
-import {
-  decidePublicBetaSignIn,
-  describePublicBetaAdmissions,
-} from "@/lib/public-beta-admission";
+import { decideSignIn } from "@/lib/public-beta-admission";
 
 /**
- * Who the Public Beta lets in, decided in a fixed order.
+ * Who may sign in, decided in a fixed order in either mode.
  *
  * The database is behind two functions here — whether a subject is already
  * known, and the locked admission — so the order can be fixed exactly. That the
@@ -29,11 +26,12 @@ function deps(overrides: { known?: boolean; admit?: "admitted" | "full" } = {}) 
 }
 
 function decide(
-  input: Partial<Parameters<typeof decidePublicBetaSignIn>[0]>,
+  input: Partial<Parameters<typeof decideSignIn>[0]>,
   d: ReturnType<typeof deps>,
 ) {
-  return decidePublicBetaSignIn(
+  return decideSignIn(
     {
+      mode: "public-beta",
       profile: VERIFIED,
       userId: "google-sub-new",
       allowlist: new Set(),
@@ -77,13 +75,16 @@ describe("reading the signup switch and cap", () => {
   );
 });
 
-describe("deciding a Public Beta sign-in", () => {
-  it("refuses an unverified address, even one already known", async () => {
+describe("deciding a sign-in", () => {
+  const CLOSED_BETA = { mode: "closed-beta" as const };
+  const SIGNUP_OFF = { signup: { enabled: false, limit: 10 } };
+
+  it("refuses an unverified address, even one already known, as every sign-in always has", async () => {
     const d = deps({ known: true });
 
     expect(await decide({ profile: { email: "new@example.com", email_verified: false } }, d)).toBe(false);
     expect(await decide({ profile: undefined }, d)).toBe(false);
-    expect(d.isKnown).not.toHaveBeenCalled();
+    expect(await decide({ ...CLOSED_BETA, profile: { email: "new@example.com", email_verified: false } }, d)).toBe(false);
     expect(d.admit).not.toHaveBeenCalled();
   });
 
@@ -94,56 +95,100 @@ describe("deciding a Public Beta sign-in", () => {
     expect(d.admit).not.toHaveBeenCalled();
   });
 
-  it("lets an allowlisted address in without taking a place", async () => {
-    const d = deps({ admit: "full" });
+  describe("in Closed Beta", () => {
+    it("1: lets an existing user in", async () => {
+      const d = deps({ known: true });
 
-    expect(
-      await decide({ profile: { email: "QA@Example.com ", email_verified: true }, allowlist: new Set(["qa@example.com"]) }, d),
-    ).toBe(true);
-    expect(d.isKnown).not.toHaveBeenCalled();
-    expect(d.admit).not.toHaveBeenCalled();
+      expect(await decide({ ...CLOSED_BETA }, d)).toBe(true);
+      expect(d.isKnown).toHaveBeenCalledWith("google-sub-new");
+      expect(d.admit).not.toHaveBeenCalled();
+    });
+
+    it("2: lets an admitted participant in", async () => {
+      // `isKnown` answers yes for an account or a place already taken.
+      const d = deps({ known: true });
+
+      expect(await decide({ ...CLOSED_BETA, signup: { enabled: false, limit: 0 } }, d)).toBe(true);
+      expect(d.admit).not.toHaveBeenCalled();
+    });
+
+    it("3: refuses a new address that is not on the allowlist, taking no place", async () => {
+      const d = deps({ known: false });
+
+      expect(await decide({ ...CLOSED_BETA }, d)).toBe(false);
+      expect(d.admit).not.toHaveBeenCalled();
+    });
+
+    it("4: lets an allowlisted address in without taking a place", async () => {
+      const d = deps({ known: false });
+
+      expect(
+        await decide({ ...CLOSED_BETA, profile: { email: "QA@Example.com ", email_verified: true }, allowlist: new Set(["qa@example.com"]) }, d),
+      ).toBe(true);
+      expect(d.admit).not.toHaveBeenCalled();
+    });
   });
 
-  it("lets an existing user in at the cap, and while signup is closed", async () => {
-    const d = deps({ known: true, admit: "full" });
+  describe("in Public Beta", () => {
+    it("5: lets an existing user in while signup is disabled", async () => {
+      const d = deps({ known: true });
 
-    expect(await decide({}, d)).toBe(true);
-    expect(await decide({ signup: { enabled: false, limit: 0 } }, d)).toBe(true);
-    expect(d.isKnown).toHaveBeenCalledWith("google-sub-new");
-    expect(d.admit).not.toHaveBeenCalled();
-  });
+      expect(await decide({ ...SIGNUP_OFF }, d)).toBe(true);
+      expect(d.admit).not.toHaveBeenCalled();
+    });
 
-  it("admits a new verified user while a place is left", async () => {
-    const d = deps({ admit: "admitted" });
+    it("6: lets an admitted participant in while signup is disabled", async () => {
+      const d = deps({ known: true });
 
-    expect(await decide({}, d)).toBe(true);
-    expect(d.admit).toHaveBeenCalledWith("google-sub-new", 10);
-  });
+      expect(await decide({ signup: { enabled: false, limit: 0 } }, d)).toBe(true);
+      expect(d.admit).not.toHaveBeenCalled();
+    });
 
-  it("sends a new user to the full notice at the cap", async () => {
-    expect(await decide({}, deps({ admit: "full" }))).toBe(SIGNUP_FULL_PATH);
-  });
+    it("7: refuses a new user at the cap, and still lets known users in", async () => {
+      expect(await decide({}, deps({ known: false, admit: "full" }))).toBe(SIGNUP_FULL_PATH);
+      expect(await decide({}, deps({ known: true, admit: "full" }))).toBe(true);
+      expect(
+        await decide({ allowlist: new Set(["new@example.com"]) }, deps({ known: false, admit: "full" })),
+      ).toBe(true);
+    });
 
-  it("sends a new user to the closed notice while signup is closed, taking nothing", async () => {
-    const d = deps();
+    it.each([
+      ["a missing switch", {}],
+      ["a misspelt switch", { PUBLIC_BETA_SIGNUP_ENABLED: "yes", PUBLIC_BETA_SIGNUP_LIMIT: "10" }],
+      ["a malformed limit", { PUBLIC_BETA_SIGNUP_ENABLED: "true", PUBLIC_BETA_SIGNUP_LIMIT: "ten" }],
+      ["a zero limit", { PUBLIC_BETA_SIGNUP_ENABLED: "true", PUBLIC_BETA_SIGNUP_LIMIT: "0" }],
+      ["a negative limit", { PUBLIC_BETA_SIGNUP_ENABLED: "true", PUBLIC_BETA_SIGNUP_LIMIT: "-5" }],
+    ])("8: refuses a new user with %s, taking nothing", async (_label, env) => {
+      const d = deps({ known: false });
 
-    expect(await decide({ signup: { enabled: false, limit: 10 } }, d)).toBe(SIGNUP_CLOSED_PATH);
-    expect(d.admit).not.toHaveBeenCalled();
+      expect(await decide({ signup: readPublicBetaSignup(env) }, d)).toBe(SIGNUP_CLOSED_PATH);
+      expect(d.admit).not.toHaveBeenCalled();
+    });
+
+    it("8: refuses a new user when the mode itself is unreadable", async () => {
+      const d = deps({ known: false });
+
+      expect(await decide({ mode: readAccessMode("public_beta") }, d)).toBe(false);
+      expect(d.admit).not.toHaveBeenCalled();
+    });
+
+    it("8: still lets known users in whatever the settings say", async () => {
+      const d = deps({ known: true });
+
+      expect(await decide({ signup: readPublicBetaSignup({ PUBLIC_BETA_SIGNUP_LIMIT: "ten" }) }, d)).toBe(true);
+      expect(await decide({ mode: readAccessMode("garbage") }, d)).toBe(true);
+    });
+
+    it("admits a new verified user while a place is left", async () => {
+      const d = deps({ admit: "admitted" });
+
+      expect(await decide({}, d)).toBe(true);
+      expect(d.admit).toHaveBeenCalledWith("google-sub-new", 10);
+    });
   });
 
   it("says only full or closed, nothing about the account", () => {
     expect(SIGNUP_FULL_PATH).toBe("/?signup=full");
     expect(SIGNUP_CLOSED_PATH).toBe("/?signup=closed");
-  });
-});
-
-describe("the operator's count", () => {
-  it("names how many places are taken and whether signup is open", () => {
-    expect(
-      describePublicBetaAdmissions({ admitted: 7, mode: "public-beta", signup: OPEN }),
-    ).toBe("public-beta admissions: 7 / 10 (mode=public-beta, signup=open)");
-    expect(
-      describePublicBetaAdmissions({ admitted: 0, mode: "closed-beta", signup: OPEN }),
-    ).toBe("public-beta admissions: 0 / 10 (mode=closed-beta, signup=closed)");
   });
 });

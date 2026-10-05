@@ -1,7 +1,6 @@
 import NextAuth from "next-auth";
 import { authConfig } from "@/auth.config";
 import {
-  isBetaSignInAllowed,
   parseBetaAllowlist,
   readAccessMode,
   readPublicBetaSignup,
@@ -9,7 +8,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import {
   admitToPublicBeta,
-  decidePublicBetaSignIn,
+  decideSignIn,
   isKnownSubject,
 } from "@/lib/public-beta-admission";
 
@@ -40,13 +39,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     /**
      * Who may sign in.
      *
-     * **Closed Beta is exactly what it was**: the allowlist, and nothing read
-     * from the database.
-     *
-     * **Public Beta lets a verified Google account in** — an existing one
-     * always, a new one while a place is left (see `decidePublicBetaSignIn`).
-     * A new participant who cannot be taken in is sent back to the landing
-     * page with only `signup=full` or `signup=closed`.
+     * **An existing user is let in in either mode** — an allowlisted address,
+     * an account, or a Public Beta place already taken. Somebody new is
+     * refused in Closed Beta, and in Public Beta is admitted while a place is
+     * left (see `decideSignIn`). A new participant who cannot be taken in is
+     * sent back to the landing page with only `signup=full` or `signup=closed`.
      *
      * **Refusing here is refusing before anything exists.** Returning false or
      * a path stops the flow ahead of `jwt`, so no token is minted, no session
@@ -58,13 +55,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
      * then be storing, and the person it concerns already learns the outcome
      * from the page they land on.
      */
-    signIn: ({ profile, account }) => {
-      if (accessMode === "closed-beta") {
-        return isBetaSignInAllowed(profile, betaAllowlist);
-      }
-
-      return decidePublicBetaSignIn(
+    signIn: ({ profile, account }) =>
+      decideSignIn(
         {
+          mode: accessMode,
           profile,
           userId: account?.providerAccountId,
           allowlist: betaAllowlist,
@@ -74,7 +68,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           isKnown: (userId) => isKnownSubject(prisma, userId),
           admit: (userId, limit) => admitToPublicBeta(prisma, userId, limit),
         },
-      );
-    },
+      ),
   },
 });
