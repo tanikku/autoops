@@ -1690,7 +1690,7 @@ Notes for the report:
     "How many times you can run a worker by hand. Scheduled runs do not use this allowance.",
   "pricing.allowanceGuide.discovery.title": "Recommendation runs",
   "pricing.allowanceGuide.discovery.body":
-    "How many times a \"Find recommendations\" worker can run. Running one by hand also uses a manual run, and choosing among new candidates with AI also uses AI processing.",
+    "The number of times you can run a Worker that finds recommended videos on YouTube. Running one by hand also uses a manual run, and choosing among new candidates with AI also uses AI processing.",
   "pricing.legal.terms": "Terms of Service",
   "pricing.legal.notice": "Legal notice (特定商取引法に基づく表記)",
   "pricing.trialPurchaseNotice":

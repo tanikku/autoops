@@ -1444,3 +1444,23 @@ describe("the purchase terms handed to each button", () => {
     expect(purchaseOf(0).trialNotice).toBeNull();
   });
 });
+
+/**
+ * The discovery allowance is explained as what it is today: runs of a worker
+ * that finds YouTube videos — not a search of the whole web.
+ */
+describe("the discovery allowance explanation", () => {
+  it.each([
+    ["en", "The number of times you can run a Worker that finds recommended videos on YouTube."],
+    ["ja", "YouTubeでおすすめ動画を探すWorkerを実行できる回数です。"],
+  ])("names YouTube, in %s", async (language, sentence) => {
+    mocks.getUserLanguage.mockResolvedValue(language);
+    mocks.getDocumentLanguage.mockResolvedValue(language);
+
+    const html = await render();
+
+    expect(html).toContain(sentence);
+    expect(html).not.toContain("おすすめを探す』");
+    expect(html).not.toContain("Find recommendations");
+  });
+});

@@ -931,7 +931,7 @@ export const ja: Record<TranslationKey, string> = {
     "Workerを手動で実行できる回数です。定期実行による実行はこの枠には含みません。",
   "pricing.allowanceGuide.discovery.title": "おすすめ探し",
   "pricing.allowanceGuide.discovery.body":
-    "『おすすめを探す』Workerを実行できる回数です。手動実行した場合は『手動実行』の枠も使用します。また、新しい候補についてAIによる選定を行った場合は『AI処理』の枠も使用します。",
+    "YouTubeでおすすめ動画を探すWorkerを実行できる回数です。手動実行した場合は『手動実行』の枠も使用します。また、新しい候補についてAIによる選定を行った場合は『AI処理』の枠も使用します。",
   "pricing.legal.terms": "利用規約",
   "pricing.legal.notice": "特定商取引法に基づく表記",
   "pricing.trialPurchaseNotice":
