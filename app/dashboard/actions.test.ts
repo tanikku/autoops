@@ -1352,7 +1352,7 @@ describe("runRoutineAction — counting the run against the month", () => {
     expect(await runRoutineAction(null, form("worker-1"))).toEqual({
       status: "error",
       message:
-        "You've reached this period's recommendation run limit. Check Plans for your allowance.",
+        "You've reached this period's YouTube recommendation run limit. Check Plans for your allowance.",
     });
   });
 });

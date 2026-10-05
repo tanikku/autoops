@@ -118,7 +118,7 @@ export const ja: Record<TranslationKey, string> = {
   "worker.kind.prompt": "プロンプト",
   "worker.kind.website": "Web ページ監視",
   /** 内部名は discovery。利用者が受け取るのは「おすすめ」なので、そう呼ぶ。 */
-  "worker.kind.discovery": "おすすめ探し",
+  "worker.kind.discovery": "YouTubeおすすめ探し",
   "worker.kind.promptOption": "AI に依頼する",
   "worker.kind.promptOptionDescription":
     "スケジュールに沿って、あなたの指示を AI に送ります。",
@@ -710,7 +710,7 @@ export const ja: Record<TranslationKey, string> = {
   "run.action.manualRunLimitReached":
     "この期間の手動実行の上限に達しました。Plansで利用枠を確認してください。",
   "run.action.discoveryLimitReached":
-    "この期間のおすすめ探しの上限に達しました。Plansで利用枠を確認してください。",
+    "この期間のYouTubeおすすめ探しの上限に達しました。Plansで利用枠を確認してください。",
   "ai.allowance.exhausted":
     "AI 処理の利用上限に達しました。Plansで利用枠を確認してください。",
   "ai.allowance.unavailable":
@@ -720,7 +720,7 @@ export const ja: Record<TranslationKey, string> = {
   "run.action.rateLimited":
     "手動実行の利用上限に達しました。しばらくしてからもう一度お試しください。",
   "run.action.discoveryRateLimited":
-    "おすすめ探しの利用上限に達しました。しばらくしてからもう一度お試しください。",
+    "YouTubeおすすめ探しの利用上限に達しました。しばらくしてからもう一度お試しください。",
   "run.action.couldNotStart":
     "「{name}」を開始できませんでした。しばらくしてからもう一度お試しください。",
   "run.action.outcomeNotRecorded":
@@ -794,7 +794,7 @@ export const ja: Record<TranslationKey, string> = {
   "trial.usage.aiProcessing": "AI処理",
   "trial.usage.activeWorkers": "同時に稼働できるWorker数",
   "trial.usage.manualRun": "手動実行",
-  "trial.usage.discovery": "おすすめ探し",
+  "trial.usage.discovery": "YouTubeおすすめ探し",
   "trial.status.approaching": "上限に近づいています",
   "trial.status.reached": "上限に達しています",
   "trial.status.over": "上限を超えています",
@@ -853,7 +853,7 @@ export const ja: Record<TranslationKey, string> = {
   "pricing.allowance.activeWorkers": "同時に稼働できるWorker数 {limit} 件",
   "pricing.allowance.aiProcessing": "AI処理 月 {limit} 回",
   "pricing.allowance.manualRun": "手動実行 月 {limit} 回",
-  "pricing.allowance.discovery": "おすすめ探し 月 {limit} 回",
+  "pricing.allowance.discovery": "YouTubeおすすめ探し 月 {limit} 回",
   "pricing.allowance.emailOneWorker": "1 つの Worker からメール通知",
   "pricing.allowance.emailAllWorkers": "すべての Worker からメール通知",
   "pricing.allowance.historyDays": "実行履歴 {days} 日分",
@@ -925,11 +925,11 @@ export const ja: Record<TranslationKey, string> = {
     "同時に有効化できるWorkerの数です。停止中・下書きのWorkerは含みません。保存できるWorkerは合計20件までです。",
   "pricing.allowanceGuide.aiProcessing.title": "AI処理",
   "pricing.allowanceGuide.aiProcessing.body":
-    "AIへの生成・要約・分析などの依頼回数です。Workerの実行回数とは一致しません。Web監視は変化があった場合、おすすめ探しは新しい候補があった場合など、実際にAI処理が必要なときに消費します。Creatorなど一部の操作では、1回の操作で複数回分を使用する場合があります。",
+    "AIへの生成・要約・分析などの依頼回数です。Workerの実行回数とは一致しません。Web監視は変化があった場合、YouTubeおすすめ探しは新しい候補があった場合など、実際にAI処理が必要なときに消費します。Creatorなど一部の操作では、1回の操作で複数回分を使用する場合があります。",
   "pricing.allowanceGuide.manualRun.title": "手動実行",
   "pricing.allowanceGuide.manualRun.body":
     "Workerを手動で実行できる回数です。定期実行による実行はこの枠には含みません。",
-  "pricing.allowanceGuide.discovery.title": "おすすめ探し",
+  "pricing.allowanceGuide.discovery.title": "YouTubeおすすめ探し",
   "pricing.allowanceGuide.discovery.body":
     "YouTubeでおすすめ動画を探すWorkerを実行できる回数です。手動実行した場合は『手動実行』の枠も使用します。また、新しい候補についてAIによる選定を行った場合は『AI処理』の枠も使用します。",
   "pricing.legal.terms": "利用規約",

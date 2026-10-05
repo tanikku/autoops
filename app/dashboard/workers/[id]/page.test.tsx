@@ -829,7 +829,7 @@ describe("worker detail — a discovery worker", () => {
   });
 
   it("says what it is, in the words a worker that exists is described in", async () => {
-    expect(labelled(await render())["Worker type"]).toBe("Recommendations");
+    expect(labelled(await render())["Worker type"]).toBe("YouTube recommendations");
   });
 
   it("says where it looks, what it looks for and how many it keeps", async () => {
@@ -860,7 +860,7 @@ describe("worker detail — a discovery worker", () => {
 
     expect(shown).toContain("YouTube");
     expect(shown).toContain("探す場所");
-    expect(shown).toContain("おすすめ探し");
+    expect(shown).toContain("YouTubeおすすめ探し");
   });
 
   /** A stored source this version does not recognise is shown, not hidden. */

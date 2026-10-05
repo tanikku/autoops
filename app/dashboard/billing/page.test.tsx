@@ -175,7 +175,7 @@ describe("the three plans", () => {
     expect(html).toContain("Workers active at once: 2");
     expect(html).toContain("AI processing: 30 a month");
     expect(html).toContain("Manual runs: 20 a month");
-    expect(html).toContain("Recommendation runs: 10 a month");
+    expect(html).toContain("YouTube recommendation runs: 10 a month");
     expect(html).toContain("7 days of run history");
     expect(html).toContain("Email from one Worker");
     // Standard and Pro
@@ -1257,7 +1257,7 @@ describe("about your allowances", () => {
     const html = await render();
     const guide = html.slice(html.indexOf("利用枠について"));
 
-    const positions = ["同時に稼働できるWorker数", "AI処理", "手動実行", "おすすめ探し"].map(
+    const positions = ["同時に稼働できるWorker数", "AI処理", "手動実行", "YouTubeおすすめ探し"].map(
       (name) => guide.indexOf(`<dt class="font-medium">${name}</dt>`),
     );
     expect(positions.every((position) => position >= 0)).toBe(true);

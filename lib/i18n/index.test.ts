@@ -393,3 +393,33 @@ describe("what changing an address is said to cost", () => {
     }
   });
 });
+
+/**
+ * Every short name for a discovery worker says YouTube, which is all it
+ * searches — on its badge, the plan's allowance and its explanation, the trial
+ * usage and the limit messages — so none of them reads as a search of the web.
+ */
+describe("the discovery worker's short names", () => {
+  const keys: TranslationKey[] = [
+    "worker.kind.discovery",
+    "worker.kind.discoveryOption",
+    "trial.usage.discovery",
+    "pricing.allowance.discovery",
+    "pricing.allowanceGuide.discovery.title",
+    "pricing.allowanceGuide.discovery.body",
+    "pricing.allowanceGuide.aiProcessing.body",
+    "run.action.discoveryLimitReached",
+    "run.action.discoveryRateLimited",
+  ];
+
+  it.each(keys)("names YouTube in both languages: %s", (key) => {
+    expect(en[key]).toContain("YouTube");
+    expect(ja[key]).toContain("YouTube");
+  });
+
+  it("keeps the allowance figure in the plan label", () => {
+    expect(en["pricing.allowance.discovery"]).toContain("{limit}");
+    expect(ja["pricing.allowance.discovery"]).toContain("{limit}");
+  });
+});
+

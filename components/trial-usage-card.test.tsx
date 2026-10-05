@@ -101,11 +101,11 @@ describe("a trial in its ordinary state", () => {
       "Workers active at once",
       "AI processing",
       "Manual runs",
-      "Recommendation runs",
+      "YouTube recommendation runs",
     ]) {
       expect(en).toContain(name);
     }
-    for (const name of ["同時に稼働できるWorker数", "AI処理", "手動実行", "おすすめ探し"]) {
+    for (const name of ["同時に稼働できるWorker数", "AI処理", "手動実行", "YouTubeおすすめ探し"]) {
       expect(ja).toContain(name);
     }
     expect(ja).not.toContain("Discovery");
