@@ -138,7 +138,7 @@ const LEGAL_COPY = {
             <li>同時に稼働できるWorker数: {TRIAL.activeWorkerLimit}</li>
             <li>AI処理: {TRIAL.aiProcessingLimit}</li>
             <li>手動実行: {TRIAL.manualRunLimit}</li>
-            <li>おすすめ探し: {TRIAL.discoveryLimit}</li>
+            <li>YouTubeおすすめ探し: {TRIAL.discoveryLimit}</li>
           </ul>
           <p className="mt-2">
             トライアル期間中に有料プランを開始した場合、その時点でトライアルは終了し、残りのトライアル期間は持ち越されません。有料プランの利用枠は 0 から開始します。
@@ -236,7 +236,7 @@ const LEGAL_COPY = {
             <li>Workers active at once: {TRIAL.activeWorkerLimit}</li>
             <li>AI processing: {TRIAL.aiProcessingLimit}</li>
             <li>Manual runs: {TRIAL.manualRunLimit}</li>
-            <li>Recommendation runs: {TRIAL.discoveryLimit}</li>
+            <li>YouTube recommendation runs: {TRIAL.discoveryLimit}</li>
           </ul>
           <p className="mt-2">
             Starting a paid plan during the trial ends the trial at that point.

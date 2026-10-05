@@ -157,7 +157,8 @@ const PRIVACY_COPY = {
           <p>
             A worker is a name, an optional description, and a prompt. A worker
             that watches a page also holds the public address you gave it, and
-            one that finds recommendations holds the search terms you gave it.
+            one that finds recommended videos on YouTube holds the search terms
+            you gave it.
             You also choose a timezone for your account, which decides both how
             times are displayed and when scheduled workers run.
           </p>
@@ -197,7 +198,7 @@ const PRIVACY_COPY = {
           <p>
             The Claude API is also used to summarize a change found on a watched
             page (it receives the worker&rsquo;s instructions and the page&rsquo;s
-            text before and after the change), to choose among new recommendation candidates (it receives the
+            text before and after the change), to choose among new YouTube video candidates (it receives the
             search terms and the candidates found), and to draft a worker from
             your description (it receives the description you typed).
           </p>
@@ -364,7 +365,7 @@ const PRIVACY_COPY = {
       ),
     },
     webAccess: {
-      title: "Watching pages and finding recommendations",
+      title: "Watching pages and finding recommended YouTube videos",
       body: (
         <>
           <p>
@@ -374,7 +375,8 @@ const PRIVACY_COPY = {
             text so that the next run can tell whether it changed.
           </p>
           <p>
-            A worker that finds recommendations sends its search terms to the
+            A worker that finds recommended videos on YouTube sends its search
+            terms to the
             YouTube Data API, provided by Google, and stores which items it has
             already recommended so that it does not recommend them again.
           </p>
@@ -404,7 +406,7 @@ const PRIVACY_COPY = {
       title: "Services Koqentra relies on",
       body: (
         <ul className="list-disc pl-5">
-          <li>Google — sign-in, and searches for recommendation workers (YouTube Data API)</li>
+          <li>Google — sign-in, and searches for YouTube recommendation workers (YouTube Data API)</li>
           <li>Anthropic — AI processing through the Claude API</li>
           <li>Stripe — payments for paid plans</li>
           <li>Resend — sending email notifications</li>
@@ -588,7 +590,7 @@ const PRIVACY_COPY = {
       body: (
         <>
           <p>
-            ワーカーは、名前、任意の説明、プロンプトで構成されます。Webページを監視するワーカーは利用者が指定した公開アドレスを、おすすめを探すワーカーは利用者が指定した検索条件を保持します。アカウントのタイムゾーンも選択でき、これは時刻の表示方法と、スケジュール実行のタイミングの両方を決めます。
+            ワーカーは、名前、任意の説明、プロンプトで構成されます。Webページを監視するワーカーは利用者が指定した公開アドレスを、YouTubeでおすすめ動画を探すワーカーは利用者が指定した検索条件を保持します。アカウントのタイムゾーンも選択でき、これは時刻の表示方法と、スケジュール実行のタイミングの両方を決めます。
           </p>
           <p>
             Creatorへ送る内容は後の節で説明します。メールでお問い合わせいただいた場合は、その内容と送信元のアドレスを受け取ります。
@@ -617,7 +619,7 @@ const PRIVACY_COPY = {
             を展開したうえで）AnthropicのClaude APIへ送信され、結果が生成されます。Koqentraは再試行を行いません。失敗したリクエストは失敗として記録され、そのワーカーは次の実行機会を待ちます。
           </p>
           <p>
-            Claude APIは、監視しているWebページで見つかった変化の要約（ワーカーの指示と、変化の前後のページ本文が送信されます）、おすすめ探しの新しい候補からの選定（検索条件と見つかった候補が送信されます）、利用者の説明からのワーカーの下書き作成（入力した説明が送信されます）にも使用します。
+            Claude APIは、監視しているWebページで見つかった変化の要約（ワーカーの指示と、変化の前後のページ本文が送信されます）、YouTubeおすすめ探しの新しい候補からの選定（検索条件と見つかった候補が送信されます）、利用者の説明からのワーカーの下書き作成（入力した説明が送信されます）にも使用します。
           </p>
         </>
       ),
@@ -738,14 +740,14 @@ const PRIVACY_COPY = {
       ),
     },
     webAccess: {
-      title: "Webページの監視とおすすめ探し",
+      title: "Webページの監視とYouTubeおすすめ探し",
       body: (
         <>
           <p>
             Webページを監視するワーカーは、上記のCreatorと同様に、Koqentraのサーバー自身から、利用者が指定した公開アドレスへ通常のHTTPリクエストを送信します。次回の実行で変化があったかを判断するため、ページの本文を保存します。
           </p>
           <p>
-            おすすめを探すワーカーは、検索条件をGoogleが提供するYouTube Data APIへ送信します。同じものを繰り返しおすすめしないよう、すでにおすすめした項目を記録します。
+            YouTubeでおすすめ動画を探すワーカーは、検索条件をGoogleが提供するYouTube Data APIへ送信します。同じものを繰り返しおすすめしないよう、すでにおすすめした項目を記録します。
           </p>
         </>
       ),
@@ -768,7 +770,7 @@ const PRIVACY_COPY = {
       title: "利用している外部サービス",
       body: (
         <ul className="list-disc pl-5">
-          <li>Google — サインイン、およびおすすめ探しの検索（YouTube Data API）</li>
+          <li>Google — サインイン、およびYouTubeおすすめ探しの検索（YouTube Data API）</li>
           <li>Anthropic — Claude APIによるAI処理</li>
           <li>Stripe — 有料プランの決済</li>
           <li>Resend — メール通知の送信</li>

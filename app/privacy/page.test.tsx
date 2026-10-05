@@ -780,3 +780,32 @@ describe("choosing the language on the page", () => {
     expect(String(metadata.title)).toContain("プライバシー");
   });
 });
+
+/**
+ * The discovery worker is named as what it is — it finds YouTube videos — and
+ * what it sends where is described exactly as before.
+ */
+describe("the discovery worker's name", () => {
+  it("says YouTube, in English, and keeps where its searches go", async () => {
+    signedOut();
+    const body = await render();
+
+    expect(body).toContain("one that finds recommended videos on YouTube holds the search terms");
+    expect(body).toContain("Watching pages and finding recommended YouTube videos");
+    expect(body).toContain("searches for YouTube recommendation workers (YouTube Data API)");
+    expect(body).toContain("YouTube Data API, provided by Google");
+    expect(body).toContain("search terms and the candidates found");
+    expect(body).not.toContain("finds recommendations");
+  });
+
+  it("says YouTube, in Japanese, and keeps where its searches go", async () => {
+    signedInWith("user-1", "ja");
+    const body = await render();
+
+    expect(body).toContain("YouTubeでおすすめ動画を探すワーカーは利用者が指定した検索条件を保持します");
+    expect(body).toContain("Webページの監視とYouTubeおすすめ探し");
+    expect(body).toContain("検索条件をGoogleが提供するYouTube Data APIへ送信します");
+    expect(body).toContain("YouTubeおすすめ探しの新しい候補からの選定（検索条件と見つかった候補が送信されます）");
+    expect(body).not.toMatch(/(?<!YouTube)おすすめ探し|(?<!動画を)探すワーカー/);
+  });
+});

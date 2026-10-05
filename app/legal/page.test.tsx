@@ -103,7 +103,7 @@ describe("the Japanese notice", () => {
     expect(body).toContain("同時に稼働できるWorker数: 3");
     expect(body).toContain("AI処理: 30");
     expect(body).toContain("手動実行: 20");
-    expect(body).toContain("おすすめ探し: 14");
+    expect(body).toContain("YouTubeおすすめ探し: 14");
     expect(body).toContain("その時点でトライアルは終了");
     expect(body).toContain("持ち越されません");
     expect(body).toContain("0 から開始");

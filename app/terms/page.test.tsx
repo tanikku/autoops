@@ -80,7 +80,7 @@ describe("the Japanese terms", () => {
   it("names the four allowances and says reaching one restricts use", async () => {
     const body = await text();
 
-    for (const name of ["同時に稼働できるWorker数", "AI処理", "手動実行", "おすすめ探し"]) {
+    for (const name of ["同時に稼働できるWorker数", "AI処理", "手動実行", "YouTubeおすすめ探し"]) {
       expect(body).toContain(name);
     }
     expect(body).toContain("レート制限");
@@ -140,7 +140,7 @@ describe("the English terms", () => {
     expect(body).toContain("Claude API");
     expect(body).toContain("not guaranteed to be accurate");
     expect(body).toContain("Workers active at once");
-    expect(body).toContain("Recommendation runs");
+    expect(body).toContain("YouTube recommendation runs");
     expect(body).toContain("14-day");
     expect(body).toContain("renewed automatically every month");
     expect(body).toContain("Stripe Billing Portal");

@@ -67,7 +67,7 @@ const TERMS_COPY = {
         title: "3. サービス内容",
         body: (
           <p>
-            本サービスは、利用者が設定した Worker（AI への依頼、Web ページの監視、おすすめ探し等）の実行、文章の分析（Creator）その他の機能を提供します。外部の Web サイトの内容、可用性、変更、アクセス制限等により、期待する結果にならない場合があります。おすすめ探し等の結果の内容は保証しません。
+            本サービスは、利用者が設定した Worker（AI への依頼、Web ページの監視、YouTubeでのおすすめ動画探し等）の実行、文章の分析（Creator）その他の機能を提供します。外部の Web サイトの内容、可用性、変更、アクセス制限等により、期待する結果にならない場合があります。YouTubeおすすめ探し等の結果の内容は保証しません。
           </p>
         ),
       },
@@ -109,7 +109,7 @@ const TERMS_COPY = {
         title: "7. 利用枠・レート制限",
         body: (
           <p>
-            本サービスには、プランごとに「同時に稼働できるWorker数」「AI処理」「手動実行」「おすすめ探し」の利用枠と、一定時間あたりの利用回数の制限（レート制限）があります。各プランの利用枠は Plans に表示します。利用枠またはレート制限の上限に達した場合、該当する機能の利用は制限されます。
+            本サービスには、プランごとに「同時に稼働できるWorker数」「AI処理」「手動実行」「YouTubeおすすめ探し」の利用枠と、一定時間あたりの利用回数の制限（レート制限）があります。各プランの利用枠は Plans に表示します。利用枠またはレート制限の上限に達した場合、該当する機能の利用は制限されます。
           </p>
         ),
       },
@@ -119,7 +119,7 @@ const TERMS_COPY = {
           <>
             <p>
               本サービスは、対象となる利用者に {TRIAL.trialDurationDays}
-              日間のトライアルを提供することがあります。トライアルを提供するかどうかは、本サービスが定める条件によります。トライアルは Lite と同一ではなく、独立したプランです。トライアルの利用枠は、同時に稼働できるWorker数 {TRIAL.activeWorkerLimit}、AI処理 {TRIAL.aiProcessingLimit}、手動実行 {TRIAL.manualRunLimit}、おすすめ探し {TRIAL.discoveryLimit} です。
+              日間のトライアルを提供することがあります。トライアルを提供するかどうかは、本サービスが定める条件によります。トライアルは Lite と同一ではなく、独立したプランです。トライアルの利用枠は、同時に稼働できるWorker数 {TRIAL.activeWorkerLimit}、AI処理 {TRIAL.aiProcessingLimit}、手動実行 {TRIAL.manualRunLimit}、YouTubeおすすめ探し {TRIAL.discoveryLimit} です。
             </p>
             <p>
               トライアル期間中に有料プランを開始した場合、その時点でトライアルは終了し、残りのトライアル期間は持ち越されません。有料プランの利用枠は 0 から開始します。
@@ -245,11 +245,13 @@ const TERMS_COPY = {
         body: (
           <p>
             The Service runs the workers you set up (asking an AI, watching a
-            web page, finding recommendations and so on), analyzes writing
+            web page, finding recommended videos on YouTube and so on), analyzes
+            writing
             (Creator), and provides related features. The content, availability
             and changes of external websites, and any access restrictions they
             apply, may mean a result is not what you expected. The results of
-            recommendation searches and similar features are not guaranteed.
+            YouTube recommendation searches and similar features are not
+            guaranteed.
           </p>
         ),
       },
@@ -299,7 +301,8 @@ const TERMS_COPY = {
           <p>
             Each plan comes with allowances for &ldquo;Workers active at
             once&rdquo;, &ldquo;AI processing&rdquo;, &ldquo;Manual runs&rdquo;
-            and &ldquo;Recommendation runs&rdquo;, and with limits on how often
+            and &ldquo;YouTube recommendation runs&rdquo;, and with limits on how
+            often
             some features can be used in a given time (rate limits). Each
             plan&rsquo;s allowances are shown on Plans. When an allowance or rate
             limit is reached, use of the feature concerned is restricted.
@@ -316,7 +319,7 @@ const TERMS_COPY = {
               its own, not the same as Lite. Its allowances are: Workers active at
               once {TRIAL.activeWorkerLimit}, AI processing{" "}
               {TRIAL.aiProcessingLimit}, Manual runs {TRIAL.manualRunLimit}, and
-              Recommendation runs {TRIAL.discoveryLimit}.
+              YouTube recommendation runs {TRIAL.discoveryLimit}.
             </p>
             <p>
               Starting a paid plan during the trial ends the trial at that point.
