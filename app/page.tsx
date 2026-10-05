@@ -53,12 +53,17 @@ export default async function Home({
   }
 
   const { error, signup } = await searchParams;
-  const refused = error === "AccessDenied";
-  // **A new participant the Public Beta could not take in**, and only that: an
-  // existing account is let in before the cap is looked at, so it never lands
-  // here. There is no account language before sign-in, so both are shown.
+  // **A new participant who could not be taken in**, and only that: an existing
+  // account is let in before the mode or the cap is looked at, so it never
+  // lands here. A Closed Beta refusal comes back as Auth.js's `AccessDenied`
+  // and is told it is closed, like a Public Beta whose signup is off. There is
+  // no account language before sign-in, so both languages are shown.
   const signupNotice =
-    signup === "full" ? SIGNUP_FULL_NOTICE : signup === "closed" ? SIGNUP_CLOSED_NOTICE : null;
+    signup === "full"
+      ? SIGNUP_FULL_NOTICE
+      : signup === "closed" || error === "AccessDenied"
+        ? SIGNUP_CLOSED_NOTICE
+        : null;
 
   return (
     <div className="flex flex-1 flex-col bg-background">
@@ -112,13 +117,6 @@ export default async function Home({
               {signupNotice.en}
             </p>
           </div>
-        ) : null}
-
-        {refused ? (
-          <p className="mt-8 max-w-md text-balance rounded-lg border border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
-            Koqentra is in Closed Beta and sign-in is limited to invited
-            accounts.
-          </p>
         ) : null}
 
         <div className="mt-10 flex w-full flex-col items-center gap-3 sm:w-auto sm:flex-row">

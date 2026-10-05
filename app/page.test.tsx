@@ -207,20 +207,35 @@ describe("signing in", () => {
 });
 
 /**
- * **A refusal says the beta is invite-only and nothing else.** Naming the
- * account would confirm to whoever holds it that it exists, and the query
- * Auth.js appends carries the error's type alone.
+ * **A refusal says signup is closed, in both languages, and nothing else.**
+ * Naming the account would confirm to whoever holds it that it exists, and the
+ * query Auth.js appends carries the error's type alone.
  */
 describe("when sign-in was refused", () => {
-  const REFUSED =
-    "Koqentra is in Closed Beta and sign-in is limited to invited accounts.";
+  const REFUSED_JA = "Public Betaの新規受付は現在停止しています。受付再開までお待ちください。";
+  const REFUSED_EN =
+    "Public Beta signup is currently closed. Please check back when registration reopens.";
 
-  it("says so, unchanged", async () => {
-    expect(await text({ error: "AccessDenied" })).toContain(REFUSED);
+  it("says signup is closed, in Japanese and English", async () => {
+    const page = await text({ error: "AccessDenied" });
+
+    expect(page).toContain(REFUSED_JA);
+    expect(page).toContain(REFUSED_EN);
   });
 
   it("says nothing of the kind to an ordinary visitor", async () => {
-    expect(await text()).not.toContain(REFUSED);
+    const page = await text();
+
+    expect(page).not.toContain(REFUSED_JA);
+    expect(page).not.toContain(REFUSED_EN);
+  });
+
+  it("shows no generic Auth.js wording", async () => {
+    const page = await text({ error: "AccessDenied" });
+
+    for (const generic of ["AccessDenied", "Access denied", "Authentication error", "Sign in failed"]) {
+      expect(page).not.toContain(generic);
+    }
   });
 
   it.each(["@", "allowlist", "invited accounts:"])(
@@ -344,7 +359,7 @@ describe("who the landing page is for", () => {
     mocks.auth.mockResolvedValue(null);
 
     expect(await text({ error: "AccessDenied" })).toContain(
-      "sign-in is limited to invited accounts",
+      "Public Beta signup is currently closed.",
     );
     expect(mocks.redirect).not.toHaveBeenCalled();
   });
@@ -373,7 +388,7 @@ describe("a Public Beta signup that could not be taken", () => {
   });
 
   it("says nothing for any other value, or none", async () => {
-    for (const query of [{}, { signup: "other" }, { error: "AccessDenied" }]) {
+    for (const query of [{}, { signup: "other" }, { error: "Configuration" }]) {
       const page = await text(query);
 
       expect(page).not.toContain("Public Beta");
