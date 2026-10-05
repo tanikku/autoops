@@ -126,9 +126,9 @@ export const ja: Record<TranslationKey, string> = {
   "worker.kind.websiteOptionDescription":
     "ページを確認し、変更があったときだけ AI を使います。",
   /** 提供元(YouTube)ではなく、利用者がやりたいことで名前を付ける。 */
-  "worker.kind.discoveryOption": "おすすめを探す",
+  "worker.kind.discoveryOption": "YouTubeでおすすめ動画を探す",
   "worker.kind.discoveryOptionDescription":
-    "テーマに沿って新しいものを探し、理由を添えていくつかおすすめします。",
+    "テーマに合うYouTube動画を探し、理由を添えておすすめします。",
 
   "worker.frequency.daily": "毎日",
   "worker.frequency.weekly": "毎週",
@@ -245,10 +245,10 @@ export const ja: Record<TranslationKey, string> = {
 
   "template.group.website": "Web を見ておいてもらう",
   "template.group.prompt": "AI に定期的に仕事をしてもらう",
-  "template.group.discovery": "外から探してきてもらう",
+  "template.group.discovery": "YouTubeから探してきてもらう",
   "template.recommendationFinder.name": "おすすめを毎日さがす",
   "template.recommendationFinder.description":
-    "テーマに沿って毎日新しいものを探し、いくつかおすすめします。",
+    "テーマに沿って毎日新しいYouTube動画を探し、いくつかおすすめします。",
   "template.recommendationFinder.prompt":
     "最近のものを優先して、興味を持ちやすいものを選んでください。",
 

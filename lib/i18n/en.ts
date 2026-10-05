@@ -220,9 +220,9 @@ export const en = {
    * for them. Naming the provider here would make a second one a rename of the
    * feature.
    */
-  "worker.kind.discoveryOption": "Find recommendations",
+  "worker.kind.discoveryOption": "Find recommended videos on YouTube",
   "worker.kind.discoveryOptionDescription":
-    "Looks for new things on a topic and recommends a few, with a reason for each.",
+    "Finds YouTube videos on a topic and recommends a few, with a reason for each.",
 
   /**
    * A cadence as a menu option, which is not how a schedule reads in a
@@ -465,7 +465,7 @@ export const en = {
    */
   "template.group.website": "Have a page watched for you",
   "template.group.prompt": "Have AI do a job regularly",
-  "template.group.discovery": "Have things found for you",
+  "template.group.discovery": "Have YouTube videos found for you",
   /**
    * The one discovery example, named for the habit rather than the source.
    *
@@ -478,7 +478,7 @@ export const en = {
    */
   "template.recommendationFinder.name": "Find daily recommendations",
   "template.recommendationFinder.description":
-    "Looks for new things on a topic every day and recommends a few.",
+    "Looks for new YouTube videos on a topic every day and recommends a few.",
   "template.recommendationFinder.prompt":
     "Prefer recent items and choose recommendations that are likely to be interesting.",
 

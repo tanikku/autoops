@@ -453,14 +453,16 @@ describe("the discovery example", () => {
   });
 
   /**
-   * **No provider in the name.** YouTube is what this version asks; a second
-   * one should be a stored value rather than a rename of the example.
+   * **The name stays the example's; the description says where it looks.** A
+   * name the person may keep for their worker carries no provider, but the card
+   * says the search is YouTube's, so it is not read as a search of the whole web.
    */
-  it.each(["en", "ja"] as const)("names no provider in %s", (language) => {
+  it.each(["en", "ja"] as const)("says it searches YouTube, in %s", (language) => {
     const name = t(language, discovery!.nameKey);
     const description = t(language, discovery!.descriptionKey);
 
-    expect(`${name} ${description}`.toLowerCase()).not.toContain("youtube");
+    expect(name.toLowerCase()).not.toContain("youtube");
+    expect(description).toContain("YouTube");
   });
 
   /**

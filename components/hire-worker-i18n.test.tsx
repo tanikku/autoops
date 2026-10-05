@@ -187,27 +187,28 @@ describe("a drafted cadence", () => {
 /**
  * The third option, and the words it is offered in.
  *
- * **What the hire form asks is what somebody wants done**, which is why none of
- * the three options names a mechanism: "Watch a page", "Run a prompt", "Find
- * recommendations". The provider behind the third one is not on this screen at
- * all — naming it would make adding a second one a rename of the feature.
+ * **What the hire form asks is what somebody wants done**, which is why the
+ * first two options name no mechanism: "Watch a page", "Run a prompt".
+ *
+ * **The third names YouTube, because that is all it searches.** It used to be
+ * "Find recommendations", which read as a search of the whole web; for Public
+ * Beta the scope is said where the choice is made. Adding a second source would
+ * now mean rewording these, which is the accepted cost of not overpromising.
  */
 describe("the hire form's third option", () => {
   const en = form("en");
   const ja = form("ja");
 
-  it("offers finding recommendations, in English", () => {
-    expect(en).toContain("Find recommendations");
+  it("offers finding recommended YouTube videos, in English", () => {
+    expect(en).toContain("Find recommended videos on YouTube");
     expect(en).toContain(
-      "Looks for new things on a topic and recommends a few, with a reason for each.",
+      "Finds YouTube videos on a topic and recommends a few, with a reason for each.",
     );
   });
 
   it("offers it in Japanese", () => {
-    expect(ja).toContain("おすすめを探す");
-    expect(ja).toContain(
-      "テーマに沿って新しいものを探し、理由を添えていくつかおすすめします。",
-    );
+    expect(ja).toContain("YouTubeでおすすめ動画を探す");
+    expect(ja).toContain("テーマに合うYouTube動画を探し、理由を添えておすすめします。");
   });
 
   it("offers it as a third radio beside the other two", () => {
@@ -217,15 +218,14 @@ describe("the hire form's third option", () => {
   });
 
   /**
-   * **The product is not named after its current provider.** YouTube is what
-   * this version asks; what is being chosen is that somebody wants things found
-   * for them.
+   * **The search is said to be YouTube's** — on the option, its example group
+   * and its example — so that nobody reads it as a search of the whole web.
    */
   it.each([
     ["en", () => en],
     ["ja", () => ja],
-  ])("names no provider anywhere on the form, in %s", (_language, html) => {
-    expect(html().toLowerCase()).not.toContain("youtube");
+  ])("says the search is YouTube's, in %s", (_language, html) => {
+    expect(html()).toContain("YouTube");
   });
 
   /**
@@ -247,10 +247,12 @@ describe("the hire form's third option", () => {
 
   /** The example group, offered beside the other two. */
   it("groups its example under a heading of its own", () => {
-    expect(en).toContain("Have things found for you");
+    expect(en).toContain("Have YouTube videos found for you");
     expect(en).toContain("Find daily recommendations");
-    expect(ja).toContain("外から探してきてもらう");
+    expect(en).toContain("Looks for new YouTube videos on a topic every day and recommends a few.");
+    expect(ja).toContain("YouTubeから探してきてもらう");
     expect(ja).toContain("おすすめを毎日さがす");
+    expect(ja).toContain("テーマに沿って毎日新しいYouTube動画を探し、いくつかおすすめします。");
   });
 
   /**
