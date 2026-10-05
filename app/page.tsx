@@ -16,10 +16,20 @@ import { GitHubIcon } from "@/components/icons";
  * Reading the query makes this page dynamic rather than prerendered, which is
  * the accepted cost of the visitor being told anything at all.
  */
+const SIGNUP_FULL_NOTICE = {
+  ja: "Public Betaの受付上限に達しました。受付再開までお待ちください。",
+  en: "Public Beta has reached its current signup limit. Please check back when registration reopens.",
+};
+
+const SIGNUP_CLOSED_NOTICE = {
+  ja: "Public Betaの新規受付は現在停止しています。受付再開までお待ちください。",
+  en: "Public Beta signup is currently closed. Please check back when registration reopens.",
+};
+
 export default async function Home({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string | string[] }>;
+  searchParams: Promise<{ error?: string | string[]; signup?: string | string[] }>;
 }) {
   // **Somebody signed in is not the audience for this page.** Everything below
   // introduces Koqentra to a person who has not seen it, in English, and the
@@ -42,8 +52,13 @@ export default async function Home({
     redirect("/dashboard");
   }
 
-  const { error } = await searchParams;
+  const { error, signup } = await searchParams;
   const refused = error === "AccessDenied";
+  // **A new participant the Public Beta could not take in**, and only that: an
+  // existing account is let in before the cap is looked at, so it never lands
+  // here. There is no account language before sign-in, so both are shown.
+  const signupNotice =
+    signup === "full" ? SIGNUP_FULL_NOTICE : signup === "closed" ? SIGNUP_CLOSED_NOTICE : null;
 
   return (
     <div className="flex flex-1 flex-col bg-background">
@@ -86,6 +101,18 @@ export default async function Home({
         <p className="mt-4 text-balance text-base text-muted-foreground">
           You decide what to use. Nothing is posted automatically.
         </p>
+
+        {signupNotice ? (
+          <div
+            role="status"
+            className="mt-8 max-w-md text-balance rounded-lg border border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground"
+          >
+            <p lang="ja">{signupNotice.ja}</p>
+            <p lang="en" className="mt-1">
+              {signupNotice.en}
+            </p>
+          </div>
+        ) : null}
 
         {refused ? (
           <p className="mt-8 max-w-md text-balance rounded-lg border border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">

@@ -58,7 +58,7 @@ beforeEach(() => {
   });
 });
 
-type Query = { error?: string | string[] };
+type Query = { error?: string | string[]; signup?: string | string[] };
 
 const tree = async (query: Query = {}) =>
   await Home({ searchParams: Promise.resolve(query) });
@@ -347,5 +347,42 @@ describe("who the landing page is for", () => {
       "sign-in is limited to invited accounts",
     );
     expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A new participant the Public Beta could not take in. There is no account
+ * language before sign-in, so the notice is given in both.
+ */
+describe("a Public Beta signup that could not be taken", () => {
+  it("says the cap is reached, in Japanese and English", async () => {
+    const page = await text({ signup: "full" });
+
+    expect(page).toContain("Public Betaの受付上限に達しました。受付再開までお待ちください。");
+    expect(page).toContain(
+      "Public Beta has reached its current signup limit. Please check back when registration reopens.",
+    );
+    expect(page).not.toContain("invited accounts");
+  });
+
+  it("says signup is closed, in Japanese and English", async () => {
+    const page = await text({ signup: "closed" });
+
+    expect(page).toContain("Public Betaの新規受付は現在停止しています。");
+    expect(page).toContain("Public Beta signup is currently closed.");
+  });
+
+  it("says nothing for any other value, or none", async () => {
+    for (const query of [{}, { signup: "other" }, { error: "AccessDenied" }]) {
+      const page = await text(query);
+
+      expect(page).not.toContain("Public Beta");
+    }
+  });
+
+  it("leaves the signed-in visitor going home, not to the notice", async () => {
+    mocks.auth.mockResolvedValue({ user: { id: "user-1" } });
+
+    await expect(tree({ signup: "full" })).rejects.toThrow("redirect(/dashboard)");
   });
 });

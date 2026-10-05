@@ -1,4 +1,9 @@
-export { auth as middleware } from "@/auth";
+import NextAuth from "next-auth";
+import { authConfig } from "@/auth.config";
+
+// The edge-safe half of the auth configuration: reading a session never needs
+// the database, and deciding a sign-in — which may — is `auth.ts`'s alone.
+export const { auth: middleware } = NextAuth(authConfig);
 
 /**
  * The signed-in areas, and only those.

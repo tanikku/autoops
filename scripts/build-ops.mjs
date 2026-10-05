@@ -112,3 +112,20 @@ await build({
 });
 
 console.log("built dist/ops/grant-beta.mjs");
+
+// The Public Beta admission count, for an operator on the service. Read only.
+await build({
+  entryPoints: ["scripts/public-beta-admissions.ts"],
+  outfile: "dist/ops/public-beta-admissions.mjs",
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  target: "node22",
+  plugins: [externaliseInstalledPackages],
+  tsconfig: "tsconfig.json",
+  minify: false,
+  sourcemap: false,
+  logLevel: "warning",
+});
+
+console.log("built dist/ops/public-beta-admissions.mjs");

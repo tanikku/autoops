@@ -1297,3 +1297,16 @@ model CheckoutAttempt {
   /// next attempt, and deleting the account takes it along.
   @@index([expiresAt])
 }
+
+/// A new participant let into the Public Beta, and when.
+///
+/// **One row per place taken, keyed by the Google subject** — the id the
+/// account will have. No relation to `User`: the place is taken at sign-in,
+/// before the first action that needs an account has written one. Existing
+/// users and allowlisted addresses never get a row, so counting rows counts
+/// exactly the places the cap is about. Nothing about the person is stored.
+model PublicBetaAdmission {
+  userId     String   @id
+  admittedAt DateTime @default(now())
+}
+

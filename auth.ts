@@ -1,6 +1,17 @@
 import NextAuth from "next-auth";
-import Google from "next-auth/providers/google";
-import { isBetaSignInAllowed, parseBetaAllowlist } from "@/lib/beta-access";
+import { authConfig } from "@/auth.config";
+import {
+  isBetaSignInAllowed,
+  parseBetaAllowlist,
+  readAccessMode,
+  readPublicBetaSignup,
+} from "@/lib/beta-access";
+import { prisma } from "@/lib/prisma";
+import {
+  admitToPublicBeta,
+  decidePublicBetaSignIn,
+  isKnownSubject,
+} from "@/lib/public-beta-admission";
 
 /**
  * Read once, as the provider factory reads its own key once.
@@ -8,61 +19,62 @@ import { isBetaSignInAllowed, parseBetaAllowlist } from "@/lib/beta-access";
  * Changing who may sign in therefore takes a restart rather than effect on the
  * next request. That is stated in the README instead of being worked around:
  * re-reading the environment per sign-in would buy nothing here, where the list
- * changes when someone is invited and not otherwise.
+ * changes when someone is invited and not otherwise. The access mode and the
+ * Public Beta switch and cap are read the same way, for the same reason.
  */
 const betaAllowlist = parseBetaAllowlist(process.env.BETA_ALLOWED_EMAILS);
+const accessMode = readAccessMode(process.env.AUTH_ACCESS_MODE);
+const publicBetaSignup = readPublicBetaSignup({
+  PUBLIC_BETA_SIGNUP_ENABLED: process.env.PUBLIC_BETA_SIGNUP_ENABLED,
+  PUBLIC_BETA_SIGNUP_LIMIT: process.env.PUBLIC_BETA_SIGNUP_LIMIT,
+});
 
+/**
+ * Not imported by the middleware — `auth.config.ts` is — so the sign-in
+ * decision may ask the database.
+ */
 export const { handlers, signIn, signOut, auth } = NextAuth({
-  providers: [Google],
-  // JWT sessions keep auth self-contained: no database adapter, so the
-  // middleware can run on the edge without a DB round trip.
-  session: { strategy: "jwt" },
-  pages: {
-    // Unauthenticated visitors land on the marketing page, which carries the
-    // Google sign-in button.
-    signIn: "/",
-    // A refused sign-in comes back to the same page. Auth.js appends
-    // `?error=AccessDenied` and nothing else — no address, no list — and the
-    // page says only that the beta is invite-only.
-    error: "/",
-  },
+  ...authConfig,
   callbacks: {
+    ...authConfig.callbacks,
     /**
-     * Closed Beta admission, and only that.
+     * Who may sign in.
      *
-     * **Refusing here is refusing before anything exists.** Returning false
-     * stops the flow ahead of `jwt`, so no token is minted, no session cookie
-     * is set, and no `User` row is written — that row is created at the
-     * provisioning boundary, which a session is required to reach. A refused
-     * visitor leaves no trace to clean up.
+     * **Closed Beta is exactly what it was**: the allowlist, and nothing read
+     * from the database.
+     *
+     * **Public Beta lets a verified Google account in** — an existing one
+     * always, a new one while a place is left (see `decidePublicBetaSignIn`).
+     * A new participant who cannot be taken in is sent back to the landing
+     * page with only `signup=full` or `signup=closed`.
+     *
+     * **Refusing here is refusing before anything exists.** Returning false or
+     * a path stops the flow ahead of `jwt`, so no token is minted, no session
+     * cookie is set, and no `User` row is written — that row is created at the
+     * provisioning boundary, which a session is required to reach.
      *
      * **Nothing about the refusal is logged.** The address that was turned
      * away and the list it was compared against are both things a log would
      * then be storing, and the person it concerns already learns the outcome
      * from the page they land on.
      */
-    signIn: ({ profile }) => isBetaSignInAllowed(profile, betaAllowlist),
-    authorized: ({ auth }) => Boolean(auth),
-    // `token.sub` must be the Google account id, which is stable for the life
-    // of the account: it is the tenant key every owned row is scoped by.
-    //
-    // Deliberately not `user.id` — without a database adapter that is a UUID
-    // minted per sign-in, so every sign-in would have looked like a new tenant
-    // and hidden the account's own workers.
-    //
-    // `account` is only present on the sign-in that issues the token; later
-    // calls carry the value forward in `token.sub`.
-    jwt: ({ token, account }) => {
-      if (account?.providerAccountId) {
-        token.sub = account.providerAccountId;
+    signIn: ({ profile, account }) => {
+      if (accessMode === "closed-beta") {
+        return isBetaSignInAllowed(profile, betaAllowlist);
       }
-      return token;
-    },
-    session: ({ session, token }) => {
-      if (token.sub) {
-        session.user.id = token.sub;
-      }
-      return session;
+
+      return decidePublicBetaSignIn(
+        {
+          profile,
+          userId: account?.providerAccountId,
+          allowlist: betaAllowlist,
+          signup: publicBetaSignup,
+        },
+        {
+          isKnown: (userId) => isKnownSubject(prisma, userId),
+          admit: (userId, limit) => admitToPublicBeta(prisma, userId, limit),
+        },
+      );
     },
   },
 });

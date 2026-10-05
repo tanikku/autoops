@@ -82,3 +82,45 @@ export function isBetaSignInAllowed(
 
   return email !== undefined && allowlist.has(email);
 }
+
+/**
+ * Whether sign-in is invitation-only or open to new Public Beta participants.
+ *
+ * **Anything but the exact word is Closed Beta.** A missing or mistyped mode
+ * keeps the allowlist semantics this deployment already has, rather than
+ * opening sign-in by accident.
+ */
+export type AccessMode = "closed-beta" | "public-beta";
+
+export function readAccessMode(value: string | undefined): AccessMode {
+  return value?.trim() === "public-beta" ? "public-beta" : "closed-beta";
+}
+
+/** Whether new participants are taken in, and how many in all. */
+export type PublicBetaSignup = { readonly enabled: boolean; readonly limit: number };
+
+/**
+ * The Public Beta signup switch and cap, read so that a mistake closes it.
+ *
+ * Only the exact word `true` enables it, and only a whole number of digits sets
+ * the limit; anything else — missing, negative, `10 people` — reads as zero.
+ */
+export function readPublicBetaSignup(env: {
+  PUBLIC_BETA_SIGNUP_ENABLED?: string;
+  PUBLIC_BETA_SIGNUP_LIMIT?: string;
+}): PublicBetaSignup {
+  const limit = env.PUBLIC_BETA_SIGNUP_LIMIT?.trim() ?? "";
+
+  return {
+    enabled: env.PUBLIC_BETA_SIGNUP_ENABLED?.trim() === "true",
+    limit: /^\d{1,6}$/.test(limit) ? Number(limit) : 0,
+  };
+}
+
+/**
+ * Where a refused new participant is sent, and what it says: only that the cap
+ * is reached or that signup is closed — never whether an account exists.
+ */
+export const SIGNUP_FULL_PATH = "/?signup=full";
+export const SIGNUP_CLOSED_PATH = "/?signup=closed";
+

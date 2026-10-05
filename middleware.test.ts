@@ -8,10 +8,11 @@ import { describe, expect, it, vi } from "vitest";
  * route missing from it is a signed-in area with no guard in front of it and
  * nothing else would notice.
  *
- * `auth` is replaced so importing this file does not pull a framework runtime
- * in to read one array.
+ * `next-auth` is replaced so importing this file does not pull a framework
+ * runtime in to read one array.
  */
-vi.mock("@/auth", () => ({ auth: vi.fn() }));
+vi.mock("next-auth", () => ({ default: () => ({ auth: vi.fn() }) }));
+vi.mock("next-auth/providers/google", () => ({ default: {} }));
 
 const { config } = await import("@/middleware");
 
