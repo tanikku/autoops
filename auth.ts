@@ -5,6 +5,7 @@ import {
   readAccessMode,
   readPublicBetaSignup,
 } from "@/lib/beta-access";
+import { notifyPublicBetaJoin } from "@/lib/notify/public-beta-admission";
 import { prisma } from "@/lib/prisma";
 import {
   admitToPublicBeta,
@@ -67,6 +68,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         {
           isKnown: (userId) => isKnownSubject(prisma, userId),
           admit: (userId, limit) => admitToPublicBeta(prisma, userId, limit),
+          notifyJoined: notifyPublicBetaJoin,
         },
       ),
   },

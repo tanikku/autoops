@@ -1556,6 +1556,7 @@ cp .env.example .env
 | `AUTH_URL` | **In production** | The deployed origin, e.g. `https://koqentra.example.com`. Leave it unset locally — see below |
 | `ANTHROPIC_API_KEY` | No | Real AI execution. Without it, a stand-in provider answers |
 | `SUPPORT_EMAIL` | No | The address Settings and the privacy notice offer as a way to reach a person. **Without it there is no support link at all** — see below |
+| `PUBLIC_BETA_NOTIFY_EMAIL` | No | Internal operator address told when a new participant takes a Public Beta place (count and time only, nothing about the person). Unset means no such notification. Separate from `SUPPORT_EMAIL`. Sent through `RESEND_API_KEY` / `EMAIL_FROM` |
 | `RESEND_API_KEY` | No | Sends [email notifications](#email-notifications). Without it, nothing is sent and a line is logged |
 | `EMAIL_FROM` | No | The sender those are from, e.g. `Koqentra <notifications@example.com>`. Needed alongside the key; either one missing sends nothing |
 | `YOUTUBE_API_KEY` | No | A YouTube Data API v3 key, used by [discovery workers](#discovery-workers). Without it, a discovery worker cannot be created and an existing one fails its runs; nothing else is affected |

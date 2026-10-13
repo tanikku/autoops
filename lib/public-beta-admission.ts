@@ -24,7 +24,16 @@ import {
 /** The advisory lock every admission takes. An arbitrary, fixed key. */
 export const PUBLIC_BETA_ADMISSION_LOCK = 7_204_118_001;
 
-export type AdmissionOutcome = "admitted" | "full";
+/**
+ * `joined` is a place this call created; `admitted` is one that already
+ * existed. Only `joined` carries the count, read under the same lock right
+ * after the insert, so it is the participant number this admission actually
+ * got — not whatever the table holds by the time anyone reads it again.
+ */
+export type AdmissionOutcome =
+  | { readonly status: "joined"; readonly participants: number; readonly admittedAt: Date }
+  | { readonly status: "admitted" }
+  | { readonly status: "full" };
 
 export async function admitToPublicBeta(
   client: PrismaClient,
@@ -40,15 +49,19 @@ export async function admitToPublicBeta(
       select: { userId: true },
     });
     if (existing !== null) {
-      return "admitted";
+      return { status: "admitted" };
     }
 
     if ((await tx.publicBetaAdmission.count()) >= limit) {
-      return "full";
+      return { status: "full" };
     }
 
-    await tx.publicBetaAdmission.create({ data: { userId } });
-    return "admitted";
+    const { admittedAt } = await tx.publicBetaAdmission.create({
+      data: { userId },
+      select: { admittedAt: true },
+    });
+    const participants = await tx.publicBetaAdmission.count();
+    return { status: "joined", participants, admittedAt };
   });
 }
 
@@ -76,6 +89,9 @@ export async function isKnownSubject(client: PrismaClient, userId: string): Prom
  *    existing user.
  * 4. Anybody else is refused in Closed Beta. In Public Beta they are refused
  *    while signup is closed, and otherwise admitted if a place is left.
+ * 5. A place this sign-in created is reported to the operator, after the
+ *    admission has committed. The report cannot change the answer: whatever it
+ *    does, a participant who was let in is let in.
  *
  * The allowlist is looked at before the database only because it needs no
  * query; an address on it would be let in either way.
@@ -91,6 +107,7 @@ export async function decideSignIn(
   deps: {
     isKnown: (userId: string) => Promise<boolean>;
     admit: (userId: string, limit: number) => Promise<AdmissionOutcome>;
+    notifyJoined: (joined: { participants: number; limit: number; admittedAt: Date }) => Promise<void>;
   },
 ): Promise<boolean | string> {
   const { mode, profile, userId, allowlist, signup } = input;
@@ -116,5 +133,23 @@ export async function decideSignIn(
     return SIGNUP_CLOSED_PATH;
   }
 
-  return (await deps.admit(userId, signup.limit)) === "admitted" ? true : SIGNUP_FULL_PATH;
+  const outcome = await deps.admit(userId, signup.limit);
+  if (outcome.status === "full") {
+    return SIGNUP_FULL_PATH;
+  }
+
+  if (outcome.status === "joined") {
+    try {
+      await deps.notifyJoined({
+        participants: outcome.participants,
+        limit: signup.limit,
+        admittedAt: outcome.admittedAt,
+      });
+    } catch {
+      // The notifier already never throws; this keeps that from being the only
+      // thing between a failed email and a refused sign-in.
+    }
+  }
+
+  return true;
 }

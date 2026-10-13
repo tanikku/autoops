@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   decide: vi.fn(),
   isKnown: vi.fn(),
   admit: vi.fn(),
+  notify: vi.fn(),
 }));
 
 vi.mock("next-auth", () => ({
@@ -29,6 +30,9 @@ vi.mock("@/lib/public-beta-admission", () => ({
   decideSignIn: mocks.decide,
   isKnownSubject: mocks.isKnown,
   admitToPublicBeta: mocks.admit,
+}));
+vi.mock("@/lib/notify/public-beta-admission", () => ({
+  notifyPublicBetaJoin: mocks.notify,
 }));
 
 const ENV_KEYS = [
@@ -97,6 +101,14 @@ describe("the mode the decision is given", () => {
       profile: stranger.profile,
     });
     expect([...input.allowlist]).toEqual(["qa@example.com"]);
+  });
+
+  it("hands over the operator notifier as the report of a new place", async () => {
+    const signIn = await load({ AUTH_ACCESS_MODE: "public-beta" });
+
+    await signIn(stranger);
+
+    expect(mocks.decide.mock.calls[0][1].notifyJoined).toBe(mocks.notify);
   });
 
   it("reads a broken switch and cap as closed", async () => {

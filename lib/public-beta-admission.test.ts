@@ -5,7 +5,11 @@ import {
   SIGNUP_CLOSED_PATH,
   SIGNUP_FULL_PATH,
 } from "@/lib/beta-access";
-import { decideSignIn } from "@/lib/public-beta-admission";
+import {
+  admitToPublicBeta,
+  decideSignIn,
+  PUBLIC_BETA_ADMISSION_LOCK,
+} from "@/lib/public-beta-admission";
 
 /**
  * Who may sign in, decided in a fixed order in either mode.
@@ -18,10 +22,20 @@ import { decideSignIn } from "@/lib/public-beta-admission";
 const VERIFIED = { email: "new@example.com", email_verified: true };
 const OPEN = { enabled: true, limit: 10 };
 
-function deps(overrides: { known?: boolean; admit?: "admitted" | "full" } = {}) {
+const JOINED_AT = new Date("2026-10-14T03:04:05Z");
+const OUTCOMES = {
+  joined: { status: "joined", participants: 1, admittedAt: JOINED_AT },
+  admitted: { status: "admitted" },
+  full: { status: "full" },
+} as const;
+
+function deps(
+  overrides: { known?: boolean; admit?: keyof typeof OUTCOMES; notify?: () => Promise<void> } = {},
+) {
   return {
     isKnown: vi.fn(async () => overrides.known ?? false),
-    admit: vi.fn(async () => overrides.admit ?? "admitted"),
+    admit: vi.fn(async () => OUTCOMES[overrides.admit ?? "joined"]),
+    notifyJoined: vi.fn(overrides.notify ?? (async () => {})),
   };
 }
 
@@ -73,6 +87,73 @@ describe("reading the signup switch and cap", () => {
       expect(readPublicBetaSignup({ PUBLIC_BETA_SIGNUP_LIMIT: value }).limit).toBe(0);
     },
   );
+});
+
+/**
+ * The admission's own steps, against a stand-in transaction that records them.
+ * Whether the lock really serialises arrivals is the integration suite's job;
+ * this fixes that the count reported for a new place is read inside it.
+ */
+describe("admitting within the lock", () => {
+  function fakeClient(state: { existing?: boolean; count: number }) {
+    const steps: string[] = [];
+    const tx = {
+      $executeRaw: vi.fn(async () => {
+        steps.push("lock");
+        return 0;
+      }),
+      publicBetaAdmission: {
+        findUnique: vi.fn(async () => {
+          steps.push("find");
+          return state.existing ? { userId: "google-sub-new" } : null;
+        }),
+        count: vi.fn(async () => {
+          steps.push("count");
+          return state.count;
+        }),
+        create: vi.fn(async () => {
+          steps.push("create");
+          state.count += 1;
+          return { admittedAt: JOINED_AT };
+        }),
+      },
+    };
+    const client = {
+      $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => {
+        steps.push("begin");
+        const result = await fn(tx);
+        steps.push("commit");
+        return result;
+      }),
+    };
+    return { client: client as unknown as Parameters<typeof admitToPublicBeta>[0], tx, steps };
+  }
+
+  it("reports the first place of ten as participant 1, counted after the insert inside the lock", async () => {
+    const { client, tx, steps } = fakeClient({ count: 0 });
+
+    expect(await admitToPublicBeta(client, "google-sub-new", 10)).toEqual({
+      status: "joined",
+      participants: 1,
+      admittedAt: JOINED_AT,
+    });
+    expect(steps).toEqual(["begin", "lock", "find", "count", "create", "count", "commit"]);
+    expect(tx.$executeRaw.mock.calls[0].slice(1)).toEqual([PUBLIC_BETA_ADMISSION_LOCK]);
+  });
+
+  it("does not call an existing place new, and creates nothing", async () => {
+    const { client, tx } = fakeClient({ existing: true, count: 3 });
+
+    expect(await admitToPublicBeta(client, "google-sub-new", 10)).toEqual({ status: "admitted" });
+    expect(tx.publicBetaAdmission.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses at the cap as before, creating nothing", async () => {
+    const { client, tx } = fakeClient({ count: 10 });
+
+    expect(await admitToPublicBeta(client, "google-sub-new", 10)).toEqual({ status: "full" });
+    expect(tx.publicBetaAdmission.create).not.toHaveBeenCalled();
+  });
 });
 
 describe("deciding a sign-in", () => {
@@ -180,10 +261,53 @@ describe("deciding a sign-in", () => {
     });
 
     it("admits a new verified user while a place is left", async () => {
-      const d = deps({ admit: "admitted" });
+      const d = deps({ admit: "joined" });
 
       expect(await decide({}, d)).toBe(true);
       expect(d.admit).toHaveBeenCalledWith("google-sub-new", 10);
+    });
+  });
+
+  describe("reporting a new place", () => {
+    it("reports a place this sign-in created, once, after the admission returned", async () => {
+      const d = deps({ admit: "joined" });
+
+      expect(await decide({}, d)).toBe(true);
+      expect(d.notifyJoined).toHaveBeenCalledTimes(1);
+      expect(d.notifyJoined).toHaveBeenCalledWith({ participants: 1, limit: 10, admittedAt: JOINED_AT });
+      expect(d.admit.mock.invocationCallOrder[0]).toBeLessThan(d.notifyJoined.mock.invocationCallOrder[0]);
+    });
+
+    it("does not report a place that already existed, as when the same subject raced itself", async () => {
+      const d = deps({ admit: "admitted" });
+
+      expect(await decide({}, d)).toBe(true);
+      expect(d.notifyJoined).not.toHaveBeenCalled();
+    });
+
+    it.each<[string, Partial<Parameters<typeof decideSignIn>[0]>, Parameters<typeof deps>[0]]>([
+      ["a full beta", {}, { admit: "full" }],
+      ["an allowlisted address", { allowlist: new Set(["new@example.com"]) }, {}],
+      ["an existing user or participant", {}, { known: true }],
+      ["closed signup", { signup: { enabled: false, limit: 10 } }, {}],
+      ["Closed Beta", { mode: "closed-beta" }, {}],
+    ])("reports nothing for %s", async (_label, input, overrides) => {
+      const d = deps(overrides);
+
+      await decide(input, d);
+      expect(d.notifyJoined).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["rejects", async () => Promise.reject(new Error("boom"))],
+      ["throws", () => {
+        throw new Error("boom");
+      }],
+    ])("still lets the participant in when the report %s", async (_label, notify) => {
+      const d = deps({ admit: "joined", notify: notify as () => Promise<void> });
+
+      expect(await decide({}, d)).toBe(true);
+      expect(d.notifyJoined).toHaveBeenCalledTimes(1);
     });
   });
 
