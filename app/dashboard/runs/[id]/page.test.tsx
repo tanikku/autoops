@@ -664,6 +664,24 @@ function labelOrder(node: ReactNode): string[] {
   return order;
 }
 
+/** Every string child in the tree, in order. */
+function textsOf(node: unknown): string[] {
+  if (typeof node === "string") {
+    return [node];
+  }
+
+  if (Array.isArray(node)) {
+    return node.flatMap(textsOf);
+  }
+
+  if (!node || typeof node !== "object") {
+    return [];
+  }
+
+  const props = (node as { props?: Record<string, unknown> }).props;
+  return props ? textsOf(props.children) : [];
+}
+
 const WATCHED = "https://hotel.example.test/rooms?checkin=2026-10-01";
 
 describe("run detail — the page a watcher watches", () => {
@@ -715,6 +733,26 @@ describe("run detail — the page a watcher watches", () => {
     expect(en["run.detail.openMonitored"]).not.toBe(
       ja["run.detail.openMonitored"],
     );
+  });
+
+  /**
+   * **It says "current" because the link is the worker's address now.** A run
+   * does not record the address it fetched, so on an older run this may not be
+   * the page that run looked at.
+   */
+  it.each([
+    ["en", "Open current monitored page"],
+    ["ja", "現在の監視先を開く"],
+  ])("labels it as the current page in %s", async (language, label) => {
+    mocks.getUserLanguage.mockResolvedValue(language);
+    mocks.getRun.mockResolvedValue(
+      run({ routineKind: "website", monitoredUrl: WATCHED }),
+    );
+
+    const tree = await render();
+
+    expect(textsOf(tree)).toContain(label);
+    expect(anchors(tree).map((link) => link.href)).toContain(WATCHED);
   });
 
   /**

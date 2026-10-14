@@ -1478,8 +1478,14 @@ Notes for the report:
    * the acting.
    */
   "notify.email.openMonitored": "Open monitored page:",
-  /** On the run's own page, beside what the run found. */
-  "run.detail.openMonitored": "Open monitored page",
+  /**
+   * On the run's own page, beside what the run found.
+   *
+   * **"Current" because that is what it opens.** A run does not record the
+   * address it fetched; the link is the worker's address now, which may have
+   * been changed since this run.
+   */
+  "run.detail.openMonitored": "Open current monitored page",
 
   /**
    * Plans, and what a lower allowance means for workers already running.

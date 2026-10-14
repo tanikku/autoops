@@ -816,7 +816,7 @@ export const ja: Record<TranslationKey, string> = {
     "Worker「{name}」を保存しました。トライアルを開始しました。",
 
   "notify.email.openMonitored": "監視先を開く:",
-  "run.detail.openMonitored": "監視先を開く",
+  "run.detail.openMonitored": "現在の監視先を開く",
 
   "pricing.title": "プラン",
   "pricing.description": "各プランでできること。金額は月額です。",
