@@ -1209,6 +1209,16 @@ Notes for the report:
    */
   "run.system.discoveryNoSelection":
     "No recommendations were found for this search.",
+  /**
+   * Shown in place of a website run's stored `The site answered 403.`
+   *
+   * **It does not say why.** A 403 can be a bot filter, a region block, a login
+   * wall or something else, and none of that can be told from outside — so it
+   * names what happened, that it may be a limit on automated access, and a
+   * next step that does not involve getting around anything.
+   */
+  "run.error.websiteForbidden":
+    "This site refused the request (403).\nSome sites may restrict automated access.\nTry another public page that contains the information you want to monitor.",
 
   /**
    * What an email about a finished run says, and the whole of what is

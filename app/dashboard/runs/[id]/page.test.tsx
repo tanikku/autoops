@@ -237,6 +237,27 @@ describe("run detail — a website run", () => {
     expect(sections.Error).toBe("Fetch failed.");
     expect(sections).not.toHaveProperty("Rendered Prompt");
   });
+
+  /**
+   * **The one failure read rather than shown as recorded.** The stored value
+   * is the transport's own sentence, unchanged — which is also what every 403
+   * recorded before this existed holds — and only the page says it differently.
+   */
+  it("explains a check the site refused with 403", async () => {
+    mocks.getRun.mockResolvedValue(
+      website({ status: "failed", output: "", errorMessage: "The site answered 403." }),
+    );
+
+    expect(labelled(await render()).Error).toBe(en["run.error.websiteForbidden"]);
+  });
+
+  it("still shows any other status as recorded", async () => {
+    mocks.getRun.mockResolvedValue(
+      website({ status: "failed", output: "", errorMessage: "The site answered 404." }),
+    );
+
+    expect(labelled(await render()).Error).toBe("The site answered 404.");
+  });
 });
 
 /**
@@ -309,6 +330,27 @@ describe("run detail in Japanese", () => {
 
     expect(sections["エラー"]).toBe("Provider said no.");
     expect(sections).not.toHaveProperty("出力");
+  });
+
+  it("explains a website run's 403 in Japanese", async () => {
+    mocks.getRun.mockResolvedValue(
+      run({
+        routineKind: "website",
+        status: "failed",
+        output: "",
+        errorMessage: "The site answered 403.",
+      }),
+    );
+
+    expect(labelled(await render())["エラー"]).toBe(ja["run.error.websiteForbidden"]);
+  });
+
+  it("leaves the same words alone when a prompt run's provider said them", async () => {
+    mocks.getRun.mockResolvedValue(
+      run({ status: "failed", output: "", errorMessage: "The site answered 403." }),
+    );
+
+    expect(labelled(await render())["エラー"]).toBe("The site answered 403.");
   });
 
   it("still never claims to show what a website run sent", async () => {

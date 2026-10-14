@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatRunErrorForDisplay,
   formatRunOutputForDisplay,
+  WEBSITE_FORBIDDEN_ERROR,
   WEBSITE_BASELINE_OUTPUT,
   WEBSITE_NOT_TARGET_OUTPUT,
   WEBSITE_UNCHANGED_OUTPUT,
@@ -176,6 +178,64 @@ describe("a change that was not the one waited for", () => {
   it("is not rewritten for any other kind", () => {
     expect(formatRunOutputForDisplay(WEBSITE_NOT_TARGET_OUTPUT, "prompt", "ja")).toBe(
       WEBSITE_NOT_TARGET_OUTPUT,
+    );
+  });
+});
+
+/**
+ * A failure's reason, which is shown as recorded — except a website worker's
+ * 403, the one fixed sentence whose cause and next step can be stated safely.
+ * Matched on the exact stored string, so a 403 recorded before this existed
+ * reads the same way, and nothing is written either way.
+ */
+describe("a failure's reason", () => {
+  it("is the transport's own sentence for a 403, as it has always been stored", () => {
+    expect(WEBSITE_FORBIDDEN_ERROR).toBe("The site answered 403.");
+  });
+
+  it("explains a website worker's 403 in Japanese", () => {
+    expect(formatRunErrorForDisplay("The site answered 403.", "website", "ja")).toBe(
+      "このサイトからアクセスを拒否されました（403）。\n" +
+        "サイトによっては自動アクセスを制限している場合があります。\n" +
+        "監視したい情報が掲載されている別の公開ページをお試しください。",
+    );
+  });
+
+  it("explains a website worker's 403 in English", () => {
+    expect(formatRunErrorForDisplay("The site answered 403.", "website", "en")).toBe(
+      "This site refused the request (403).\n" +
+        "Some sites may restrict automated access.\n" +
+        "Try another public page that contains the information you want to monitor.",
+    );
+  });
+
+  it.each([
+    "The site answered 401.",
+    "The site answered 404.",
+    "The site answered 429.",
+    "The site answered 503.",
+    "The site answered 403 without saying where to go.",
+    "the site answered 403.",
+    " The site answered 403.",
+    "The site answered 403. ",
+    "This site was checked very recently, so Koqentra did not fetch it again yet.",
+    "",
+  ])("leaves %o from a website worker as recorded", (message) => {
+    expect(formatRunErrorForDisplay(message, "website", "ja")).toBe(message);
+  });
+
+  it.each(["prompt", "discovery", null] as const)(
+    "leaves the same words from a %s worker as recorded",
+    (kind) => {
+      expect(formatRunErrorForDisplay("The site answered 403.", kind, "ja")).toBe(
+        "The site answered 403.",
+      );
+    },
+  );
+
+  it("leaves a provider's words as recorded on a Japanese page", () => {
+    expect(formatRunErrorForDisplay("Provider said no.", "prompt", "ja")).toBe(
+      "Provider said no.",
     );
   });
 });

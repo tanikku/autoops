@@ -73,7 +73,8 @@ export const DISCOVERY_NO_SELECTION_OUTPUT =
  * line, and so that "is this one of ours" is a single lookup on the exact
  * string. **Only successful website outputs belong here** — a failure's wording
  * lives in `errorMessage`, where several sentences carry a host, a status code
- * or a byte count inside them and could not be matched this way at all.
+ * or a byte count inside them and could not be matched this way at all. The one
+ * failure that is translated has its own function below.
  */
 const websiteSystemOutputs = new Map<string, TranslationKey>([
   [WEBSITE_BASELINE_OUTPUT, "run.system.websiteBaseline"],
@@ -135,4 +136,39 @@ export function formatRunOutputForDisplay(
   const key = systemOutputs.get(output);
 
   return key ? t(language, key) : output;
+}
+
+/**
+ * What a website run records when the site answered 403, exactly as
+ * `lib/watcher/transport.ts` writes it for that status.
+ *
+ * **Copied rather than imported**, unlike the outputs above: the transport
+ * builds it from the status (`The site answered ${status}.`), and this matches
+ * the one value of that template worth explaining. `transport.test.ts` fixes
+ * that a 403 still produces this string, so the two cannot drift silently.
+ */
+export const WEBSITE_FORBIDDEN_ERROR = "The site answered 403.";
+
+/**
+ * What to show for a failed run's reason, in the language the account reads.
+ *
+ * **Failure reasons are shown as recorded, with one exception.** They are
+ * diagnostics in whatever wording they arrived with, and most carry a status,
+ * a host or a byte count. A website worker's 403 is the single fixed sentence
+ * whose cause is clear enough to explain and whose next step is safe to
+ * suggest, so it alone is read in the account's language. The same two
+ * conditions as `formatRunOutputForDisplay` — a `website` worker, and the
+ * stored text *exactly* — keep everything else, including a prompt worker
+ * whose provider happens to say the same words, untouched.
+ *
+ * Writes nothing, so a run recorded before this existed reads the same way.
+ */
+export function formatRunErrorForDisplay(
+  errorMessage: string,
+  kind: RoutineKind | null,
+  language: string,
+): string {
+  return kind === "website" && errorMessage === WEBSITE_FORBIDDEN_ERROR
+    ? t(language, "run.error.websiteForbidden")
+    : errorMessage;
 }

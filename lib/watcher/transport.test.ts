@@ -1,6 +1,7 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { WEBSITE_FORBIDDEN_ERROR } from "@/lib/run-display";
 import { decodeWebsiteContent } from "@/lib/watcher/decode";
 import { isWatcherError, type WatcherError } from "@/lib/watcher/errors";
 import { fetchWatchedPage } from "@/lib/watcher/fetch";
@@ -292,6 +293,25 @@ describe("what the transport makes of a real response", () => {
     expect(await kindOf(nodeTransport(target(), ["127.0.0.1"], 5_000))).toBe(
       "http-error",
     );
+  });
+
+  /**
+   * The run detail page explains this one sentence by matching it exactly, so
+   * a 403 has to keep producing it — see `formatRunErrorForDisplay`.
+   */
+  it("says a 403 in the exact words the run detail page explains", async () => {
+    handler = (_request, response) => {
+      response.writeHead(403, { "content-type": "text/html" });
+      response.end("<p>forbidden</p>");
+    };
+
+    const failure = await nodeTransport(target(), ["127.0.0.1"], 5_000).then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    expect(isWatcherError(failure) && failure.kind).toBe("http-error");
+    expect(failure instanceof Error && failure.message).toBe(WEBSITE_FORBIDDEN_ERROR);
   });
 
   /**

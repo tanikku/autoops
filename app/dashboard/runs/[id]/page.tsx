@@ -7,7 +7,10 @@ import { RunOutputMarkdown } from "@/components/run-output-markdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDateTimeWithSeconds } from "@/lib/datetime";
-import { formatRunOutputForDisplay } from "@/lib/run-display";
+import {
+  formatRunErrorForDisplay,
+  formatRunOutputForDisplay,
+} from "@/lib/run-display";
 import { isRunStuck } from "@/lib/health";
 import { t, type TranslationKey } from "@/lib/i18n";
 import { getDocumentLanguage } from "@/lib/i18n/server";
@@ -210,12 +213,17 @@ export default async function RunDetailPage({
             is a provider's sentence or a driver's — a diagnostic, not something
             written to be read as a document — and putting it through a Markdown
             renderer would let its own punctuation restructure it. An underscore
-            in a stack trace is not emphasis. */}
+            in a stack trace is not emphasis. It is shown as recorded, except a
+            website worker's 403 — see `formatRunErrorForDisplay`. */}
         {run.status === "failed" ? (
           <Block
             className="mt-6"
             label={t(language, "run.detail.error")}
-            value={run.errorMessage ?? ""}
+            value={formatRunErrorForDisplay(
+              run.errorMessage ?? "",
+              run.routineKind,
+              language,
+            )}
           />
         ) : (
           <OutputBlock

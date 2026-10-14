@@ -687,6 +687,8 @@ export const ja: Record<TranslationKey, string> = {
     "ページは変化しましたが、待っている条件には該当しませんでした。",
   "run.system.discoveryNoSelection":
     "今回の条件では、おすすめは見つかりませんでした。",
+  "run.error.websiteForbidden":
+    "このサイトからアクセスを拒否されました（403）。\nサイトによっては自動アクセスを制限している場合があります。\n監視したい情報が掲載されている別の公開ページをお試しください。",
 
   /**
    * 括弧は日本語の引用記号。`{name}` は利用者が入力した名前がそのまま入り、
