@@ -1,6 +1,5 @@
 "use server";
 
-import { isSandboxCheckoutEnabledForUser } from "@/lib/billing/checkout-sandbox-server";
 import { openBillingPortal } from "@/lib/billing/portal";
 import { createStripeBillingPortalProvider } from "@/lib/billing/providers/stripe-portal";
 import { requireUserId } from "@/lib/session";
@@ -13,11 +12,13 @@ import { requireUserId } from "@/lib/session";
  * account's own row, and the return address is fixed. An action that took any
  * of them would be an action somebody could point at somebody else's billing.
  *
- * **Behind the same rollout switch as checkout.** While the purchase path is
- * proved against a sandbox, the only accounts that have bought anything are the
- * ones on that list — so the portal opens for them and for nobody else. Asked
- * here rather than on the page because a server action is callable by anybody
- * signed in.
+ * **Not behind checkout's rollout switch.** Starting a purchase and managing
+ * one already made are separate questions, and closing the first must leave
+ * every paying account able to reach the second — to cancel, above all. Who
+ * may open the portal is decided by `openBillingPortal` from the account's own
+ * subscription: bought through Stripe, on a paid plan, in a state there is
+ * something to manage, with a customer on record. Anybody else is refused there,
+ * on the server, whatever the page showed.
  *
  * **No provisioning.** Opening a portal writes no row, so the read-only
  * `requireUserId` is all this needs.
@@ -31,10 +32,6 @@ export type OpenBillingPortalActionResult =
 export async function openBillingPortalAction(): Promise<OpenBillingPortalActionResult> {
   // A redirect travels as a thrown error and is left to travel.
   const userId = await requireUserId();
-
-  if (!isSandboxCheckoutEnabledForUser(userId)) {
-    return { outcome: "unavailable" };
-  }
 
   const provider = createStripeBillingPortalProvider();
 

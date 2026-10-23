@@ -591,7 +591,8 @@ describe("who is not offered a plan", () => {
     });
 
     expect(html).toContain("Managing your subscription");
-    expect(html).toContain("not available yet");
+    // The portal is the account's own billing facts' answer, not the rollout's.
+    expect(html).toContain("secure billing portal");
     // No plan cards at all: nothing that could look like a second subscription.
     expect(buttonProps).toHaveLength(0);
     expect(html).not.toContain("780");
@@ -621,9 +622,8 @@ describe("who is not offered a plan", () => {
 /**
  * The billing portal, offered to somebody paying and nobody else.
  *
- * **Behind the checkout's rollout switch.** An account with something to manage
- * but outside the list keeps the sentence it had, and the button beside it is
- * disabled the way an unopened checkout button is.
+ * **Not behind the checkout's rollout switch.** Closing checkout must leave a
+ * paying account able to manage what it has, so the list decides nothing here.
  */
 describe("the billing portal", () => {
   const paid = (state: string) => ({
@@ -671,16 +671,19 @@ describe("the billing portal", () => {
     expect(html).toContain("not available yet");
   });
 
-  it("is disabled, with the old sentence, outside the rollout", async () => {
-    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(false);
+  it.each(["active", "grace", "canceled_active"])(
+    "stays offered and enabled in %s outside the rollout",
+    async (state) => {
+      mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(false);
 
-    const html = await render(paid("active"));
+      const html = await render(paid(state));
 
-    expect(portalProps).toHaveLength(1);
-    expect(portalProps[0].enabled).toBe(false);
-    expect(html).toContain("not available yet");
-    expect(html).not.toContain("billing portal");
-  });
+      expect(portalProps).toHaveLength(1);
+      expect(portalProps[0].enabled).toBe(true);
+      expect(html).toContain("secure billing portal");
+      expect(html).not.toContain("not available yet");
+    },
+  );
 
   it("hands over sentences and a boolean, nothing that identifies anybody", async () => {
     await render(paid("active"));

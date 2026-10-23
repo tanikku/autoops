@@ -9,8 +9,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *
  * **What is fixed here is that nothing a request carries is used.** Who has
  * something to manage and what the provider is asked is
- * `lib/billing/portal.test.ts`; this file checks who is asking, which side of
- * the rollout switch they are on, and what may leave for a browser.
+ * `lib/billing/portal.test.ts`; this file checks who is asking, that checkout's
+ * rollout switch is not one of the questions, and what may leave for a browser.
  */
 
 /**
@@ -115,7 +115,6 @@ function findPortalActionCallers(): string[] {
 const mocks = vi.hoisted(() => ({
   requireUserId: vi.fn(),
   requireProvisionedUserId: vi.fn(),
-  isSandboxCheckoutEnabledForUser: vi.fn(),
   openBillingPortal: vi.fn(),
   createStripeBillingPortalProvider: vi.fn(),
 }));
@@ -123,9 +122,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/session", () => ({
   requireUserId: mocks.requireUserId,
   requireProvisionedUserId: mocks.requireProvisionedUserId,
-}));
-vi.mock("@/lib/billing/checkout-sandbox-server", () => ({
-  isSandboxCheckoutEnabledForUser: mocks.isSandboxCheckoutEnabledForUser,
 }));
 vi.mock("@/lib/billing/portal", () => ({
   openBillingPortal: mocks.openBillingPortal,
@@ -153,7 +149,6 @@ const callWith = (...args: unknown[]) =>
 beforeEach(() => {
   mocks.requireUserId.mockReset().mockResolvedValue(USER);
   mocks.requireProvisionedUserId.mockReset().mockResolvedValue(USER);
-  mocks.isSandboxCheckoutEnabledForUser.mockReset().mockReturnValue(true);
   mocks.createStripeBillingPortalProvider.mockReset().mockReturnValue(PROVIDER);
   mocks.openBillingPortal
     .mockReset()
@@ -226,53 +221,25 @@ describe("who is asking", () => {
   });
 });
 
-describe("who may reach the portal at all", () => {
-  beforeEach(() => {
-    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(false);
-  });
-
-  it("asks about the authenticated account", async () => {
-    await openBillingPortalAction();
-
-    expect(mocks.isSandboxCheckoutEnabledForUser).toHaveBeenCalledWith(USER);
-  });
-
-  it("answers an account outside the rollout as unavailable, and does nothing", async () => {
-    expect(await openBillingPortalAction()).toEqual({ outcome: "unavailable" });
-    expect(mocks.createStripeBillingPortalProvider).not.toHaveBeenCalled();
-    expect(mocks.openBillingPortal).not.toHaveBeenCalled();
-  });
-});
-
 /**
- * The rollout list itself, read for real.
- *
- * **Fail closed when it is unset.** The gate is stood in for above so the
- * action can be driven to both answers; here it is the real helper, reading the
- * real variable, so an unset list is proven to refuse.
+ * **Checkout's rollout list is not a question this asks.** Closing checkout to
+ * new purchases must leave every paying account able to manage, and cancel, the
+ * one it has; who may is `openBillingPortal`'s answer from the account's own
+ * subscription. `portal-actions.boundary.test.ts` drives the real orchestration
+ * with the list set and unset.
  */
-describe("the rollout list, read for real", () => {
-  it("refuses everybody when the list is unset, and only lets the named account in", async () => {
-    const actual = await vi.importActual<
-      typeof import("@/lib/billing/checkout-sandbox-server")
-    >("@/lib/billing/checkout-sandbox-server");
+describe("checkout's rollout switch", () => {
+  it("is not consulted, so the portal opens whatever the list says", async () => {
+    const source = readFileSync("app/dashboard/billing/portal-actions.ts", "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/[^\n]*/g, "");
 
-    expect(actual.isSandboxCheckoutEnabledForUser(USER, {} as NodeJS.ProcessEnv)).toBe(false);
-    expect(
-      actual.isSandboxCheckoutEnabledForUser(USER, {
-        CHECKOUT_SANDBOX_USER_IDS: "",
-      } as unknown as NodeJS.ProcessEnv),
-    ).toBe(false);
-    expect(
-      actual.isSandboxCheckoutEnabledForUser(USER, {
-        CHECKOUT_SANDBOX_USER_IDS: USER,
-      } as unknown as NodeJS.ProcessEnv),
-    ).toBe(true);
-    expect(
-      actual.isSandboxCheckoutEnabledForUser("somebody-else", {
-        CHECKOUT_SANDBOX_USER_IDS: USER,
-      } as unknown as NodeJS.ProcessEnv),
-    ).toBe(false);
+    expect(source).not.toContain("checkout-sandbox");
+    expect(source).not.toContain("isSandboxCheckoutEnabledForUser");
+    expect(await openBillingPortalAction()).toEqual({
+      outcome: "portal-ready",
+      url: PORTAL_URL,
+    });
   });
 });
 

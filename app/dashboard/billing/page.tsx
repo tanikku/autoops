@@ -166,12 +166,12 @@ export default async function BillingPage() {
   const showPlans =
     offerPurchase ||
     (view.current.kind === "on-plan" && view.current.adminGrantedBeta);
-  // **The same rollout switch opens the portal.** The accounts that have bought
-  // anything while checkout is proved are the accounts on that list; everybody
-  // else who has something to manage keeps the sentence they had, with the
-  // button beside it disabled the way an unopened checkout button is.
+  // **Not behind the checkout's rollout switch.** Whether a new purchase may
+  // start and whether an existing one may be managed are separate questions:
+  // closing checkout must not lock a paying account out of cancelling. The
+  // portal is offered on the account's own billing facts, the same ones the
+  // action checks again before asking the provider.
   const portalOffered = mayOpenBillingPortal(view.current);
-  const portalEnabled = portalOffered && checkoutEnabled;
   // **Only where a purchase would end a running trial, and only where one can be
   // started.** An ended trial has nothing left to lose, and an account the
   // rollout has not reached is shown no new sentence about a button it cannot
@@ -257,8 +257,9 @@ export default async function BillingPage() {
         ) : (
           /* **Somebody already paying is not shown a plan to buy.** Offering one
              would be offering them a second subscription; what they need is the
-             provider's own page for the one they have. Where that is not open to
-             them yet, the page says so rather than implying a control exists.
+             provider's own page for the one they have. Where there is nothing
+             the portal could manage, the page says so rather than implying a
+             control exists.
              **The portal sentence names no operation.** What can be done there
              is the provider's configuration, and a sentence promising a plan
              change or a cancellation would be a claim this page cannot check. */
@@ -269,14 +270,14 @@ export default async function BillingPage() {
             <p className="mt-3 max-w-2xl text-sm text-muted-foreground">
               {t(
                 language,
-                portalEnabled
+                portalOffered
                   ? "pricing.managed.portalDescription"
                   : "pricing.managed.description",
               )}
             </p>
             {portalOffered ? (
               <BillingPortalButton
-                enabled={portalEnabled}
+                enabled
                 labels={{
                   manage: t(language, "pricing.portal.manage"),
                   unavailable: t(language, "pricing.cta.comingSoon"),
