@@ -67,10 +67,13 @@ describe("the Japanese notice", () => {
   it("states the three prices", async () => {
     const body = await text();
 
-    expect(body).toContain("Lite: 月額 780円");
-    expect(body).toContain("Standard: 月額 1,480円");
-    expect(body).toContain("Pro: 月額 2,480円");
-    expect(body).not.toMatch(/税込|税別/);
+    expect(body).toContain("Lite: 月額 780円（税込）");
+    expect(body).toContain("Standard: 月額 1,480円（税込）");
+    expect(body).toContain("Pro: 月額 2,480円（税込）");
+    // Tax included means nothing is added on top: no tax-exclusive wording, and
+    // the costs other than the price stay the user's own connection.
+    expect(body).not.toMatch(/税別|税抜|別途消費税/);
+    expect(body).toContain("インターネット接続料金、通信料金その他、利用者側で発生する費用。");
   });
 
   it("discloses the four items on request, and says how to ask", async () => {
@@ -114,9 +117,10 @@ describe("the English notice", () => {
   it("states the same facts", async () => {
     const body = await text();
 
-    expect(body).toContain("¥780 per month");
-    expect(body).toContain("¥1,480 per month");
-    expect(body).toContain("¥2,480 per month");
+    expect(body).toContain("¥780 per month (tax included)");
+    expect(body).toContain("¥1,480 per month (tax included)");
+    expect(body).toContain("¥2,480 per month (tax included)");
+    expect(body).not.toMatch(/excluding tax|plus tax|tax excluded/i);
     expect(body.match(/Disclosed without delay upon request/g)?.length).toBe(4);
     expect(body).toContain("Stripe Billing Portal");
     expect(body).toContain("payments are not refunded");

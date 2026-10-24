@@ -1551,7 +1551,7 @@ Notes for the report:
   "pricing.plan.standard": "Standard",
   "pricing.plan.pro": "Pro",
   "pricing.plan.beta": "Beta",
-  "pricing.price.monthly": "¥{amount} / month",
+  "pricing.price.monthly": "¥{amount} / month, tax included",
   "pricing.allowance.activeWorkers": "Workers active at once: {limit}",
   "pricing.allowance.aiProcessing": "AI processing: {limit} a month",
   "pricing.allowance.manualRun": "Manual runs: {limit} a month",

@@ -168,6 +168,14 @@ describe("the three plans", () => {
     expect(html).toContain("2,480");
   });
 
+  it("says each price includes tax", async () => {
+    const html = await render();
+
+    expect(html).toContain("¥780 / month, tax included");
+    expect(html).toContain("¥1,480 / month, tax included");
+    expect(html).toContain("¥2,480 / month, tax included");
+  });
+
   it("shows each plan's allowances from the catalogue", async () => {
     const html = await render();
 
@@ -1054,7 +1062,9 @@ describe("in Japanese", () => {
   it("says the price in Japanese", async () => {
     const html = await render();
 
-    expect(html).toContain("月額 780 円");
+    expect(html).toContain("月額 780 円（税込）");
+    expect(html).toContain("月額 1,480 円（税込）");
+    expect(html).toContain("月額 2,480 円（税込）");
   });
 
   it("says what the account is on in Japanese", async () => {
@@ -1354,7 +1364,7 @@ describe("the purchase terms handed to each button", () => {
     const body = said(purchase);
 
     expect(purchase.heading).toBe("Review your purchase");
-    expect(body).toContain("Plan: Lite (¥780 / month)");
+    expect(body).toContain("Plan: Lite (¥780 / month, tax included)");
     expect(body).toContain("A monthly, continuing subscription");
     expect(body).toContain("renews automatically every month");
     expect(body).toContain("First payment when the paid plan starts");
@@ -1388,7 +1398,7 @@ describe("the purchase terms handed to each button", () => {
     const body = said(purchase);
 
     expect(purchase.heading).toBe("購入内容の確認");
-    expect(body).toContain("プラン: Lite（月額 780 円）");
+    expect(body).toContain("プラン: Lite（月額 780 円（税込））");
     expect(body).toContain("月単位の継続契約です");
     expect(body).toContain("契約開始日を基準に1か月ごとに自動更新されます");
     expect(body).toContain("初回は有料プランの開始時、以後は契約開始日を基準に1か月ごとです");
@@ -1411,8 +1421,8 @@ describe("the purchase terms handed to each button", () => {
   it("names each card's own plan and price", async () => {
     await render();
 
-    expect(said(purchaseOf(1))).toContain("Plan: Standard (¥1,480 / month)");
-    expect(said(purchaseOf(2))).toContain("Plan: Pro (¥2,480 / month)");
+    expect(said(purchaseOf(1))).toContain("Plan: Standard (¥1,480 / month, tax included)");
+    expect(said(purchaseOf(2))).toContain("Plan: Pro (¥2,480 / month, tax included)");
   });
 
   it("links to the terms and the notice in the reader's language", async () => {

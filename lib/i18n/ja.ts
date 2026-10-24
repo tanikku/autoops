@@ -851,7 +851,7 @@ export const ja: Record<TranslationKey, string> = {
   "pricing.plan.standard": "Standard",
   "pricing.plan.pro": "Pro",
   "pricing.plan.beta": "Beta",
-  "pricing.price.monthly": "月額 {amount} 円",
+  "pricing.price.monthly": "月額 {amount} 円（税込）",
   "pricing.allowance.activeWorkers": "同時に稼働できるWorker数 {limit} 件",
   "pricing.allowance.aiProcessing": "AI処理 月 {limit} 回",
   "pricing.allowance.manualRun": "手動実行 月 {limit} 回",

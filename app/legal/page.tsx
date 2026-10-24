@@ -84,9 +84,9 @@ const LEGAL_COPY = {
       label: "販売価格",
       value: (
         <ul className="list-disc pl-5">
-          <li>Lite: 月額 {yen(MONTHLY_YEN.lite)}円</li>
-          <li>Standard: 月額 {yen(MONTHLY_YEN.standard)}円</li>
-          <li>Pro: 月額 {yen(MONTHLY_YEN.pro)}円</li>
+          <li>Lite: 月額 {yen(MONTHLY_YEN.lite)}円（税込）</li>
+          <li>Standard: 月額 {yen(MONTHLY_YEN.standard)}円（税込）</li>
+          <li>Pro: 月額 {yen(MONTHLY_YEN.pro)}円（税込）</li>
         </ul>
       ),
     },
@@ -178,9 +178,9 @@ const LEGAL_COPY = {
       label: "Prices",
       value: (
         <ul className="list-disc pl-5">
-          <li>Lite: ¥{yen(MONTHLY_YEN.lite)} per month</li>
-          <li>Standard: ¥{yen(MONTHLY_YEN.standard)} per month</li>
-          <li>Pro: ¥{yen(MONTHLY_YEN.pro)} per month</li>
+          <li>Lite: ¥{yen(MONTHLY_YEN.lite)} per month (tax included)</li>
+          <li>Standard: ¥{yen(MONTHLY_YEN.standard)} per month (tax included)</li>
+          <li>Pro: ¥{yen(MONTHLY_YEN.pro)} per month (tax included)</li>
         </ul>
       ),
     },

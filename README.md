@@ -1016,9 +1016,15 @@ active, is refused at that figure. **Nothing else in the entitlement refuses
 anything**: the counted allowances below stop nothing, and a `state` that entitles
 nothing takes no capacity away — the limits are reported whatever the state says.
 
-**No purchase has been charged in production.** The plans carry no prices and no
-provider price ids, there is no checkout, and no balance or payment state refuses
-an account anything. The one subscription that has existed on the provider's side
+**No purchase has been charged in production.** The plan catalogue carries no
+prices and no provider price ids. The prices are `MONTHLY_YEN` in
+`lib/billing/pricing.ts` — ¥780 / ¥1,480 / ¥2,480 a month, **tax included** — and
+the Stripe price ids are read from `STRIPE_PRICE_LITE`, `STRIPE_PRICE_STANDARD` and
+`STRIPE_PRICE_PRO`. Checkout exists, opened only to the accounts listed in
+`CHECKOUT_SANDBOX_USER_IDS`. Nothing checks that the Stripe prices charge the
+amounts shown: **before a live launch, confirm in the Stripe Dashboard that the
+live prices are 780, 1,480 and 2,480 JPY, each billed monthly.** No balance or
+payment state refuses an account anything. The one subscription that has existed on the provider's side
 was a **sandbox** one, created to prove the reconciliation path end to end — see
 [Billing, end to end against Production](#billing-end-to-end-against-production).
 

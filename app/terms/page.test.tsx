@@ -99,6 +99,13 @@ describe("the Japanese terms", () => {
     expect(body).toContain("原則として返金は行いません");
   });
 
+  it("points to the prices rather than restating them", async () => {
+    const body = await text();
+
+    expect(body).toContain("価格は Plans および特定商取引法に基づく表記に表示します");
+    expect(body).not.toMatch(/780|1,480|2,480|税込/);
+  });
+
   it("lists prohibited uses and keeps rights in user content with the user", async () => {
     const body = await text();
 
@@ -150,6 +157,8 @@ describe("the English terms", () => {
     expect(body).not.toMatch(/court/i);
     expect(body).toContain("19. Contact");
     expect(body).not.toContain("without notice");
+    expect(body).toContain("Prices are shown on Plans and in the");
+    expect(body).not.toMatch(/780|1,480|2,480|tax included/);
   });
 });
 

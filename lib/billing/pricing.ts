@@ -99,8 +99,10 @@ export type PricingView = {
  * **Still one copy.** The screen reads it from here; nothing else needs it. If a
  * second place ever does, it reads it from here too.
  *
- * **Not marked tax-inclusive or exclusive**, because that has not been decided —
- * and a screen that guessed would be making a claim about somebody's invoice.
+ * **Tax included.** Each amount is the whole of what is charged a month, and
+ * every screen that shows one says so. Nothing here asks Stripe what its prices
+ * are: that the configured prices charge these same amounts, in yen, monthly, is
+ * checked by hand in the Stripe Dashboard before launch.
  */
 export const MONTHLY_YEN: Readonly<Record<CheckoutAttemptPlan, number>> = {
   lite: 780,
