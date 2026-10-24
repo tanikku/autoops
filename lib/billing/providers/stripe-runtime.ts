@@ -41,7 +41,9 @@ export type StripeRuntime =
       readonly reason:
         | "no-secret-key"
         | "no-price-catalogue"
-        | "bad-livemode-flag";
+        | "no-livemode-flag"
+        | "bad-livemode-flag"
+        | "key-mode-mismatch";
     };
 
 /**
@@ -52,20 +54,26 @@ export type StripeRuntime =
  * environment — so a sandbox key paired with sandbox prices had nothing
  * stopping it from reconciling a live subscription that happened to reach it.
  *
- * **Unset means no check, and that is deliberate.** Making absence mean
- * "expect test mode" would refuse every live subscription the day this is
- * pointed at real money, and making it mean "expect live" would do the reverse;
- * either would be this file deciding something the deployment must state. What
- * it will not accept is a value that is neither — a typo must not read as
- * silence.
+ * **Required wherever Stripe is used, with no default.** Unset used to mean
+ * "check nothing", which let a deployment holding a complete set of the wrong
+ * world's key, prices and webhook secret run without anything noticing.
+ * Defaulting instead would be this file deciding something the deployment must
+ * state — "test" would refuse every live subscription the day this points at
+ * real money, "live" the reverse — so an unset flag fails Stripe closed, and so
+ * does a value that is neither: a typo must not read as silence.
+ *
+ * **Exported for the webhook**, which needs the world but not a key, so that
+ * every path reads the flag the same way.
  */
-function readExpectedLivemode(
-  raw: string | undefined,
-): { ok: true; value: boolean | undefined } | { ok: false } {
-  const trimmed = raw?.trim();
+export function readExpectedLivemode(
+  env: NodeJS.ProcessEnv = process.env,
+):
+  | { readonly ok: true; readonly value: boolean }
+  | { readonly ok: false; readonly reason: "no-livemode-flag" | "bad-livemode-flag" } {
+  const trimmed = env[STRIPE_ENV.expectedLivemode]?.trim();
 
   if (trimmed === undefined || trimmed === "") {
-    return { ok: true, value: undefined };
+    return { ok: false, reason: "no-livemode-flag" };
   }
 
   if (trimmed === "true") {
@@ -76,7 +84,28 @@ function readExpectedLivemode(
     return { ok: true, value: false };
   }
 
-  return { ok: false };
+  return { ok: false, reason: "bad-livemode-flag" };
+}
+
+/**
+ * Which world a key belongs to, read from its prefix, or null when the prefix
+ * says nothing.
+ *
+ * **Stripe's documented prefixes, secret and restricted alike.** `sk_test_` and
+ * `rk_test_` are sandbox keys, `sk_live_` and `rk_live_` live ones. Anything
+ * else — a publishable key, a truncated paste — is not guessed at: it cannot
+ * prove the world the flag names, so it is refused like a mismatch.
+ */
+function keyLivemode(secretKey: string): boolean | null {
+  if (/^(sk|rk)_live_/.test(secretKey)) {
+    return true;
+  }
+
+  if (/^(sk|rk)_test_/.test(secretKey)) {
+    return false;
+  }
+
+  return null;
 }
 
 /**
@@ -106,19 +135,23 @@ export function readStripeRuntime(
     return { ok: false, reason: "no-price-catalogue" };
   }
 
-  const livemode = readExpectedLivemode(env[STRIPE_ENV.expectedLivemode]);
+  const livemode = readExpectedLivemode(env);
 
   if (!livemode.ok) {
-    return { ok: false, reason: "bad-livemode-flag" };
+    return { ok: false, reason: livemode.reason };
+  }
+
+  // **Before any client exists**, so a key from the other world never reaches
+  // Stripe at all. The responses are still checked afterwards: this proves
+  // what the key claims to be, and they prove what Stripe actually answered.
+  if (keyLivemode(secretKey) !== livemode.value) {
+    return { ok: false, reason: "key-mode-mismatch" };
   }
 
   return {
     ok: true,
     secretKey,
-    config: {
-      prices,
-      ...(livemode.value === undefined ? {} : { expectedLivemode: livemode.value }),
-    },
+    config: { prices, expectedLivemode: livemode.value },
   };
 }
 
@@ -131,17 +164,14 @@ export function readStripeRuntime(
  * the subscription it produced, and somebody would have paid for an entitlement
  * that never arrives. Asking here keeps that page from being handed out at all.
  *
- * **No flag, no check** — the same as everywhere else it is read. A value that
- * is not a boolean does not match either world, so an object whose `livemode`
- * is missing is refused whenever the flag is set.
+ * A value that is not a boolean does not match either world, so an object whose
+ * `livemode` is missing is refused.
  */
 export function matchesExpectedLivemode(
   config: StripeAdapterConfig,
   livemode: unknown,
 ): boolean {
-  return (
-    config.expectedLivemode === undefined || livemode === config.expectedLivemode
-  );
+  return livemode === config.expectedLivemode;
 }
 
 /**

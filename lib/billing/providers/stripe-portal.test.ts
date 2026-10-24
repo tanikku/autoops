@@ -36,6 +36,7 @@ const configured = {
   STRIPE_PRICE_LITE: "price_lite",
   STRIPE_PRICE_STANDARD: "price_standard",
   STRIPE_PRICE_PRO: "price_pro",
+  STRIPE_EXPECTED_LIVEMODE: "false",
 } as unknown as NodeJS.ProcessEnv;
 
 const REQUEST = {
@@ -57,7 +58,11 @@ beforeEach(() => {
   StripeConstructor.mockReset();
   portalSessionsCreate
     .mockReset()
-    .mockResolvedValue({ id: "bps_1", url: "https://billing.stripe.com/p/session/x" });
+    .mockResolvedValue({
+      id: "bps_1",
+      url: "https://billing.stripe.com/p/session/x",
+      livemode: false,
+    });
   subscriptionsUpdate.mockReset();
   subscriptionsCancel.mockReset();
   checkoutSessionsCreate.mockReset();
@@ -72,6 +77,21 @@ describe("when Stripe is not configured", () => {
       "a livemode flag that is neither",
       { ...configured, STRIPE_EXPECTED_LIVEMODE: "yes" },
       "bad-livemode-flag",
+    ],
+    [
+      "no livemode flag",
+      { ...configured, STRIPE_EXPECTED_LIVEMODE: undefined },
+      "no-livemode-flag",
+    ],
+    [
+      "a live key where a sandbox is expected",
+      { ...configured, STRIPE_SECRET_KEY: "rk_live_not_a_real_key" },
+      "key-mode-mismatch",
+    ],
+    [
+      "a sandbox key where live is expected",
+      { ...configured, STRIPE_EXPECTED_LIVEMODE: "true" },
+      "key-mode-mismatch",
     ],
   ])("says so for %s", (_label, env, reason) => {
     expect(
@@ -126,7 +146,7 @@ describe("what a portal session asks for", () => {
   });
 
   it.each([null, undefined, 42])("answers a missing url (%j) with null", async (url) => {
-    portalSessionsCreate.mockResolvedValue({ id: "bps_1", url });
+    portalSessionsCreate.mockResolvedValue({ id: "bps_1", url, livemode: false });
 
     expect(await provider().createPortalSession(REQUEST)).toEqual({ url: null });
   });
@@ -143,13 +163,15 @@ describe("what a portal session asks for", () => {
  * Which Stripe world a portal session belongs to.
  *
  * **Asked before the address leaves**, with the same flag checkout and
- * reconciliation read. Unset, nothing is checked.
+ * reconciliation read. The key already matched the flag; this is what Stripe
+ * actually answered.
  */
 describe("the world a portal session belongs to", () => {
-  const withFlag = (flag: string | undefined) =>
+  const withFlag = (flag: string) =>
     ({
       ...configured,
-      ...(flag === undefined ? {} : { STRIPE_EXPECTED_LIVEMODE: flag }),
+      STRIPE_SECRET_KEY: flag === "true" ? "rk_live_not_a_real_key" : "rk_test_not_a_real_key",
+      STRIPE_EXPECTED_LIVEMODE: flag,
     }) as unknown as NodeJS.ProcessEnv;
 
   const created = (livemode: unknown) =>
@@ -160,8 +182,6 @@ describe("the world a portal session belongs to", () => {
     });
 
   it.each([
-    ["unset, a test session", undefined, false],
-    ["unset, a live session", undefined, true],
     ["false, a test session", "false", false],
     ["true, a live session", "true", true],
   ])("hands out the session when the flag is %s", async (_label, flag, livemode) => {
@@ -176,6 +196,7 @@ describe("the world a portal session belongs to", () => {
     ["false, and the session is live", "false", true],
     ["true, and the session is a test one", "true", false],
     ["true, and the session does not say", "true", undefined],
+    ["false, and the session does not say", "false", undefined],
   ])("refuses when the flag is %s", async (_label, flag, livemode) => {
     created(livemode);
 

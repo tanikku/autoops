@@ -30,7 +30,7 @@ const PRICES = {
   pro: "price_pro_1",
 };
 
-const config: StripeAdapterConfig = { prices: PRICES };
+const config: StripeAdapterConfig = { prices: PRICES, expectedLivemode: false };
 const OBSERVED = new Date("2026-10-15T00:00:00.000Z");
 
 const PERIOD_START = 1_759_276_800; // 2025-10-01T00:00:00Z
@@ -283,7 +283,7 @@ describe("the price catalogue itself", () => {
 
   it("refuses to translate anything against a broken catalogue", () => {
     expect(
-      translate({}, { prices: { ...PRICES, pro: PRICES.lite } }),
+      translate({}, { prices: { ...PRICES, pro: PRICES.lite }, expectedLivemode: false }),
     ).toEqual({ kind: "refused", reason: "malformed" });
   });
 });
@@ -447,8 +447,9 @@ describe("keeping test and live worlds apart", () => {
     expect(outcome).toEqual({ kind: "refused", reason: "malformed" });
   });
 
-  it("checks nothing when no world was named", () => {
-    expect(translate({ livemode: true }).kind).toBe("observed");
+  /** The world is always named now, so a subscription that says none is refused. */
+  it.each([undefined, null, "false"])("refuses one whose livemode is %j", (livemode) => {
+    expect(translate({ livemode })).toEqual({ kind: "refused", reason: "malformed" });
   });
 });
 

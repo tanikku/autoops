@@ -49,11 +49,11 @@ export type StripePriceCatalogue = {
 export type StripeAdapterConfig = {
   readonly prices: StripePriceCatalogue;
   /**
-   * Which Stripe world this configuration belongs to, when it is worth
-   * enforcing. Left out, nothing is checked; set, a subscription from the other
-   * world is refused rather than reconciled with prices that are not its own.
+   * Which Stripe world this configuration belongs to. Always stated: a
+   * subscription from the other world is refused rather than reconciled with
+   * prices that are not its own.
    */
-  readonly expectedLivemode?: boolean;
+  readonly expectedLivemode: boolean;
 };
 
 /** What is wrong with a price catalogue, or null when nothing is. */
@@ -105,10 +105,7 @@ export function translateStripeSubscription(
     return refuse("malformed");
   }
 
-  if (
-    config.expectedLivemode !== undefined &&
-    subscription.livemode !== config.expectedLivemode
-  ) {
+  if (subscription.livemode !== config.expectedLivemode) {
     // Test prices against live objects, or the other way round, would reconcile
     // an account against a catalogue that is not its own.
     return refuse("malformed");

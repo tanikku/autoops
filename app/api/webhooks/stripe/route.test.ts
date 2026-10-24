@@ -32,6 +32,7 @@ function body(overrides: Record<string, unknown> = {}) {
     type: "customer.subscription.updated",
     created: 1_760_000_000,
     api_version: "2026-08-26.dahlia",
+    livemode: false,
     data: { object: { id: "sub_1", object: "subscription", customer: "cus_1" } },
     ...overrides,
   });
@@ -57,6 +58,7 @@ const logs: string[] = [];
 
 beforeEach(() => {
   process.env.STRIPE_WEBHOOK_SECRET = SECRET;
+  process.env.STRIPE_EXPECTED_LIVEMODE = "false";
   recordProviderEventReceipt
     .mockReset()
     .mockResolvedValue({ outcome: "recorded", receivedAt: new Date() });
@@ -72,6 +74,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.STRIPE_WEBHOOK_SECRET;
+  delete process.env.STRIPE_EXPECTED_LIVEMODE;
 });
 
 describe("a delivery that proves it is Stripe's", () => {
@@ -149,6 +152,94 @@ describe("a delivery that does not prove it", () => {
       error: "Not Configured",
     });
     expect(recordProviderEventReceipt).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * **The world is checked after the signature and before the record.** Each
+ * refusal is asserted by the absence of the one write this route makes:
+ * `recordProviderEventReceipt` is the receipt and the subscription's
+ * `pendingSince` together, and nothing else here touches the database.
+ */
+describe("a delivery from a Stripe world", () => {
+  it.each([
+    ["false", false],
+    ["true", true],
+  ])("is recorded when this deployment expects %s and it is", async (flag, livemode) => {
+    process.env.STRIPE_EXPECTED_LIVEMODE = flag;
+
+    const response = await deliver(body({ livemode }));
+
+    expect(response.status).toBe(200);
+    expect(recordProviderEventReceipt).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["false", true, "expected=test actual=live"],
+    ["true", false, "expected=live actual=test"],
+    ["false", undefined, "expected=test actual=unknown"],
+  ])(
+    "is refused, unrecorded, when this deployment expects %s and it says %j",
+    async (flag, livemode, said) => {
+      process.env.STRIPE_EXPECTED_LIVEMODE = flag;
+
+      const payload = JSON.stringify({ ...JSON.parse(body()), livemode });
+      const response = await deliver(payload);
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ success: false, error: "Bad Request" });
+      expect(recordProviderEventReceipt).not.toHaveBeenCalled();
+      expect(logs.join("\n")).toContain(`mode-mismatch ${said}`);
+    },
+  );
+
+  /** Refused whatever its type: an ignored type is still the wrong world. */
+  it("refuses a wrong-world delivery of a type it would ignore", async () => {
+    const response = await deliver(body({ type: "invoice.paid", livemode: true }));
+
+    expect(response.status).toBe(400);
+    expect(recordProviderEventReceipt).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["unset", undefined],
+    ["blank", "  "],
+    ["not a boolean", "sandbox"],
+  ])("is closed, unrecorded, when the flag is %s", async (_label, flag) => {
+    if (flag === undefined) delete process.env.STRIPE_EXPECTED_LIVEMODE;
+    else process.env.STRIPE_EXPECTED_LIVEMODE = flag;
+
+    const response = await deliver(body());
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ success: false, error: "Not Configured" });
+    expect(recordProviderEventReceipt).not.toHaveBeenCalled();
+  });
+
+  /** A bad signature is refused as before, whatever the flag says. */
+  it("still refuses a bad signature first", async () => {
+    delete process.env.STRIPE_EXPECTED_LIVEMODE;
+
+    const response = await deliver(body(), "t=1,v1=deadbeef");
+
+    expect(response.status).toBe(400);
+    expect(recordProviderEventReceipt).not.toHaveBeenCalled();
+  });
+
+  it("logs no secret and no object when it refuses the world", async () => {
+    process.env.STRIPE_SECRET_KEY = "sk_test_never_logged";
+    try {
+      await deliver(body({ livemode: true }));
+    } finally {
+      delete process.env.STRIPE_SECRET_KEY;
+    }
+
+    const written = logs.join("\n");
+
+    expect(written).not.toContain(SECRET);
+    expect(written).not.toContain("sk_test_never_logged");
+    expect(written).not.toContain("evt_1");
+    expect(written).not.toContain("sub_1");
   });
 });
 

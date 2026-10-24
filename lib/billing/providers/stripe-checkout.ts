@@ -34,7 +34,9 @@ import type {
 export type StripeCheckoutUnavailable =
   | "no-secret-key"
   | "no-price-catalogue"
-  | "bad-livemode-flag";
+  | "no-livemode-flag"
+  | "bad-livemode-flag"
+  | "key-mode-mismatch";
 
 /**
  * How long a session may be paid for.

@@ -23,7 +23,17 @@ const configured = {
   [STRIPE_ENV.priceLite]: "price_lite",
   [STRIPE_ENV.priceStandard]: "price_standard",
   [STRIPE_ENV.pricePro]: "price_pro",
+  [STRIPE_ENV.expectedLivemode]: "false",
 } as unknown as NodeJS.ProcessEnv;
+
+/** The same configuration with a given key and world. */
+function withKey(key: string, flag: string) {
+  return {
+    ...configured,
+    [STRIPE_ENV.secretKey]: key,
+    [STRIPE_ENV.expectedLivemode]: flag,
+  } as unknown as NodeJS.ProcessEnv;
+}
 
 describe("reading the configuration", () => {
   it("accepts a complete one", () => {
@@ -95,10 +105,9 @@ describe("saying which Stripe world the configuration is for", () => {
     ["true", true],
     ["  false  ", false],
   ])("reads %s", (raw, expected) => {
-    const runtime = readStripeRuntime({
-      ...configured,
-      [STRIPE_ENV.expectedLivemode]: raw,
-    } as unknown as NodeJS.ProcessEnv);
+    const runtime = readStripeRuntime(
+      withKey(expected ? "sk_live_not_a_real_key" : "sk_test_not_a_real_key", raw),
+    );
 
     expect(runtime.ok).toBe(true);
     expect(
@@ -108,21 +117,36 @@ describe("saying which Stripe world the configuration is for", () => {
   });
 
   /**
-   * **Unset means no check, deliberately.** Defaulting either way would decide
-   * something the deployment must state: one would refuse every live
-   * subscription the day this points at real money, the other would accept one
-   * against sandbox prices.
+   * **Unset fails Stripe closed.** It used to mean "check nothing"; defaulting
+   * either way would instead decide something the deployment must state.
    */
-  it.each([undefined, ""])("checks nothing when it is %s", (raw) => {
-    const runtime = readStripeRuntime({
-      ...configured,
-      ...(raw === undefined ? {} : { [STRIPE_ENV.expectedLivemode]: raw }),
-    } as unknown as NodeJS.ProcessEnv);
+  it.each([undefined, "", "   "])("refuses the configuration when it is %j", (raw) => {
+    const env = { ...configured } as Record<string, string | undefined>;
 
-    expect(runtime.ok).toBe(true);
-    expect(
-      (runtime as { config: Record<string, unknown> }).config,
-    ).not.toHaveProperty("expectedLivemode");
+    if (raw === undefined) delete env[STRIPE_ENV.expectedLivemode];
+    else env[STRIPE_ENV.expectedLivemode] = raw;
+
+    expect(readStripeRuntime(env as unknown as NodeJS.ProcessEnv)).toEqual({
+      ok: false,
+      reason: "no-livemode-flag",
+    });
+  });
+
+  it("fails Stripe closed without a flag, for the sweep too", () => {
+    const env = { ...configured } as Record<string, string | undefined>;
+    delete env[STRIPE_ENV.expectedLivemode];
+
+    expect(resolveProviderReader(env as unknown as NodeJS.ProcessEnv)("stripe")).toEqual({
+      unavailable: "no-livemode-flag",
+    });
+  });
+
+  /** A deployment with no Stripe at all is still just "no key", flag or not. */
+  it("still calls a deployment with no Stripe at all keyless", () => {
+    expect(readStripeRuntime({} as unknown as NodeJS.ProcessEnv)).toEqual({
+      ok: false,
+      reason: "no-secret-key",
+    });
   });
 
   /** A typo must not read as silence. */
@@ -149,6 +173,66 @@ describe("saying which Stripe world the configuration is for", () => {
 });
 
 /**
+ * Whether the key belongs to the world the flag names, decided from its prefix
+ * before any client exists — so a key from the other world never reaches
+ * Stripe. Secret and restricted keys alike.
+ */
+describe("checking the key's world before Stripe is asked anything", () => {
+  it.each([
+    ["sk_test_x", "false"],
+    ["rk_test_x", "false"],
+    ["sk_live_x", "true"],
+    ["rk_live_x", "true"],
+  ])("accepts %s when the flag is %s", (key, flag) => {
+    const runtime = readStripeRuntime(withKey(key, flag));
+
+    expect(runtime.ok).toBe(true);
+    expect(
+      (runtime as { config: { expectedLivemode: boolean } }).config.expectedLivemode,
+    ).toBe(flag === "true");
+  });
+
+  it.each([
+    ["sk_live_x", "false"],
+    ["rk_live_x", "false"],
+    ["sk_test_x", "true"],
+    ["rk_test_x", "true"],
+  ])("refuses %s when the flag is %s", (key, flag) => {
+    expect(readStripeRuntime(withKey(key, flag))).toEqual({
+      ok: false,
+      reason: "key-mode-mismatch",
+    });
+  });
+
+  /** A prefix that proves neither world is not guessed at. */
+  it.each([
+    ["pk_test_x", "false"],
+    ["pk_live_x", "true"],
+    ["sk_x", "false"],
+    ["whsec_x", "true"],
+    ["SK_TEST_x", "false"],
+    ["not-a-key", "true"],
+  ])("refuses %s, whose world cannot be told, when the flag is %s", (key, flag) => {
+    expect(readStripeRuntime(withKey(key, flag))).toEqual({
+      ok: false,
+      reason: "key-mode-mismatch",
+    });
+  });
+
+  it("refuses the sweep its reader when the key is from the other world", () => {
+    expect(resolveProviderReader(withKey("rk_live_x", "false"))("stripe")).toEqual({
+      unavailable: "key-mode-mismatch",
+    });
+  });
+
+  it("never puts the key in a refusal", () => {
+    const refused = JSON.stringify(readStripeRuntime(withKey("sk_live_secret_value", "false")));
+
+    expect(refused).not.toContain("sk_live_secret_value");
+  });
+});
+
+/**
  * Whether something Stripe returned is from the world the flag names.
  *
  * **One comparison, shared by checkout and the portal**, so the two cannot come
@@ -160,13 +244,6 @@ describe("matching an object to the expected world", () => {
     standard: "price_standard",
     pro: "price_pro",
   };
-
-  it.each([true, false, undefined, null, "true"])(
-    "matches anything when no world is named (%j)",
-    (livemode) => {
-      expect(matchesExpectedLivemode({ prices }, livemode)).toBe(true);
-    },
-  );
 
   it.each([
     [true, true, true],

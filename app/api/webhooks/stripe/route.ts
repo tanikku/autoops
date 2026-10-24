@@ -3,6 +3,7 @@ import {
   readStripeDelivery,
   verifyStripeDelivery,
 } from "@/lib/billing/providers/stripe-webhook";
+import { readExpectedLivemode } from "@/lib/billing/providers/stripe-runtime";
 import { recordProviderEventReceipt } from "@/lib/billing/reconciliation-queue";
 
 /**
@@ -25,6 +26,11 @@ import { recordProviderEventReceipt } from "@/lib/billing/reconciliation-queue";
  * **The signature is the authentication.** There is no session here and no
  * login: the caller is Stripe because the bytes verify against the endpoint's
  * secret, and nothing is read out of the body until they do.
+ *
+ * **Then the world, before anything is written.** A delivery from the other
+ * Stripe world is refused like a bad signature, not answered `200`: recording
+ * it would make a subscription owe a look this deployment can never give, and a
+ * success would tell Stripe the endpoint is the right one.
  */
 
 // Signature verification and the database driver are both Node-only, and the
@@ -34,6 +40,14 @@ export const runtime = "nodejs";
 /** What the caller is told, with nothing of the cause in it. */
 function answer(status: number, body: Record<string, unknown>) {
   return NextResponse.json(body, { status });
+}
+
+function modeName(livemode: unknown): string {
+  if (livemode === true) {
+    return "live";
+  }
+
+  return livemode === false ? "test" : "unknown";
 }
 
 export async function POST(request: Request) {
@@ -63,6 +77,26 @@ export async function POST(request: Request) {
     // The reason, never the header and never the body: an unverified payload is
     // by definition something a stranger may have written.
     console.warn(`[billing] rejected a Stripe delivery — ${verified.failure}`);
+
+    return answer(400, { success: false, error: "Bad Request" });
+  }
+
+  // The same flag, read the same way, as every other Stripe path.
+  const expected = readExpectedLivemode(process.env);
+
+  if (!expected.ok) {
+    console.error(
+      `[billing] a Stripe delivery arrived but STRIPE_EXPECTED_LIVEMODE is not usable — ${expected.reason}`,
+    );
+
+    return answer(503, { success: false, error: "Not Configured" });
+  }
+
+  if (verified.event.livemode !== expected.value) {
+    // The two worlds by name and nothing else: no event id, no object.
+    console.warn(
+      `[billing] rejected a Stripe delivery — mode-mismatch expected=${modeName(expected.value)} actual=${modeName(verified.event.livemode)}`,
+    );
 
     return answer(400, { success: false, error: "Bad Request" });
   }

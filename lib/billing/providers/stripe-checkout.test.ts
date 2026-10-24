@@ -44,6 +44,7 @@ const configured = {
   STRIPE_PRICE_LITE: "price_lite",
   STRIPE_PRICE_STANDARD: "price_standard",
   STRIPE_PRICE_PRO: "price_pro",
+  STRIPE_EXPECTED_LIVEMODE: "false",
 } as unknown as NodeJS.ProcessEnv;
 
 const EXPIRES_AT = new Date("2026-09-27T20:00:00.000Z");
@@ -76,10 +77,10 @@ beforeEach(() => {
   StripeConstructor.mockReset();
   sessionsCreate
     .mockReset()
-    .mockResolvedValue({ id: "cs_test_1", url: "https://pay.example.invalid/1" });
+    .mockResolvedValue({ id: "cs_test_1", url: "https://pay.example.invalid/1", livemode: false });
   sessionsRetrieve
     .mockReset()
-    .mockResolvedValue({ status: "open", url: "https://pay.example.invalid/1" });
+    .mockResolvedValue({ status: "open", url: "https://pay.example.invalid/1", livemode: false });
   subscriptionsList.mockReset().mockResolvedValue({ data: [] });
 });
 
@@ -96,10 +97,42 @@ describe("when Stripe is not configured", () => {
       { ...configured, STRIPE_EXPECTED_LIVEMODE: "maybe" },
       "bad-livemode-flag",
     ],
+    [
+      "no livemode flag",
+      { ...configured, STRIPE_EXPECTED_LIVEMODE: undefined },
+      "no-livemode-flag",
+    ],
+    [
+      "a live key where a sandbox is expected",
+      { ...configured, STRIPE_SECRET_KEY: "rk_live_not_a_real_key" },
+      "key-mode-mismatch",
+    ],
+    [
+      "a sandbox key where live is expected",
+      { ...configured, STRIPE_EXPECTED_LIVEMODE: "true" },
+      "key-mode-mismatch",
+    ],
   ])("reports %s", (_label, env, reason) => {
     expect(
       createStripeCheckoutProvider(env as unknown as NodeJS.ProcessEnv),
     ).toEqual({ unavailable: reason });
+  });
+
+  /**
+   * **Refused before any client exists**, so neither creating, resuming nor
+   * listing — `subscriptions.list` included — can reach Stripe with the wrong
+   * world's key.
+   */
+  it.each([
+    ["no flag", { ...configured, STRIPE_EXPECTED_LIVEMODE: undefined }],
+    ["a key from the other world", { ...configured, STRIPE_SECRET_KEY: "sk_live_x" }],
+  ])("builds no client and asks Stripe nothing with %s", (_label, env) => {
+    createStripeCheckoutProvider(env as unknown as NodeJS.ProcessEnv);
+
+    expect(StripeConstructor).not.toHaveBeenCalled();
+    expect(sessionsCreate).not.toHaveBeenCalled();
+    expect(sessionsRetrieve).not.toHaveBeenCalled();
+    expect(subscriptionsList).not.toHaveBeenCalled();
   });
 
   /** Nothing is built for a deployment that cannot use it. */
@@ -261,7 +294,7 @@ describe("reading a session back", () => {
     ["something_new", "unreadable"],
     [null, "unreadable"],
   ])("reads %s as %s", async (status, kind) => {
-    sessionsRetrieve.mockResolvedValue({ status, url: null });
+    sessionsRetrieve.mockResolvedValue({ status, url: null, livemode: false });
 
     expect(await provider().readSession("cs_test_1")).toEqual({ kind, url: null });
   });
@@ -270,6 +303,7 @@ describe("reading a session back", () => {
     sessionsRetrieve.mockResolvedValue({
       status: "open",
       url: "https://pay.example.invalid/1",
+      livemode: false,
     });
 
     expect(await provider().readSession("cs_test_1")).toEqual({
@@ -364,13 +398,14 @@ describe("looking for a subscription that stops another", () => {
  * **Asked before the address leaves.** A checkout made in the wrong world can
  * still be paid, and reconciliation would then refuse what it produced — so a
  * session that does not match `STRIPE_EXPECTED_LIVEMODE` is never handed out.
- * Unset, nothing is checked, exactly as before.
+ * The key already matched the flag; this is what Stripe actually answered.
  */
 describe("the world a session belongs to", () => {
-  const withFlag = (flag: string | undefined) =>
+  const withFlag = (flag: string) =>
     ({
       ...configured,
-      ...(flag === undefined ? {} : { STRIPE_EXPECTED_LIVEMODE: flag }),
+      STRIPE_SECRET_KEY: flag === "true" ? "sk_live_not_a_real_key" : "sk_test_not_a_real_key",
+      STRIPE_EXPECTED_LIVEMODE: flag,
     }) as unknown as NodeJS.ProcessEnv;
 
   const created = (livemode: unknown) =>
@@ -385,8 +420,6 @@ describe("the world a session belongs to", () => {
   });
 
   it.each([
-    ["unset, a test session", undefined, false],
-    ["unset, a live session", undefined, true],
     ["false, a test session", "false", false],
     ["true, a live session", "true", true],
   ])("hands out the session when the flag is %s", async (_label, flag, livemode) => {
@@ -402,6 +435,7 @@ describe("the world a session belongs to", () => {
     ["false, and the session is live", "false", true],
     ["true, and the session is a test one", "true", false],
     ["true, and the session does not say", "true", undefined],
+    ["false, and the session does not say", "false", undefined],
   ])("refuses when the flag is %s", async (_label, flag, livemode) => {
     created(livemode);
 
@@ -466,7 +500,6 @@ describe("the world a session belongs to", () => {
   });
 
   it.each([
-    [undefined, true],
     ["false", false],
     ["true", true],
   ])("resumes a session that matches (flag %s)", async (flag, livemode) => {

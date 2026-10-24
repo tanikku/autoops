@@ -1566,8 +1566,27 @@ cp .env.example .env
 | `RESEND_API_KEY` | No | Sends [email notifications](#email-notifications). Without it, nothing is sent and a line is logged |
 | `EMAIL_FROM` | No | The sender those are from, e.g. `Koqentra <notifications@example.com>`. Needed alongside the key; either one missing sends nothing |
 | `YOUTUBE_API_KEY` | No | A YouTube Data API v3 key, used by [discovery workers](#discovery-workers). Without it, a discovery worker cannot be created and an existing one fails its runs; nothing else is affected |
+| `STRIPE_EXPECTED_LIVEMODE` | **Wherever Stripe is configured** | Which Stripe world this deployment is in: `false` for a sandbox, `true` for live. Unset or anything else fails every Stripe operation closed — see below |
 
 `.env` is gitignored; `.env.example` is committed and holds no real values.
+
+### `STRIPE_EXPECTED_LIVEMODE` names the Stripe world, and has no default
+
+| Deployment | Value | Key it accepts |
+| --- | --- | --- |
+| Sandbox | `STRIPE_EXPECTED_LIVEMODE=false` | `sk_test_…` or `rk_test_…` |
+| Live | `STRIPE_EXPECTED_LIVEMODE=true` | `sk_live_…` or `rk_live_…` |
+
+A deployment with neither `STRIPE_SECRET_KEY` nor `STRIPE_WEBHOOK_SECRET` has no
+Stripe and needs no flag. One that has a key and no flag, a flag that is neither value, or a key whose prefix
+is not the flag's world gets **no Stripe at all**: no checkout, no billing
+portal, and sweeps leave their work owing. The key is checked before any call to
+Stripe; each session and subscription Stripe returns is checked again, and a
+webhook delivery from the other world is refused with `400` before it is
+recorded (`503` while the flag is unusable).
+
+**Set the variable before deploying code that requires it.** The other order
+turns billing off — the portal included — until it is set.
 
 ### `BETA_ALLOWED_EMAILS` refuses everyone until you set it
 
