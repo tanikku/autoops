@@ -22,7 +22,8 @@ import { type DbClient, prisma } from "@/lib/prisma";
  * that has been applied is what the account is owed, and a failure to tidy a
  * coordination row is not a reason to take it away again. If this does nothing —
  * because the query failed, or because the rules below refuse — the attempt is
- * left exactly as it is today and lapses at its TTL.
+ * left exactly as it is, and once its TTL has passed the next checkout asks the
+ * provider about its session before replacing it.
  *
  * **It refuses far more often than it acts.** Closing the wrong attempt would
  * release a slot somebody else's purchase is holding, so every condition has to

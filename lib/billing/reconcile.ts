@@ -114,7 +114,8 @@ export async function reconcileProviderSubscription(
  * a cancellation and a run that found nothing to do are none of them a checkout
  * ending; and an entitlement that has been applied is owed whatever happens here,
  * so nothing this does or fails to do is allowed to reach the caller. An attempt
- * left open lapses at its own TTL, which is what happened before this existed.
+ * left open outlives its TTL until the provider says its session lapsed unpaid;
+ * a paid one goes on refusing a second checkout.
  */
 async function releaseSettledCheckout(
   snapshot: ProviderSubscriptionSnapshot,

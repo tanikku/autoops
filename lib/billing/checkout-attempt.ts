@@ -124,6 +124,9 @@ export type CheckoutAttemptDisposition =
   | "resumed-starting"
   /** An attempt has a session already. Send them back to it. */
   | "resumed-open"
+  /** An attempt's slot ran out while it named a session. Nothing was replaced:
+   * only the provider can say whether that session was paid for. */
+  | "expired-unverified"
   /** What was there had been closed or had lapsed. It is gone, and this is a
    * new attempt with a new id. */
   | "replaced";
@@ -262,11 +265,27 @@ export async function beginCheckoutAttempt(input: {
 
     if (existing !== null) {
       const attempt = readStored(existing);
+      const expired = attempt.expiresAt.getTime() <= now.getTime();
+
+      // **An expired slot is not a lapsed payment.** Somebody can pay in the
+      // session's last hour and have no reconciliation land for the rest of the
+      // slot, and a first-time buyer then has no customer for anything else to
+      // look up — this session is the one record that a payment happened.
+      // Replacing the attempt would forget it, so it is handed back for the
+      // caller to ask the provider, outside this lock. Closed attempts and ones
+      // that never named a session sent nobody to pay, and are replaced below.
+      if (
+        expired &&
+        attempt.state !== "closed" &&
+        attempt.providerCheckoutSessionId !== null
+      ) {
+        return { outcome: "attempt", disposition: "expired-unverified", attempt };
+      }
+
       // **Lapsed first, before the plan is looked at.** An attempt nobody can
       // pay for any more is not a purchase in progress, so it raises no
       // question about which plan was meant.
-      const lapsed =
-        attempt.state === "closed" || attempt.expiresAt.getTime() <= now.getTime();
+      const lapsed = attempt.state === "closed" || expired;
 
       if (!lapsed) {
         if (attempt.plan !== input.plan) {

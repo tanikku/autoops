@@ -277,6 +277,93 @@ describe("replacing one that no longer counts", () => {
 });
 
 /**
+ * An attempt whose slot ran out while its session may have been paid for.
+ *
+ * **Not this module's to replace.** The slot's eighteen hours say nothing about
+ * the payment: somebody who paid in hour eleven and whose reconciliation never
+ * landed still has a subscription at the provider, and a first-time buyer has
+ * no customer for anything else to look up. Replacing the row here would forget
+ * the one session that could say so — so the attempt is handed back untouched
+ * and the caller asks the provider.
+ */
+describe("when an expired attempt named a session", () => {
+  const expired = (overrides: Record<string, unknown> = {}) =>
+    stored({
+      state: "open",
+      providerCheckoutSessionId: "cs_test_old",
+      expiresAt: new Date(NOW.getTime() - 1),
+      ...overrides,
+    });
+
+  it.each([
+    ["just expired", new Date(NOW.getTime())],
+    ["long expired", new Date(NOW.getTime() - 7 * 24 * 60 * 60 * 1000)],
+  ])("hands it back unreplaced when %s", async (_label, expiresAt) => {
+    attemptFindUnique.mockResolvedValue(expired({ expiresAt }));
+
+    const result = await begin();
+
+    expect(result).toEqual({
+      outcome: "attempt",
+      disposition: "expired-unverified",
+      attempt: expect.objectContaining({
+        id: "attempt-old",
+        providerCheckoutSessionId: "cs_test_old",
+      }),
+    });
+    expect(attemptDelete).not.toHaveBeenCalled();
+    expect(attemptCreate).not.toHaveBeenCalled();
+  });
+
+  /** Paid for one plan is paid, whatever is being asked for now. */
+  it("hands it back for another plan too, without a plan switch", async () => {
+    attemptFindUnique.mockResolvedValue(expired({ plan: "pro" }));
+
+    expect(await begin({ plan: "lite" })).toMatchObject({
+      outcome: "attempt",
+      disposition: "expired-unverified",
+    });
+    expect(attemptDelete).not.toHaveBeenCalled();
+  });
+
+  /** Still under the lock: deciding not to write is decided where writing is. */
+  it("still takes the account's lock first", async () => {
+    attemptFindUnique.mockResolvedValue(expired());
+
+    await begin();
+
+    expect(userUpdate.mock.invocationCallOrder[0]).toBeLessThan(
+      attemptFindUnique.mock.invocationCallOrder[0],
+    );
+  });
+
+  /** Unexpired, it is the ordinary live attempt it always was. */
+  it("resumes it as before one millisecond short of expiry", async () => {
+    attemptFindUnique.mockResolvedValue(
+      expired({ expiresAt: new Date(NOW.getTime() + 1) }),
+    );
+
+    expect(await begin()).toMatchObject({ disposition: "resumed-open" });
+  });
+
+  /**
+   * **Nothing could have been paid through these**, so they are replaced as
+   * they always were: a closed attempt was closed by an activation or by the
+   * provider saying its session lapsed, and one that never named a session
+   * never sent anybody to a payment page.
+   */
+  it.each([
+    ["closed, with a session", { state: "closed" }],
+    ["starting, with no session", { state: "starting", providerCheckoutSessionId: null }],
+  ])("replaces one that is %s", async (_label, overrides) => {
+    attemptFindUnique.mockResolvedValue(expired(overrides));
+
+    expect(await begin()).toMatchObject({ disposition: "replaced" });
+    expect(attemptDelete).toHaveBeenCalledWith({ where: { id: "attempt-old" } });
+  });
+});
+
+/**
  * Wanting a different plan partway through.
  *
  * **Never replaced silently.** The account may be looking at a payment page for

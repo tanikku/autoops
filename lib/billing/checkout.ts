@@ -491,6 +491,11 @@ export async function startCheckout(
   // two an attempt is live and its session is not — and asking for a second
   // session under the same id would be asking the provider for something
   // different with a key it has already answered.
+  //
+  // **So is one whose slot has run out.** `beginCheckoutAttempt` hands it back
+  // unreplaced, because its session may have been paid for with nothing in
+  // Koqentra knowing yet — and for a first-time buyer, with no customer, this
+  // read is the only check there is. Only `lapsed` lets it be replaced.
   if (attempt.providerCheckoutSessionId !== null) {
     let existing: ProviderSessionState;
 
@@ -505,6 +510,16 @@ export async function startCheckout(
 
     switch (existing.kind) {
       case "payable":
+        // An expired attempt skipped the plan check `beginCheckoutAttempt`
+        // makes of a live one; a session still payable answers it the same way.
+        if (begun.disposition === "expired-unverified" && attempt.plan !== input.plan) {
+          return {
+            outcome: "plan-switch-required",
+            currentPlan: attempt.plan,
+            attemptId: attempt.id,
+          };
+        }
+
         return {
           outcome: "checkout-ready",
           attemptId: attempt.id,

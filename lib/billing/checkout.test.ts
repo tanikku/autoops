@@ -715,6 +715,304 @@ describe("recovering from a session that has lapsed", () => {
 });
 
 /**
+ * An attempt whose eighteen hours ran out with a session on it.
+ *
+ * **The duplicate this guards against.** A first-time buyer pays, the
+ * reconciliation never lands, and Koqentra still has no customer for them — so
+ * there is nothing for `findLiveSubscription` to look up. The attempt's session
+ * is the only thing left that knows a payment happened, and replacing the
+ * attempt for having outlived its slot would make a second customer and a
+ * second subscription. So the session is asked first, the same question an
+ * unexpired attempt's session is asked.
+ */
+describe("an attempt that expired with a session on it", () => {
+  const PAID_HOUR = 11 * 60 * 60 * 1000;
+
+  /** Created more than eighteen hours ago; open, naming its session. */
+  const expired = (overrides: Record<string, unknown> = {}) =>
+    storedAttempt({
+      id: "attempt-old",
+      state: "open",
+      providerCheckoutSessionId: "cs_test_old",
+      createdAt: new Date(NOW.getTime() - TTL_MS - PAID_HOUR),
+      expiresAt: new Date(NOW.getTime() - PAID_HOUR),
+      ...overrides,
+    });
+
+  beforeEach(() => {
+    attemptFindUnique.mockResolvedValue(expired());
+    readSession.mockResolvedValue({ kind: "paid", url: null });
+  });
+
+  describe("when its session was paid for", () => {
+    it("reports processing", async () => {
+      expect(await start()).toEqual({
+        outcome: "payment-processing",
+        attemptId: "attempt-old",
+      });
+    });
+
+    it("asks about the session the attempt named", async () => {
+      await start();
+
+      expect(readSession).toHaveBeenCalledTimes(1);
+      expect(readSession).toHaveBeenCalledWith("cs_test_old");
+    });
+
+    it("makes no session", async () => {
+      await start();
+
+      expect(createSession).not.toHaveBeenCalled();
+    });
+
+    it("keeps the attempt exactly as it was", async () => {
+      await start();
+
+      expect(attemptDelete).not.toHaveBeenCalled();
+      expect(attemptCreate).not.toHaveBeenCalled();
+      expect(attemptUpdateMany).not.toHaveBeenCalled();
+    });
+
+    /** The case nothing else catches: no customer, so nothing to list. */
+    it("refuses an account with no customer without listing anything", async () => {
+      subscriptionFindUnique.mockResolvedValue(subscriptionRow());
+
+      expect(await start()).toMatchObject({ outcome: "payment-processing" });
+      expect(findLiveSubscription).not.toHaveBeenCalled();
+    });
+
+    it("refuses an account with no subscription row at all", async () => {
+      subscriptionFindUnique.mockResolvedValue(null);
+
+      expect(await start()).toMatchObject({ outcome: "payment-processing" });
+      expect(createSession).not.toHaveBeenCalled();
+    });
+
+    /** Paid for one plan is a payment, whichever plan is asked for now. */
+    it("refuses a different plan the same way", async () => {
+      expect(await start({ plan: "pro" })).toEqual({
+        outcome: "payment-processing",
+        attemptId: "attempt-old",
+      });
+      expect(createSession).not.toHaveBeenCalled();
+    });
+
+    it("keeps refusing on every later request", async () => {
+      await start();
+      await start();
+
+      expect(createSession).not.toHaveBeenCalled();
+      expect(attemptDelete).not.toHaveBeenCalled();
+    });
+
+    /**
+     * **Defence in depth, not instead of it.** An account that has a customer
+     * is still listed first, and a live subscription there answers before the
+     * session is asked about.
+     */
+    it("still lists a known customer's subscriptions first", async () => {
+      subscriptionFindUnique.mockResolvedValue(paidRow({ state: "inactive" }));
+      findLiveSubscription.mockResolvedValue({
+        kind: "live",
+        providerSubscriptionId: "sub_live",
+      });
+
+      expect(await start()).toEqual({
+        outcome: "billing-management-required",
+        reason: "provider-subscription-live",
+      });
+      expect(readSession).not.toHaveBeenCalled();
+    });
+
+    it("asks the session when a known customer lists nothing live", async () => {
+      subscriptionFindUnique.mockResolvedValue(paidRow({ state: "inactive" }));
+
+      expect(await start()).toMatchObject({ outcome: "payment-processing" });
+      expect(findLiveSubscription).toHaveBeenCalledTimes(1);
+      expect(readSession).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("when its session lapsed unpaid", () => {
+    beforeEach(() => {
+      readSession.mockResolvedValue({ kind: "lapsed", url: null });
+      attemptFindUnique
+        .mockReset()
+        .mockResolvedValueOnce(expired())
+        .mockResolvedValue({ ...expired(), state: "closed" });
+    });
+
+    it("lets them buy again, under a new attempt", async () => {
+      expect(await start()).toMatchObject({
+        outcome: "checkout-ready",
+        attemptId: "attempt-1",
+        resumed: false,
+      });
+      expect(createSession).toHaveBeenCalledTimes(1);
+      expect(createSession.mock.calls[0][0].attemptId).toBe("attempt-1");
+    });
+
+    it("closes the old attempt before replacing it", async () => {
+      await start();
+
+      expect(attemptUpdateMany.mock.calls[0][0]).toEqual({
+        where: { id: "attempt-old", state: { not: "closed" } },
+        data: { state: "closed" },
+      });
+      expect(attemptUpdateMany.mock.invocationCallOrder[0]).toBeLessThan(
+        attemptDelete.mock.invocationCallOrder[0],
+      );
+      expect(attemptDelete).toHaveBeenCalledWith({ where: { id: "attempt-old" } });
+    });
+
+    it("begins the plan that was asked for", async () => {
+      await start({ plan: "standard" });
+
+      expect(attemptCreate.mock.calls[0][0].data.plan).toBe("standard");
+    });
+
+    /** Only a lapse leads to a create; it is the one answer that proves no payment. */
+    it("reads the session before anything is written", async () => {
+      await start();
+
+      expect(readSession.mock.invocationCallOrder[0]).toBeLessThan(
+        attemptUpdateMany.mock.invocationCallOrder[0],
+      );
+      expect(readSession.mock.invocationCallOrder[0]).toBeLessThan(
+        createSession.mock.invocationCallOrder[0],
+      );
+    });
+
+    /** Another request finished the same recovery first. */
+    it("uses the session a concurrent recovery already made", async () => {
+      attemptFindUnique
+        .mockReset()
+        .mockResolvedValueOnce(expired())
+        .mockResolvedValue(
+          storedAttempt({
+            id: "attempt-winner",
+            state: "open",
+            providerCheckoutSessionId: "cs_test_winner",
+            createdAt: NOW,
+            expiresAt: new Date(NOW.getTime() + TTL_MS),
+          }),
+        );
+
+      expect(await start()).toMatchObject({
+        outcome: "checkout-ready",
+        attemptId: "attempt-winner",
+        resumed: true,
+      });
+      expect(createSession).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * **Not expected** — the session's twelve hours end before the slot's
+   * eighteen — **and so answered as an unexpired attempt would be.** The same
+   * session is resumed rather than a second one made.
+   */
+  describe("when its session is somehow still payable", () => {
+    beforeEach(() => {
+      readSession.mockResolvedValue({
+        kind: "payable",
+        url: "https://pay.example.invalid/old",
+      });
+    });
+
+    it("sends them back to that session", async () => {
+      expect(await start()).toMatchObject({
+        outcome: "checkout-ready",
+        attemptId: "attempt-old",
+        sessionId: "cs_test_old",
+        url: "https://pay.example.invalid/old",
+        resumed: true,
+      });
+      expect(createSession).not.toHaveBeenCalled();
+      expect(attemptDelete).not.toHaveBeenCalled();
+    });
+
+    /** A payable session for another plan is a plan switch, as when unexpired. */
+    it("asks for a plan switch when another plan is wanted", async () => {
+      expect(await start({ plan: "pro" })).toEqual({
+        outcome: "plan-switch-required",
+        currentPlan: "lite",
+        attemptId: "attempt-old",
+      });
+      expect(createSession).not.toHaveBeenCalled();
+      expect(attemptDelete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("when its session cannot be told", () => {
+    it("fails closed on a status it cannot read", async () => {
+      readSession.mockResolvedValue({ kind: "unreadable", url: null });
+
+      expect(await start()).toEqual({
+        outcome: "malformed-config",
+        reason: "unreadable-attempt",
+      });
+      expect(createSession).not.toHaveBeenCalled();
+      expect(attemptDelete).not.toHaveBeenCalled();
+      expect(attemptUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it("fails closed when the provider cannot be asked", async () => {
+      readSession.mockRejectedValue(new Error("No such checkout.session: cs_test_old"));
+
+      const result = await start();
+
+      expect(result).toEqual({ outcome: "provider-verification-unavailable" });
+      expect(JSON.stringify(result)).not.toContain("cs_test_old");
+      expect(createSession).not.toHaveBeenCalled();
+      expect(attemptDelete).not.toHaveBeenCalled();
+      expect(attemptUpdateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * Either side of eighteen hours. Before, the attempt is live and is resumed
+   * as it always was; from the instant it expires, its session is asked.
+   */
+  describe("at the edge of the slot", () => {
+    const at = (offsetMs: number) =>
+      storedAttempt({
+        id: "attempt-old",
+        state: "open",
+        providerCheckoutSessionId: "cs_test_old",
+        createdAt: new Date(NOW.getTime() - TTL_MS - offsetMs),
+        expiresAt: new Date(NOW.getTime() - offsetMs),
+      });
+
+    it.each([
+      ["a minute before", -60_000],
+      ["one millisecond before", -1],
+      ["exactly at", 0],
+      ["one millisecond after", 1],
+      ["a week after", 7 * 24 * 60 * 60 * 1000],
+    ])("refuses a paid session %s expiry", async (_label, offsetMs) => {
+      attemptFindUnique.mockResolvedValue(at(offsetMs));
+
+      expect(await start()).toMatchObject({ outcome: "payment-processing" });
+      expect(readSession).toHaveBeenCalledWith("cs_test_old");
+      expect(createSession).not.toHaveBeenCalled();
+      expect(attemptDelete).not.toHaveBeenCalled();
+    });
+
+    /** An attempt that never named a session never sent anybody to pay. */
+    it("replaces an expired attempt that never named a session", async () => {
+      attemptFindUnique.mockResolvedValue(
+        storedAttempt({ id: "attempt-old", expiresAt: new Date(NOW.getTime() - 1) }),
+      );
+
+      expect(await start()).toMatchObject({ outcome: "checkout-ready", resumed: false });
+      expect(readSession).not.toHaveBeenCalled();
+      expect(attemptDelete).toHaveBeenCalledWith({ where: { id: "attempt-old" } });
+    });
+  });
+});
+
+/**
  * A different plan is not a lapsed session.
  *
  * **Never closed without being asked.** The account may be looking at a payment
