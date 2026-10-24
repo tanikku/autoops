@@ -60,6 +60,7 @@ const { reconcileProviderSubscription } = await import(
   "@/lib/billing/reconcile"
 );
 const { getPlanDefinition } = await import("@/lib/plans");
+const { computeEntitlement } = await import("@/lib/entitlements/index");
 
 const cleanupLogs: string[] = [];
 /** Lines written by the cleanup observation, and only those. */
@@ -416,7 +417,6 @@ describe("the plan the provider reports", () => {
         plan: "lite",
         periodStart: P2.start,
         periodEnd: P2.end,
-        cancelAtPeriodEnd: true,
       }),
       RUN,
     );
@@ -436,6 +436,161 @@ describe("the plan the provider reports", () => {
     await reconcileProviderSubscription(snapshot({ plan: "lite" }), RUN);
 
     expect(clientStub).not.toHaveProperty("routine");
+  });
+});
+
+/**
+ * A lower plan the provider says is ending.
+ *
+ * **Ending outranks the plan.** The downgrade is still refused, but the
+ * cancellation inside the same reading is not: refusing it too would leave the
+ * account entitled on the higher plan after the provider stopped billing. Only
+ * the state moves; the plan, the period and the counters are left exactly as
+ * they were.
+ */
+describe("a lower plan the provider says is ending", () => {
+  const PRO = stored({ plan: "pro" });
+
+  beforeEach(() => subscriptionFindUnique.mockResolvedValue(PRO));
+
+  /** The entitlement an account has after the run, read the way the app reads it. */
+  function entitlementAfter(at: Date) {
+    const state = String(updateWith("state")?.state ?? PRO.state);
+    return computeEntitlement(
+      {
+        ...PRO,
+        state,
+        trialStartedAt: null,
+        trialEndsAt: null,
+        trialConsumedAt: null,
+        notificationWorkerId: null,
+      } as Parameters<typeof computeEntitlement>[0],
+      at,
+    );
+  }
+
+  it("still refuses a lower plan that stays active, writing nothing", async () => {
+    const result = await reconcileProviderSubscription(snapshot({ plan: "lite" }), RUN);
+
+    expect(result).toEqual({ outcome: "provider-domain-mismatch", reason: "downgrade" });
+    expect(subscriptionUpdate).not.toHaveBeenCalled();
+    expect(periodCreate).not.toHaveBeenCalled();
+    expect(counterUpdateMany).not.toHaveBeenCalled();
+    expect(billingCreate).not.toHaveBeenCalled();
+  });
+
+  it("still refuses a lower plan in grace, which keeps the account entitled", async () => {
+    const result = await reconcileProviderSubscription(
+      snapshot({ plan: "lite", entitlement: "grace" }),
+      RUN,
+    );
+
+    expect(result).toEqual({ outcome: "provider-domain-mismatch", reason: "downgrade" });
+    expect(subscriptionUpdate).not.toHaveBeenCalled();
+  });
+
+  it("schedules the cancellation, entitled until the period ends", async () => {
+    const result = await reconcileProviderSubscription(
+      snapshot({ plan: "lite", cancelAtPeriodEnd: true }),
+      RUN,
+    );
+
+    expect(result).toEqual({ outcome: "applied", kinds: ["subscription.canceled"] });
+    expect(subscriptionUpdate.mock.calls.map((call) => call[0].data)).toEqual([
+      { state: "canceled_active" },
+    ]);
+    expect(entitlementAfter(OBSERVED).entitled).toBe(true);
+    expect(entitlementAfter(P1.end).entitled).toBe(false);
+  });
+
+  it("ends the entitlement when the provider has ended it", async () => {
+    const result = await reconcileProviderSubscription(
+      snapshot({ plan: "lite", entitlement: "ended" }),
+      RUN,
+    );
+
+    expect(result).toEqual({ outcome: "applied", kinds: ["subscription.ended"] });
+    expect(subscriptionUpdate.mock.calls.map((call) => call[0].data)).toEqual([
+      { state: "inactive" },
+    ]);
+    expect(entitlementAfter(OBSERVED).entitled).toBe(false);
+  });
+
+  it("ends a scheduled cancellation when the provider has ended it", async () => {
+    subscriptionFindUnique.mockResolvedValue(stored({ plan: "pro", state: "canceled_active" }));
+
+    const result = await reconcileProviderSubscription(
+      snapshot({ plan: "lite", entitlement: "ended" }),
+      RUN,
+    );
+
+    expect(result).toEqual({ outcome: "applied", kinds: ["subscription.ended"] });
+  });
+
+  it.each([
+    ["a scheduled cancellation", { cancelAtPeriodEnd: true }],
+    ["an ended subscription", { entitlement: "ended" }],
+    ["one that also moved its period", { entitlement: "ended", periodStart: P2.start, periodEnd: P2.end }],
+  ])("keeps the plan, the period and the counters for %s", async (_label, overrides) => {
+    await reconcileProviderSubscription(snapshot({ plan: "lite", ...overrides }), RUN);
+
+    for (const call of subscriptionUpdate.mock.calls) {
+      expect(Object.keys(call[0].data)).toEqual(["state"]);
+    }
+    expect(subscriptionCreate).not.toHaveBeenCalled();
+    expect(periodCreate).not.toHaveBeenCalled();
+    expect(counterUpdateMany).not.toHaveBeenCalled();
+    expect(writtenKinds()).not.toContain("subscription.plan_changed");
+    expect(writtenKinds()).not.toContain("subscription.renewed");
+  });
+
+  it("does not record agreement it did not reach", async () => {
+    await reconcileProviderSubscription(snapshot({ plan: "lite", entitlement: "ended" }), RUN);
+
+    expect(updateWith("providerSyncedAt")).toBeUndefined();
+  });
+
+  it("converges once the state is already there", async () => {
+    subscriptionFindUnique.mockResolvedValue(stored({ plan: "pro", state: "inactive" }));
+
+    const result = await reconcileProviderSubscription(
+      snapshot({ plan: "lite", entitlement: "ended" }),
+      RUN,
+    );
+
+    expect(result).toEqual({ outcome: "already-converged" });
+    expect(subscriptionUpdate).not.toHaveBeenCalled();
+    expect(billingCreate).not.toHaveBeenCalled();
+  });
+
+  it("never applies to a subscription that is not the one in force", async () => {
+    subscriptionFindUnique.mockResolvedValue(
+      stored({ plan: "pro", providerSubscriptionId: null }),
+    );
+
+    const result = await reconcileProviderSubscription(
+      snapshot({ plan: "lite", cancelAtPeriodEnd: true }),
+      RUN,
+    );
+
+    expect(result).toEqual({ outcome: "provider-domain-mismatch", reason: "downgrade" });
+    expect(subscriptionCreate).not.toHaveBeenCalled();
+    expect(subscriptionUpdate).not.toHaveBeenCalled();
+  });
+
+  it("still refuses a period that moved backwards first", async () => {
+    const result = await reconcileProviderSubscription(
+      snapshot({
+        plan: "lite",
+        entitlement: "ended",
+        periodStart: new Date("2026-09-01T00:00:00.000Z"),
+        periodEnd: P1.start,
+      }),
+      RUN,
+    );
+
+    expect(result).toEqual({ outcome: "provider-domain-regression" });
+    expect(subscriptionUpdate).not.toHaveBeenCalled();
   });
 });
 

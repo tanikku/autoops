@@ -174,15 +174,20 @@ async function converge(
     return refusal;
   }
 
-  const kinds = await applyDifferences(tx, snapshot, stored, runId);
+  const holdPlan = endsDespiteDowngrade(snapshot, stored);
+  const kinds = await applyDifferences(tx, snapshot, stored, runId, holdPlan);
 
   // **Recorded even when nothing changed.** A run that found the two already in
   // agreement did reconcile provider state successfully, and "when did this
   // account last agree with the provider" is exactly the question this answers.
-  await tx.subscription.update({
-    where: { userId: snapshot.userId },
-    data: { providerSyncedAt: snapshot.observedAt },
-  });
+  // A run that held the plan back did not reach agreement — the provider still
+  // bills a plan Koqentra does not record — so it leaves the time alone.
+  if (!holdPlan) {
+    await tx.subscription.update({
+      where: { userId: snapshot.userId },
+      data: { providerSyncedAt: snapshot.observedAt },
+    });
+  }
 
   if (kinds.length === 0) {
     return { outcome: "already-converged" };
@@ -239,11 +244,7 @@ function refuse(
     return { outcome: "provider-domain-regression" };
   }
 
-  if (
-    snapshot.plan !== null &&
-    isPaidPlan(stored.plan) &&
-    comparePaidPlans(stored.plan, snapshot.plan) === "downgrade"
-  ) {
+  if (isDowngrade(snapshot, stored) && !endsDespiteDowngrade(snapshot, stored)) {
     // Taking an allowance away inside a period already paid for would stop an
     // account mid-month, and doing it properly needs the owner to say which
     // workers stay on — a conversation, not a reconciliation.
@@ -251,6 +252,49 @@ function refuse(
   }
 
   return null;
+}
+
+/** Whether the provider's plan sits below the paid plan Koqentra records. */
+function isDowngrade(
+  snapshot: ProviderSubscriptionSnapshot,
+  stored: StoredSubscription,
+): boolean {
+  return (
+    snapshot.plan !== null &&
+    isPaidPlan(stored.plan) &&
+    comparePaidPlans(stored.plan, snapshot.plan) === "downgrade"
+  );
+}
+
+/**
+ * A lower plan the provider says is ending, on the subscription in force.
+ *
+ * **Ending outranks the plan.** A downgrade is still not applied, but refusing
+ * the whole reading would also refuse the cancellation inside it, and the
+ * account would stay entitled on the higher plan after the provider stopped
+ * billing for anything. So the lifecycle moves — to `canceled_active` or
+ * `inactive` — and the plan, the period and the counters stay as they are.
+ * Only ever towards less entitlement: a reading that keeps the account entitled
+ * (`active`, `grace`) is still refused whole.
+ *
+ * Bound to this subscription only. Without the binding nothing says the lower
+ * plan belongs to the one Koqentra holds, and starting from it would be the
+ * downgrade this refuses.
+ */
+function endsDespiteDowngrade(
+  snapshot: ProviderSubscriptionSnapshot,
+  stored: StoredSubscription | null,
+): boolean {
+  if (stored === null || stored.providerSubscriptionId !== snapshot.providerSubscriptionId) {
+    return false;
+  }
+
+  const wanted = desiredState(snapshot);
+
+  return (
+    isDowngrade(snapshot, stored) &&
+    (wanted === "canceled_active" || wanted === "inactive")
+  );
 }
 
 /**
@@ -262,12 +306,17 @@ function refuse(
  * which is why a renewal that restores an account to active writes no separate
  * recovery row, while one that lands on a subscription due to cancel still
  * writes the cancellation.
+ *
+ * **With `holdPlan`, only the state moves** — see `endsDespiteDowngrade`. No
+ * activation, no renewal and no plan change, so no period is opened under the
+ * lower plan and no counter limit comes down.
  */
 async function applyDifferences(
   tx: DbClient,
   snapshot: ProviderSubscriptionSnapshot,
   stored: StoredSubscription | null,
   runId: string,
+  holdPlan: boolean,
 ): Promise<BillingEventKind[]> {
   const kinds: BillingEventKind[] = [];
   const period = snapshotPeriod(snapshot);
@@ -281,6 +330,10 @@ async function applyDifferences(
     stored !== null &&
     stored.providerSubscriptionId === snapshot.providerSubscriptionId;
   const hasPaidBinding = bound && isPaidPlan(stored.plan);
+
+  if (holdPlan) {
+    return applyState(tx, snapshot, state, runId);
+  }
 
   if (!hasPaidBinding) {
     // Only an entitled snapshot with a period and a plan can start one; a
@@ -343,6 +396,22 @@ async function applyDifferences(
     plan = snapshot.plan;
   }
 
+  return applyState(tx, snapshot, state, runId, kinds);
+}
+
+/**
+ * The state step, and the events for everything the run changed.
+ *
+ * Last in the order, so it is decided against what the earlier steps left
+ * behind; reached on its own when the plan is held back.
+ */
+async function applyState(
+  tx: DbClient,
+  snapshot: ProviderSubscriptionSnapshot,
+  state: string | null,
+  runId: string,
+  kinds: BillingEventKind[] = [],
+): Promise<BillingEventKind[]> {
   const wanted = desiredState(snapshot);
 
   if (state !== null && state !== wanted) {
