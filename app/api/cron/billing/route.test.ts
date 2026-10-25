@@ -37,7 +37,12 @@ beforeEach(() => {
   process.env.CRON_SECRET = SECRET;
   sweepBillingReconciliations
     .mockReset()
-    .mockResolvedValue({ examined: 2, outcomes: { applied: 1, "not-claimed": 1 }, items: [] });
+    .mockResolvedValue({
+      examined: 2,
+      outcomes: { applied: 1, "not-claimed": 1 },
+      sources: { pending: 1, periodic: 1 },
+      items: [],
+    });
   resolveProviderReader.mockClear();
 
   logs.length = 0;
@@ -113,6 +118,7 @@ describe("what a sweep reports", () => {
     sweepBillingReconciliations.mockResolvedValue({
       examined: 1,
       outcomes: { applied: 1 },
+      sources: { periodic: 1 },
       items: [
         { provider: "stripe", providerSubscriptionId: "sub_secret", outcome: "applied" },
       ],
@@ -121,6 +127,35 @@ describe("what a sweep reports", () => {
     const body = JSON.stringify(await (await tick(`Bearer ${SECRET}`)).json());
 
     expect(body).not.toContain("sub_secret");
+  });
+
+  /** Where each came from is in the log line, and only as counts. */
+  it("logs how many came from each source", async () => {
+    sweepBillingReconciliations.mockResolvedValue({
+      examined: 3,
+      outcomes: { applied: 3 },
+      sources: { pending: 1, "unpaid-confirmation": 1, periodic: 1 },
+      items: [
+        {
+          provider: "stripe",
+          providerSubscriptionId: "sub_secret",
+          outcome: "applied",
+          source: "periodic",
+        },
+      ],
+    });
+
+    const response = await tick(`Bearer ${SECRET}`);
+    const line = logs.find((entry) => entry.includes("sweep finished")) ?? "";
+
+    expect(line).toContain("sources: pending=1 unpaid-confirmation=1 periodic=1");
+    expect(line).not.toContain("sub_secret");
+    // The answer keeps its shape; sources are for the log.
+    expect(Object.keys(await response.json()).sort()).toEqual([
+      "examined",
+      "outcomes",
+      "success",
+    ]);
   });
 
   it("resolves readers per provider rather than holding one", async () => {

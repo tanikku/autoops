@@ -103,6 +103,8 @@ export async function POST(request: Request) {
         summary.outcomes,
       )
         .map(([outcome, count]) => `${outcome}=${count}`)
+        .join(" ")} sources: ${Object.entries(summary.sources)
+        .map(([source, count]) => `${source}=${count}`)
         .join(" ")}`,
     );
 

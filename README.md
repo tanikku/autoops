@@ -1926,9 +1926,22 @@ when the next sweep runs, which is the property that makes a small batch safe.
 The oldest wait goes first — `pendingSince` ascending, by Koqentra's own clock
 rather than by any timestamp the provider chose.
 
-**Nothing pending costs one query.** No provider reader is resolved and no
+**What nothing woke is read too, in the room that is left.** Rows a delivery or
+a failed run left owing take the batch first. Whatever room remains goes to an
+unpaid ending seen once and waiting for its second, separate run — read on the
+very next sweep — and then to a known subscription nothing has read for **six
+hours** (`BILLING_PERIODIC_RESYNC_INTERVAL_MS`, counted from `lastRunAt`). Each
+of those is put back in line with a conditional write and read exactly as a
+delivery's row is: the same lease, the same reader, the same fencing. This is
+what recovers a delivery Stripe gave up on, one the deployment refused, and a
+reading that was refused — **for a subscription Koqentra already has a row
+for**. One whose every delivery was lost has no row, and is not found this way.
+The log line counts each source separately (`sources: pending=… periodic=…`);
+the response does not change.
+
+**Nothing to do costs three queries.** No provider reader is resolved and no
 provider client is built, so a deployment with no billing work — or none
-configured — sweeps for the price of a single `SELECT`.
+configured — sweeps for the price of three `SELECT`s and no provider call.
 
 ⚠️ **A failure inside the sweep still answers `200`.** One subscription's
 trouble is its own: an unreachable provider, a missing configuration, a reading
@@ -1991,7 +2004,7 @@ Deciding what to do about a slow tick is a decision for whoever reads the line.
 a second request rather than more work inside this one, so the duration above
 still measures the dispatcher and only the dispatcher. What the sweep adds to
 the five minutes is bounded the same way its batch is: nothing pending costs a
-single query, and the most it will ever do is **ten** reconciliations — see
+few queries, and the most it will ever do is **ten** reconciliations — see
 [Reconciling billing on the same tick](#reconciling-billing-on-the-same-tick).
 The threshold is not restated for it; a sweep that ran long would show up as a
 tick that overlapped the next one, which is what the interval already says.

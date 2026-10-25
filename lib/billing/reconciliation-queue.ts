@@ -177,6 +177,33 @@ async function ensurePendingWork(
   });
 }
 
+/**
+ * Puts a subscription that owes nothing back in line, as of `now`.
+ *
+ * **Only a row that owes nothing.** The condition on `pendingSince` is the
+ * whole of the coordination: of two sweeps that chose the same row, one write
+ * succeeds and the other finds it already owing, and from there the lease
+ * decides who reads it — exactly as for a row a delivery woke. A row a delivery
+ * woke in between is already owing too, and keeps its earlier instant.
+ *
+ * No receipt is written, so `finish` clears the row again once a run answers it.
+ *
+ * @returns whether this call is the one that put it back
+ */
+export async function requeueReconciliation(
+  provider: string,
+  providerSubscriptionId: string,
+  client: DbClient = prisma,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const { count } = await client.billingReconciliation.updateMany({
+    where: { provider, providerSubscriptionId, pendingSince: null },
+    data: { pendingSince: now },
+  });
+
+  return count === 1;
+}
+
 /** The right to read provider state for one subscription and act on it. */
 export type ReconciliationLease = {
   readonly token: string;
