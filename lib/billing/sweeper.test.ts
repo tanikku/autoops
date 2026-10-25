@@ -246,6 +246,7 @@ describe("when there is nothing to do", () => {
       outcomes: {},
       sources: {},
       checkoutRecovery: {},
+      reasons: {},
       items: [],
     });
     expect(resolveReader).not.toHaveBeenCalled();
@@ -631,5 +632,70 @@ describe("what the sweeper is not", () => {
 
     expect(source).toContain("take: limit");
     expect(source).not.toContain("while (true)");
+  });
+});
+
+/**
+ * **Why, kept with what.** An outcome name alone said `refused` or `unavailable`
+ * and dropped the rest; the summary now counts the reason beside it, so a log
+ * line can tell an unknown plan from a conflicting subscription.
+ */
+describe("counting why", () => {
+  it.each([
+    [{ outcome: "refused", reason: "unknown-plan" }, "refused", "refused:unknown-plan"],
+    [{ outcome: "unavailable", reason: "StripeConnectionError" }, "unavailable", "unavailable:StripeConnectionError"],
+    [
+      { outcome: "reconciled", result: { outcome: "provider-domain-mismatch", reason: "conflicting-subscription" }, receipts: 1 },
+      "provider-domain-mismatch",
+      "provider-domain-mismatch:conflicting-subscription",
+    ],
+    [
+      { outcome: "reconciled", result: { outcome: "provider-domain-mismatch", reason: "downgrade" }, receipts: 1 },
+      "provider-domain-mismatch",
+      "provider-domain-mismatch:downgrade",
+    ],
+    [
+      { outcome: "reconciled", result: { outcome: "malformed", reason: "period-not-forwards" }, receipts: 1 },
+      "malformed",
+      "malformed:period-not-forwards",
+    ],
+  ])("keeps the reason of %j", async (result, outcome, key) => {
+    findMany.mockResolvedValueOnce(pending({ id: "sub_1" })).mockResolvedValue([]);
+    runReconciliation.mockResolvedValue(result);
+
+    const summary = await sweep();
+
+    expect(summary.outcomes).toEqual({ [outcome]: 1 });
+    expect(summary.reasons).toEqual({ [key]: 1 });
+    expect(summary.items[0]).toMatchObject({ outcome, reason: key.split(":")[1] });
+  });
+
+  it.each([
+    [{ outcome: "reconciled", result: { outcome: "applied", kinds: [] }, receipts: 1 }],
+    [{ outcome: "not-claimed" }],
+    [{ outcome: "fenced-out" }],
+  ])("adds no reason where the outcome says it all: %j", async (result) => {
+    findMany.mockResolvedValueOnce(pending({ id: "sub_1" })).mockResolvedValue([]);
+    runReconciliation.mockResolvedValue(result);
+
+    const summary = await sweep();
+
+    expect(summary.reasons).toEqual({});
+    expect(summary.items[0]).not.toHaveProperty("reason");
+  });
+
+  it("counts the same reason across subscriptions", async () => {
+    findMany
+      .mockResolvedValueOnce(pending({ id: "sub_1" }, { id: "sub_2" }, { id: "sub_3" }))
+      .mockResolvedValue([]);
+    runReconciliation
+      .mockResolvedValueOnce({ outcome: "refused", reason: "unknown-user" })
+      .mockResolvedValueOnce({ outcome: "refused", reason: "unknown-user" })
+      .mockResolvedValueOnce({ outcome: "refused", reason: "unsupported-state" });
+
+    expect((await sweep()).reasons).toEqual({
+      "refused:unknown-user": 2,
+      "refused:unsupported-state": 1,
+    });
   });
 });

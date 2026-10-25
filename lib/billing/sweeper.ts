@@ -5,7 +5,7 @@ import {
   type CheckoutSessionReaderResolver,
   recoverCheckouts,
 } from "@/lib/billing/checkout-recovery";
-import type { ProviderReader } from "@/lib/billing/orchestrate";
+import type { ProviderReader, ReconciliationRunResult } from "@/lib/billing/orchestrate";
 import { runReconciliation } from "@/lib/billing/orchestrate";
 import { requeueReconciliation } from "@/lib/billing/reconciliation-queue";
 import { type DbClient, prisma } from "@/lib/prisma";
@@ -72,6 +72,12 @@ export type SweptItem = {
   readonly providerSubscriptionId: string;
   readonly outcome: string;
   readonly source: SweepSource;
+  /**
+   * Why, when the outcome alone does not say: the refusal, the mismatch, the
+   * defect, or the kind of read that failed. A category from this code or an
+   * error's class name — never a provider's message or an identifier.
+   */
+  readonly reason?: string;
 };
 
 /** What a whole sweep came to. Counts and categories, never provider objects. */
@@ -86,6 +92,8 @@ export type SweepSummary = {
    * and the response that reports those two does not change.
    */
   readonly checkoutRecovery: Readonly<Record<string, number>>;
+  /** `outcome:reason` counts, for the outcomes that carry one. */
+  readonly reasons: Readonly<Record<string, number>>;
   readonly items: readonly SweptItem[];
 };
 
@@ -178,10 +186,16 @@ export async function sweepBillingReconciliations(
 
   const outcomes: Record<string, number> = {};
   const sources: Record<string, number> = {};
+  const reasons: Record<string, number> = {};
 
   for (const item of items) {
     outcomes[item.outcome] = (outcomes[item.outcome] ?? 0) + 1;
     sources[item.source] = (sources[item.source] ?? 0) + 1;
+
+    if (item.reason !== undefined) {
+      const key = `${item.outcome}:${item.reason}`;
+      reasons[key] = (reasons[key] ?? 0) + 1;
+    }
   }
 
   // **Last, and in a budget of its own.** Reconciliation keeps its ten and its
@@ -205,7 +219,7 @@ export async function sweepBillingReconciliations(
     }
   }
 
-  return { examined: items.length, outcomes, sources, checkoutRecovery, items };
+  return { examined: items.length, outcomes, sources, checkoutRecovery, reasons, items };
 }
 
 /**
@@ -300,6 +314,19 @@ async function requeueAll(
   return requeued;
 }
 
+/** The detail a run's outcome name drops, when it has one. */
+function reasonOf(result: ReconciliationRunResult): string | undefined {
+  switch (result.outcome) {
+    case "refused":
+    case "unavailable":
+      return result.reason;
+    case "reconciled":
+      return "reason" in result.result ? result.result.reason : undefined;
+    default:
+      return undefined;
+  }
+}
+
 async function sweepOne(
   provider: string,
   providerSubscriptionId: string,
@@ -324,11 +351,14 @@ async function sweepOne(
       clock: options.clock,
     });
 
+    const reason = reasonOf(result);
+
     return {
       provider,
       providerSubscriptionId,
       outcome:
         result.outcome === "reconciled" ? result.result.outcome : result.outcome,
+      ...(reason === undefined ? {} : { reason }),
     };
   } catch (error) {
     // The cause stays in the log; the summary carries a category. One

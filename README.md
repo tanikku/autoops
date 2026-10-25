@@ -1962,29 +1962,47 @@ not in `examined` or `outcomes`.
 provider client is built, so a deployment with no billing work — or none
 configured — sweeps for the price of four `SELECT`s and no provider call.
 
-⚠️ **A failure inside the sweep still answers `200`.** One subscription's
-trouble is its own: an unreachable provider, a missing configuration, a reading
-that makes no sense — each is counted under its own key in `outcomes` and the
-sweep carries on with the rest. A batch that aborted on the first problem would
-let one broken account stop every other account from ever being reconciled. So
-the status code says the tick ran, and `outcomes` says what it managed:
+⚠️ **A failure a retry can fix still answers `200`.** One subscription's
+trouble is its own: an unreachable provider, a refusal, a reading that makes no
+sense — each is counted under its own key in `outcomes` and the sweep carries on
+with the rest. A batch that aborted on the first problem would let one broken
+account stop every other account from ever being reconciled. So the status code
+says the tick ran, and `outcomes` says what it managed:
 
 ```json
-{ "success": true, "examined": 3, "outcomes": { "applied": 1, "failed": 1, "no-secret-key": 1 } }
+{ "success": true, "examined": 3, "outcomes": { "applied": 1, "failed": 1, "unavailable": 1 } }
 ```
+
+**What no retry will fix answers `503`** (`lib/billing/billing-health.ts`), read
+after the sweep has done its work and kept it:
+
+| Finding | Critical when |
+| --- | --- |
+| `provider-config` | Any outcome this tick says a provider cannot be used as configured — `no-secret-key`, `no-price-catalogue`, `no-livemode-flag`, `bad-livemode-flag`, `key-mode-mismatch`, `unsupported-provider` — in reconciliation or in checkout recovery |
+| `stale-pending` | A reconciliation row has owed a look for **60 minutes** or more (`BILLING_CRITICAL_PENDING_AGE_MS`) |
+| `stale-open-checkout` | A checkout attempt has been `open` for **24 hours** or more (`BILLING_CRITICAL_OPEN_CHECKOUT_AGE_MS`) — paid but never activated, refused, or a close that keeps failing |
+
+The body keeps its shape, with `success: false`. Because the cron calls this
+with `--fail-with-body` in the chain below, a `503` stops it before the
+heartbeat, and the existing dead man's switch raises the alarm — nothing new
+watches anything. Nothing is remembered between ticks: once the configuration
+is fixed, the work answered, or the checkout closed, the next tick answers `200`
+by itself. A health query that cannot run answers `500`, which stops the
+heartbeat the same way.
 
 | Question | Where to look |
 | --- | --- |
-| Did the sweep run at all? | HTTP status. Anything but `200` |
+| Did the sweep run at all? | HTTP status. `500` |
+| Is billing broken in a way somebody must act on? | HTTP status. `503`, and the `critical health` log line |
 | Could every subscription be reconciled? | `outcomes` in this response |
 | Which account, and why not? | **Not here.** The server log, then the account's own rows |
 
-`500` is reserved for a sweep that could not run at all. Every completed sweep
-writes one line — counts and categories, never a subscription id or an account:
+Every completed sweep writes two lines — counts, categories and ages, never a
+subscription id or an account:
 
 ```
-[billing] sweep finished — examined=0
-[billing] sweep finished — examined=2 applied=1 not-claimed=1
+[billing] sweep finished — examined=2 applied=1 refused=1 sources: pending=2 checkout-recovery: reasons: refused:unknown-plan=1
+[billing] critical health — critical=false provider-config=0 stale-pending=0 stale-open-checkout=0 oldest-stale-pending-minutes=none oldest-stale-open-checkout-minutes=none
 ```
 
 #### How long a tick took
@@ -2054,7 +2072,8 @@ being checked:
   or `5xx` into a curl failure, so `&&` stops there and the check falls silent.
   Without the flag curl exits `0` on an HTTP error and the ping would go out
   anyway, which is the failure mode this exists to avoid.
-- **A sweep that failed sends no heartbeat either**, and it does not run at all
+- **A sweep that failed sends no heartbeat either** — nor does one that found
+  billing critically broken and answered `503` — and it does not run at all
   if the worker tick did not answer first. The two calls are chained rather than
   independent, so the check watches both and the alert cannot say which — the
   log can, one line each.

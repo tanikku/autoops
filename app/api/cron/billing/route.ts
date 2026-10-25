@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
+import { evaluateBillingHealth } from "@/lib/billing/billing-health";
 import { createStripeCheckoutSessionReader } from "@/lib/billing/providers/stripe-checkout";
 import { resolveProviderReader } from "@/lib/billing/providers/stripe-runtime";
 import { sweepBillingReconciliations } from "@/lib/billing/sweeper";
@@ -77,6 +78,17 @@ function rejectionReason(request: Request): Rejection | null {
   return matches ? null : "token-mismatch";
 }
 
+/** `key=count` pairs, in the order they were counted. */
+function counts(record: Readonly<Record<string, number>>): string {
+  return Object.entries(record)
+    .map(([key, count]) => `${key}=${count}`)
+    .join(" ");
+}
+
+function minutes(ms: number | null): string {
+  return ms === null ? "none" : String(Math.floor(ms / 60_000));
+}
+
 export async function POST(request: Request) {
   const rejection = rejectionReason(request);
 
@@ -103,22 +115,33 @@ export async function POST(request: Request) {
     // object: this line is read by whoever is watching the tick, not by
     // somebody investigating one account.
     console.log(
-      `[billing] sweep finished — examined=${summary.examined} ${Object.entries(
-        summary.outcomes,
-      )
-        .map(([outcome, count]) => `${outcome}=${count}`)
-        .join(" ")} sources: ${Object.entries(summary.sources)
-        .map(([source, count]) => `${source}=${count}`)
-        .join(" ")} checkout-recovery: ${Object.entries(summary.checkoutRecovery)
-        .map(([outcome, count]) => `${outcome}=${count}`)
-        .join(" ")}`,
+      `[billing] sweep finished — examined=${summary.examined} ${counts(summary.outcomes)} sources: ${counts(
+        summary.sources,
+      )} checkout-recovery: ${counts(summary.checkoutRecovery)} reasons: ${counts(summary.reasons)}`,
     );
 
-    return NextResponse.json({
-      success: true,
-      examined: summary.examined,
-      outcomes: summary.outcomes,
-    });
+    // **Inside the try on purpose.** A health query that fails is not a healthy
+    // answer: it falls to the 500 below, and the heartbeat stops all the same.
+    const health = await evaluateBillingHealth({ sweep: summary, now: new Date() });
+
+    // Every tick, healthy or not, so a missing line means the check did not run.
+    (health.critical ? console.warn : console.log)(
+      `[billing] critical health — critical=${health.critical} ${counts(health.findings)} oldest-stale-pending-minutes=${minutes(
+        health.oldestStalePendingMs,
+      )} oldest-stale-open-checkout-minutes=${minutes(health.oldestStaleOpenCheckoutMs)}`,
+    );
+
+    // **503 only for what no retry will fix.** The work above is done and kept
+    // either way; the status is what stops the cron's chain before the
+    // heartbeat, so the existing dead man's switch is what raises the alarm.
+    return NextResponse.json(
+      {
+        success: !health.critical,
+        examined: summary.examined,
+        outcomes: summary.outcomes,
+      },
+      { status: health.critical ? 503 : 200 },
+    );
   } catch (error) {
     // The cause stays in the server log; the caller only learns that it failed.
     console.error("[billing] sweep failed", error);
