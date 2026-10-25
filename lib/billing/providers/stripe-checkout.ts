@@ -1,7 +1,7 @@
 import "server-only";
 
 import Stripe from "stripe";
-import { KOQENTRA_USER_ID_KEY } from "@/lib/billing/providers/stripe";
+import { KOQENTRA_USER_ID_KEY, STRIPE_PROVIDER } from "@/lib/billing/providers/stripe";
 import {
   matchesExpectedLivemode,
   readStripeRuntime,
@@ -108,6 +108,25 @@ function readSessionStatus(status: string | null): ProviderSessionState["kind"] 
 }
 
 /**
+ * The subscription a completed session created, or null when it names none.
+ *
+ * Stripe gives an id, or the object itself when it was expanded; anything else
+ * is treated as not knowing, because a wrong id put in line would send a
+ * reconciliation to read somebody else's subscription.
+ */
+function subscriptionIdOf(
+  subscription: Stripe.Checkout.Session["subscription"] | undefined,
+): string | null {
+  if (typeof subscription === "string") {
+    return subscription.trim() === "" ? null : subscription;
+  }
+
+  const id = (subscription as { id?: unknown } | null | undefined)?.id;
+
+  return typeof id === "string" && id.trim() !== "" ? id : null;
+}
+
+/**
  * The Stripe side of starting a checkout.
  *
  * **Returns its own unavailability rather than throwing it.** A missing secret
@@ -184,10 +203,15 @@ export function createStripeCheckoutProvider(
         return { kind: "unreadable", url: null };
       }
 
-      return {
-        kind: readSessionStatus(session.status ?? null),
-        url: session.url,
-      };
+      const kind = readSessionStatus(session.status ?? null);
+
+      return kind === "paid"
+        ? {
+            kind,
+            url: session.url,
+            providerSubscriptionId: subscriptionIdOf(session.subscription),
+          }
+        : { kind, url: session.url };
     },
 
     async findLiveSubscription(
@@ -212,4 +236,25 @@ export function createStripeCheckoutProvider(
         : { kind: "live", providerSubscriptionId: live.id };
     },
   };
+}
+
+/**
+ * Only the session reader, named for the provider whose sessions it reads.
+ *
+ * **What the billing sweep is handed** to find a paid checkout no delivery
+ * announced. It is the same `readSession` a checkout resumes through — the same
+ * key-mode check before the client exists, the same livemode check on the
+ * answer — with the provider's name beside it, so what it finds is put in line
+ * under the name a delivery would have used.
+ */
+export function createStripeCheckoutSessionReader(
+  env: NodeJS.ProcessEnv = process.env,
+):
+  | { readonly provider: string; readonly readSession: CheckoutProvider["readSession"] }
+  | { readonly unavailable: StripeCheckoutUnavailable } {
+  const provider = createStripeCheckoutProvider(env);
+
+  return "unavailable" in provider
+    ? provider
+    : { provider: STRIPE_PROVIDER, readSession: provider.readSession };
 }

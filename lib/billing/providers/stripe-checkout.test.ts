@@ -289,7 +289,6 @@ describe("the key it sends", () => {
 describe("reading a session back", () => {
   it.each([
     ["open", "payable"],
-    ["complete", "paid"],
     ["expired", "lapsed"],
     ["something_new", "unreadable"],
     [null, "unreadable"],
@@ -297,6 +296,89 @@ describe("reading a session back", () => {
     sessionsRetrieve.mockResolvedValue({ status, url: null, livemode: false });
 
     expect(await provider().readSession("cs_test_1")).toEqual({ kind, url: null });
+  });
+
+  it("reads complete as paid, naming its subscription", async () => {
+    sessionsRetrieve.mockResolvedValue({
+      status: "complete",
+      url: null,
+      livemode: false,
+      subscription: "sub_1",
+    });
+
+    expect(await provider().readSession("cs_test_1")).toEqual({
+      kind: "paid",
+      url: null,
+      providerSubscriptionId: "sub_1",
+    });
+  });
+
+  /** Expanded or not, it is the same subscription. */
+  it("reads the id of an expanded subscription", async () => {
+    sessionsRetrieve.mockResolvedValue({
+      status: "complete",
+      url: null,
+      livemode: false,
+      subscription: { id: "sub_expanded", object: "subscription" },
+    });
+
+    expect(await provider().readSession("cs_test_1")).toMatchObject({
+      kind: "paid",
+      providerSubscriptionId: "sub_expanded",
+    });
+  });
+
+  /** Paid is still paid; it just cannot be followed to a subscription. */
+  it.each([
+    ["null", null],
+    ["missing", undefined],
+    ["blank", "  "],
+    ["an object with no id", { object: "subscription" }],
+    ["a number", 42],
+  ])("names no subscription when it is %s", async (_label, subscription) => {
+    sessionsRetrieve.mockResolvedValue({
+      status: "complete",
+      url: null,
+      livemode: false,
+      subscription,
+    });
+
+    expect(await provider().readSession("cs_test_1")).toEqual({
+      kind: "paid",
+      url: null,
+      providerSubscriptionId: null,
+    });
+  });
+
+  /** A session from the other world names nothing, paid or not. */
+  it("reads a paid session from the other world as unreadable", async () => {
+    sessionsRetrieve.mockResolvedValue({
+      status: "complete",
+      url: null,
+      livemode: true,
+      subscription: "sub_live",
+    });
+
+    expect(await provider().readSession("cs_test_1")).toEqual({
+      kind: "unreadable",
+      url: null,
+    });
+  });
+
+  /** One retrieve answers both questions; nothing else is asked of Stripe. */
+  it("asks Stripe once for a paid session", async () => {
+    sessionsRetrieve.mockResolvedValue({
+      status: "complete",
+      url: null,
+      livemode: false,
+      subscription: "sub_1",
+    });
+
+    await provider().readSession("cs_test_1");
+
+    expect(sessionsRetrieve).toHaveBeenCalledTimes(1);
+    expect(sessionsRetrieve).toHaveBeenCalledWith("cs_test_1");
+    expect(subscriptionsList).not.toHaveBeenCalled();
   });
 
   it("carries the url back so a payer can be returned to it", async () => {

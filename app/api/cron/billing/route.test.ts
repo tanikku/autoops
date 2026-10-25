@@ -41,6 +41,7 @@ beforeEach(() => {
       examined: 2,
       outcomes: { applied: 1, "not-claimed": 1 },
       sources: { pending: 1, periodic: 1 },
+      checkoutRecovery: {},
       items: [],
     });
   resolveProviderReader.mockClear();
@@ -119,6 +120,7 @@ describe("what a sweep reports", () => {
       examined: 1,
       outcomes: { applied: 1 },
       sources: { periodic: 1 },
+      checkoutRecovery: {},
       items: [
         { provider: "stripe", providerSubscriptionId: "sub_secret", outcome: "applied" },
       ],
@@ -135,6 +137,7 @@ describe("what a sweep reports", () => {
       examined: 3,
       outcomes: { applied: 3 },
       sources: { pending: 1, "unpaid-confirmation": 1, periodic: 1 },
+      checkoutRecovery: {},
       items: [
         {
           provider: "stripe",

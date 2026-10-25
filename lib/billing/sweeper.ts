@@ -1,6 +1,10 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
+import {
+  type CheckoutSessionReaderResolver,
+  recoverCheckouts,
+} from "@/lib/billing/checkout-recovery";
 import type { ProviderReader } from "@/lib/billing/orchestrate";
 import { runReconciliation } from "@/lib/billing/orchestrate";
 import { requeueReconciliation } from "@/lib/billing/reconciliation-queue";
@@ -76,6 +80,12 @@ export type SweepSummary = {
   readonly outcomes: Readonly<Record<string, number>>;
   /** How many came from each source, so a log line can tell them apart. */
   readonly sources: Readonly<Record<string, number>>;
+  /**
+   * What looking at open checkouts came to, by outcome. Separate from
+   * `outcomes` and `examined`, which count reconciliations: these are attempts,
+   * and the response that reports those two does not change.
+   */
+  readonly checkoutRecovery: Readonly<Record<string, number>>;
   readonly items: readonly SweptItem[];
 };
 
@@ -99,6 +109,13 @@ export type SweepOptions = {
   readonly limit?: number;
   readonly clock?: () => Date;
   readonly newRunId?: () => string;
+  /**
+   * Where paid checkouts no delivery announced are read from. Without it the
+   * sweep reconciles and nothing else; see `lib/billing/checkout-recovery.ts`.
+   */
+  readonly checkoutSessions?: CheckoutSessionReaderResolver;
+  /** In [0, 1). Picks the roaming checkout slot; injected so tests can choose. */
+  readonly random?: () => number;
 };
 
 /**
@@ -167,7 +184,28 @@ export async function sweepBillingReconciliations(
     sources[item.source] = (sources[item.source] ?? 0) + 1;
   }
 
-  return { examined: items.length, outcomes, sources, items };
+  // **Last, and in a budget of its own.** Reconciliation keeps its ten and its
+  // order; this reads at most three sessions after it, whatever came before.
+  const checkoutRecovery: Record<string, number> = {};
+
+  if (options.checkoutSessions !== undefined) {
+    const recovered = await recoverCheckouts({
+      client,
+      now,
+      random: options.random ?? Math.random,
+      resolveReader: options.checkoutSessions,
+    });
+
+    for (const outcome of recovered) {
+      checkoutRecovery[outcome] = (checkoutRecovery[outcome] ?? 0) + 1;
+    }
+
+    if (recovered.length > 0) {
+      sources["checkout-recovery"] = recovered.length;
+    }
+  }
+
+  return { examined: items.length, outcomes, sources, checkoutRecovery, items };
 }
 
 /**

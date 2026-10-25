@@ -47,12 +47,26 @@ export type CheckoutSessionRequest = {
   readonly providerCustomerId: string | null;
 };
 
-/** What became of a session the provider already had. */
-export type ProviderSessionState = {
-  /** `payable`: still open. `paid`: money taken. `lapsed`: nobody can pay it. */
-  readonly kind: "payable" | "paid" | "lapsed" | "unreadable";
-  readonly url: string | null;
-};
+/**
+ * What became of a session the provider already had.
+ *
+ * `payable`: still open. `paid`: money taken. `lapsed`: nobody can pay it.
+ *
+ * **A paid session also names its subscription**, read from the same answer,
+ * so a purchase whose every subscription event was lost can still be found —
+ * see `lib/billing/checkout-recovery.ts`. `null` when the provider did not say;
+ * nothing is put in line on a guess.
+ */
+export type ProviderSessionState =
+  | {
+      readonly kind: "paid";
+      readonly url: string | null;
+      readonly providerSubscriptionId: string | null;
+    }
+  | {
+      readonly kind: "payable" | "lapsed" | "unreadable";
+      readonly url: string | null;
+    };
 
 /** Whether a customer already has a subscription that stops another. */
 export type ProviderSubscriptionPresence =

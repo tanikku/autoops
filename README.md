@@ -1939,9 +1939,28 @@ for**. One whose every delivery was lost has no row, and is not found this way.
 The log line counts each source separately (`sources: pending=… periodic=…`);
 the response does not change.
 
-**Nothing to do costs three queries.** No provider reader is resolved and no
+**A first purchase no delivery ever announced is found from its checkout.**
+That subscription has no row, so nothing above can reach it — and the account,
+refused a second checkout because its session is paid, would wait for good.
+After reconciliation, in a budget of its own, the sweep looks at open attempts
+that named a session at least **fifteen minutes** ago
+(`CHECKOUT_RECOVERY_DELAY_MS`) and reads **at most three** sessions: the two
+newest, so a purchase that has just become eligible is never queued behind
+attempts that will never settle, and one older attempt chosen at random, so
+those keep being read too. That removes a permanent head-of-line block; it does
+not promise any one older attempt a turn within a fixed time. A paid session's
+subscription is put in line only if it has **no row yet** — an existing row is
+left to the paths above — and who it belongs to is still read from the provider
+by the reconciliation. A lapsed session's attempt is closed; a payable or
+unreadable one is left alone. An attempt whose activation is already on record,
+where only the close after it failed, is closed through the same
+`closeSettledCheckoutAttempt` and its same conditions, without a provider read.
+These are counted on the same log line (`checkout-recovery: enqueued=…`) and
+not in `examined` or `outcomes`.
+
+**Nothing to do costs four queries.** No provider reader is resolved and no
 provider client is built, so a deployment with no billing work — or none
-configured — sweeps for the price of three `SELECT`s and no provider call.
+configured — sweeps for the price of four `SELECT`s and no provider call.
 
 ⚠️ **A failure inside the sweep still answers `200`.** One subscription's
 trouble is its own: an unreachable provider, a missing configuration, a reading

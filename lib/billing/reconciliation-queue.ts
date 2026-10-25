@@ -204,6 +204,39 @@ export async function requeueReconciliation(
   return count === 1;
 }
 
+/**
+ * Starts owing a look for a subscription Koqentra has never had a row for.
+ *
+ * **Only the missing row.** A row that already exists — owing or answered — is
+ * left exactly as it is: an owing one will be read anyway, and an answered one
+ * is the periodic resync's to revisit, not this caller's. What this fills is
+ * the one gap nothing else can see, a subscription whose every delivery was
+ * lost. The unique index decides between two callers racing to create it.
+ *
+ * No receipt is written and nobody is named: who the subscription belongs to is
+ * read from the provider by the reconciliation, as for any other row.
+ */
+export async function enqueueReconciliation(
+  provider: string,
+  providerSubscriptionId: string,
+  client: DbClient = prisma,
+  now: Date = new Date(),
+): Promise<"created" | "already-known"> {
+  try {
+    await client.billingReconciliation.create({
+      data: { provider, providerSubscriptionId, pendingSince: now },
+    });
+
+    return "created";
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      return "already-known";
+    }
+
+    throw error;
+  }
+}
+
 /** The right to read provider state for one subscription and act on it. */
 export type ReconciliationLease = {
   readonly token: string;

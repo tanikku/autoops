@@ -241,7 +241,13 @@ describe("when there is nothing to do", () => {
   it("asks for no reader at all", async () => {
     const summary = await sweep();
 
-    expect(summary).toEqual({ examined: 0, outcomes: {}, sources: {}, items: [] });
+    expect(summary).toEqual({
+      examined: 0,
+      outcomes: {},
+      sources: {},
+      checkoutRecovery: {},
+      items: [],
+    });
     expect(resolveReader).not.toHaveBeenCalled();
     expect(runReconciliation).not.toHaveBeenCalled();
   });

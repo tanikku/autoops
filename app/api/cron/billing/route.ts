@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
+import { createStripeCheckoutSessionReader } from "@/lib/billing/providers/stripe-checkout";
 import { resolveProviderReader } from "@/lib/billing/providers/stripe-runtime";
 import { sweepBillingReconciliations } from "@/lib/billing/sweeper";
 
@@ -93,6 +94,9 @@ export async function POST(request: Request) {
   try {
     const summary = await sweepBillingReconciliations({
       resolveReader: resolveProviderReader(),
+      // Called only when an open checkout needs reading, so no client is built
+      // on a tick with none.
+      checkoutSessions: () => createStripeCheckoutSessionReader(),
     });
 
     // Counts and categories. No subscription id, no account, no provider
@@ -105,6 +109,8 @@ export async function POST(request: Request) {
         .map(([outcome, count]) => `${outcome}=${count}`)
         .join(" ")} sources: ${Object.entries(summary.sources)
         .map(([source, count]) => `${source}=${count}`)
+        .join(" ")} checkout-recovery: ${Object.entries(summary.checkoutRecovery)
+        .map(([outcome, count]) => `${outcome}=${count}`)
         .join(" ")}`,
     );
 
