@@ -41,6 +41,8 @@ export const ja: Record<TranslationKey, string> = {
   "dashboard.home.noPlan": "プランなし",
   "dashboard.home.recentActivity": "最近の動き",
   "dashboard.home.noRuns": "まだ実行履歴はありません。",
+  "dashboard.home.emailSelectionNeeded":
+    "Liteではメール通知に使うWorkerを1つ選んでください。いまはどのWorkerも選ばれていないため、メールは送られていません。使いたいWorkerの編集画面でメール通知をオンにして保存すると選ばれます。",
   "dashboard.title": "私の AI チーム",
   "dashboard.description": "AI Worker を管理し、状況を確認します。",
   "dashboard.hireWorker": "Worker を作成",
@@ -621,6 +623,8 @@ export const ja: Record<TranslationKey, string> = {
    * - 「変更が検出された」として扱わない — 「変更なし」ではない。
    * - 過去の実行履歴は残る — 捨てられるのは比較の基準だけ。
    */
+  "worker.edit.emailNotChosen":
+    "このWorkerはメール通知に使うWorkerとして選ばれていないため、メールは送られていません。メール通知をオンにして保存すると、このWorkerでメール通知を受け取れます。",
   "worker.edit.baselineReset":
     "アドレスを変更すると、比較の基準はリセットされます。次にチェックが成功した" +
     "時点で、Koqentra は新しいページを「変更が検出された」として扱わず、新しい" +

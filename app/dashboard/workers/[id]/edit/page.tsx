@@ -5,7 +5,7 @@ import { WorkerEditForm } from "@/components/worker-edit-form";
 import { getRoutineForEdit } from "@/lib/routines";
 import { t } from "@/lib/i18n";
 import { getDocumentLanguage } from "@/lib/i18n/server";
-import { readEmailEntitlement } from "@/lib/notification-worker";
+import { readEmailSelection } from "@/lib/notification-worker";
 import { requireUserId } from "@/lib/session";
 import { getUserLanguage, getUserTimezone } from "@/lib/users";
 import { getDiscoverySource } from "@/lib/discovery/repository";
@@ -58,11 +58,23 @@ export default async function EditWorkerPage({
 
   // What the form says about the schedule it is editing, and the words it
   // says it in. Read only, both of them.
-  const [timezone, language, emailEntitlement] = await Promise.all([
+  const [timezone, language, emailSelection] = await Promise.all([
     getUserTimezone(userId),
     getUserLanguage(userId),
-    readEmailEntitlement(userId),
+    readEmailSelection(userId),
   ]);
+  const emailEntitlement = emailSelection?.entitlement;
+
+  // **The switch is shown as it behaves.** On a plan that lets one worker
+  // email, a switch left on from a plan that let them all sends nothing unless
+  // this is the chosen worker — so it is shown off, with a line saying why.
+  // Turning it on is then a move the save notices, and the existing selection
+  // makes this the chosen worker (or asks before replacing another). Nothing is
+  // written by opening the page, and a save that leaves it off writes nothing.
+  const emailNotChosen =
+    emailSelection?.entitlement === "one-worker" &&
+    worker.emailNotificationsEnabled &&
+    emailSelection.notificationWorkerId !== worker.id;
 
   // **Only a website worker has a page, and only it is asked for one.**
   const source =
@@ -105,6 +117,12 @@ export default async function EditWorkerPage({
           </p>
         ) : null}
 
+        {emailNotChosen ? (
+          <p className="mt-2 text-sm text-muted-foreground">
+            {t(language, "worker.edit.emailNotChosen")}
+          </p>
+        ) : null}
+
         <WorkerEditForm
           worker={{
             id: worker.id,
@@ -120,7 +138,7 @@ export default async function EditWorkerPage({
             runAt: minutesToTimeValue(worker.runAtMinutes),
             runAtWeekday: worker.runAtWeekday,
             runAtDay: worker.runAtDay,
-            emailNotificationsEnabled: worker.emailNotificationsEnabled,
+            emailNotificationsEnabled: worker.emailNotificationsEnabled && !emailNotChosen,
             targetCondition: worker.targetCondition,
           }}
           timezone={timezone}

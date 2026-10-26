@@ -1700,6 +1700,25 @@ describe("updateRoutineAction — the one emailing worker", () => {
     expect(emailChoice.setChosen).not.toHaveBeenCalled();
   });
 
+  /**
+   * **N1-F8, one save.** With nobody chosen the edit page shows a switched-on
+   * worker as off; turning it on is a move the save notices, so the existing
+   * selection makes this the chosen worker — no off-then-on round trip.
+   */
+  it("chooses this worker in one save when nobody is chosen", async () => {
+    lite(null);
+
+    const result = await save(
+      form({
+      emailNotificationsEnabledInitial: "false", status: "draft", frequency: "manual", emailNotificationsEnabled: "on" }),
+    );
+
+    expect(result?.status).not.toBe("error");
+    expect(emailChoice.setChosen).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(emailChoice.setChosen.mock.calls[0][0])).toContain("worker-1");
+    expect(emailChoice.switchOff).not.toHaveBeenCalled();
+  });
+
   it("moves email to this worker once the owner confirms", async () => {
     lite("worker-0");
     emailChoice.findChosen.mockResolvedValue({ id: "worker-0", name: "Morning brief" });

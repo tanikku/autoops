@@ -80,6 +80,8 @@ export const en = {
   "dashboard.home.noPlan": "No plan",
   "dashboard.home.recentActivity": "Recent activity",
   "dashboard.home.noRuns": "No runs yet.",
+  "dashboard.home.emailSelectionNeeded":
+    "On Lite, choose one worker to send email notifications. No worker is chosen yet, so no email is being sent. Open the worker you want, switch email notifications on and save to choose it.",
   "dashboard.title": "My AI Team",
   "dashboard.description": "Manage and monitor your AI workers.",
   "dashboard.hireWorker": "Hire Worker",
@@ -1045,6 +1047,8 @@ Notes for the report:
    * A translation that weakens any of the three describes a mechanism nobody
    * can see, which is the only reason this sentence exists.
    */
+  "worker.edit.emailNotChosen":
+    "This worker is not the one chosen to send email, so it sends none. Switch email notifications on and save to receive them from this worker.",
   "worker.edit.baselineReset":
     "Changing the address resets the comparison baseline. On the next " +
     "successful check, Koqentra establishes a new baseline instead of treating " +

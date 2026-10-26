@@ -25,6 +25,11 @@ const mocks = vi.hoisted(() => ({
   getUserTimezone: vi.fn(),
   getUserLanguage: vi.fn(),
   getDocumentLanguage: vi.fn(),
+  readEmailSelectionNeeded: vi.fn(),
+}));
+
+vi.mock("@/lib/notification-worker", () => ({
+  readEmailSelectionNeeded: mocks.readEmailSelectionNeeded,
 }));
 
 vi.mock("@/auth", () => ({ auth: vi.fn(), signIn: vi.fn(), signOut: vi.fn() }));
@@ -105,6 +110,7 @@ const render = async () => renderToStaticMarkup(await HomePage());
 
 beforeEach(() => {
   mocks.requireUserId.mockReset().mockResolvedValue(USER);
+  mocks.readEmailSelectionNeeded.mockReset().mockResolvedValue(false);
   mocks.getUsageSnapshot.mockReset().mockResolvedValue(snapshot());
   // Lite's own allowance, which is what the quota refuses on for this account.
   mocks.readActiveWorkerLimit.mockReset().mockResolvedValue(2);
@@ -681,5 +687,26 @@ describe("what never reaches the page", () => {
 
     expect(text).not.toContain("run-1");
     expect(text).not.toContain(USER);
+  });
+});
+
+/**
+ * **N1-F8: the one state no repair resolves.** On Lite with nobody chosen and
+ * more than one worker switched on, choosing would be deciding for the owner,
+ * so the home page says what to do instead.
+ */
+describe("when the owner has to choose which worker emails them", () => {
+  it("says so, and how", async () => {
+    mocks.readEmailSelectionNeeded.mockResolvedValue(true);
+
+    const html = await render();
+
+    expect(html).toContain("On Lite, choose one worker to send email notifications.");
+    expect(html).toContain('href="/dashboard/workers"');
+    expect(mocks.readEmailSelectionNeeded).toHaveBeenCalledWith(USER);
+  });
+
+  it("says nothing otherwise", async () => {
+    expect(await render()).not.toContain("choose one worker to send email");
   });
 });

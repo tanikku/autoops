@@ -10,6 +10,7 @@ import {
   releaseReconciliation,
 } from "@/lib/billing/reconciliation-queue";
 import type { ProviderSubscriptionSnapshot } from "@/lib/billing/snapshot";
+import { repairNotificationWorkerSelection } from "@/lib/notification-worker";
 import { type DbClient, prisma } from "@/lib/prisma";
 
 /**
@@ -187,9 +188,49 @@ export async function runReconciliation(input: {
           clock,
         });
 
-  return "$transaction" in client && typeof client.$transaction === "function"
-    ? await (client as typeof prisma).$transaction(apply)
-    : await apply(client);
+  const result =
+    "$transaction" in client && typeof client.$transaction === "function"
+      ? await (client as typeof prisma).$transaction(apply)
+      : await apply(client);
+
+  if (
+    observation.kind === "observed" &&
+    result.outcome === "reconciled" &&
+    (result.result.outcome === "applied" || result.result.outcome === "already-converged")
+  ) {
+    await repairNotificationWorker(client, observation.observation.snapshot.userId, clock());
+  }
+
+  return result;
+}
+
+/**
+ * Gives a one-worker plan its chosen worker when only one could be meant.
+ *
+ * **After the reconciliation has committed, never inside it.** A bought
+ * entitlement is owed whether or not this works, so its failure is logged and
+ * left for the next run — an activation, or the periodic resync that reads
+ * every known subscription again. See `repairNotificationWorkerSelection`.
+ */
+async function repairNotificationWorker(
+  client: DbClient,
+  userId: string,
+  now: Date,
+): Promise<void> {
+  try {
+    const outcome = await repairNotificationWorkerSelection(client, userId, now);
+
+    // **Only the two worth reading**: a choice made, or one only the owner can
+    // make. The rest happen on every run and say nothing.
+    if (outcome === "selected" || outcome === "ambiguous") {
+      console.log(`[billing] notification worker after reconcile — outcome=${outcome}`);
+    }
+  } catch (error) {
+    console.error(
+      "[billing] could not repair the notification worker —",
+      error instanceof Error ? error.name : "an unexpected failure",
+    );
+  }
 }
 
 /**

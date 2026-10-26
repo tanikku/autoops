@@ -9,6 +9,7 @@ import { readPricingView } from "@/lib/billing/pricing";
 import { readActiveWorkerLimit } from "@/lib/entitlements/active-worker-limit";
 import { t } from "@/lib/i18n";
 import { getDocumentLanguage } from "@/lib/i18n/server";
+import { readEmailSelectionNeeded } from "@/lib/notification-worker";
 import { getPlanDefinition } from "@/lib/plans";
 import { listRecentRuns } from "@/lib/runs";
 import { requireUserId } from "@/lib/session";
@@ -133,8 +134,15 @@ export default async function DashboardHomePage() {
   // runs and the stuck-run judgement cannot disagree about when "now" was.
   const now = new Date();
 
-  const [usage, pricing, activeWorkerLimit, recentRuns, timezone, language] =
-    await Promise.all([
+  const [
+    usage,
+    pricing,
+    activeWorkerLimit,
+    recentRuns,
+    timezone,
+    language,
+    emailSelectionNeeded,
+  ] = await Promise.all([
       getUsageSnapshot(userId, now),
       readPricingView(userId),
       // **The number an activation is refused at**, not the one a snapshot
@@ -144,6 +152,10 @@ export default async function DashboardHomePage() {
       listRecentRuns(userId, RECENT_RUNS_ON_HOME),
       getUserTimezone(userId),
       getUserLanguage(userId),
+      // **Only the one state no repair resolves**: a one-worker plan, nobody
+      // chosen, and more than one worker that could be. With exactly one, the
+      // billing run chooses it; with none, there is nothing to choose.
+      readEmailSelectionNeeded(userId),
     ]);
 
   // **The counter for the period this account is actually in.** A period with no
@@ -187,6 +199,18 @@ export default async function DashboardHomePage() {
             {t(language, "dashboard.home.createWorker")}
           </Button>
         </div>
+
+        {emailSelectionNeeded ? (
+          <p
+            role="status"
+            className="mt-6 rounded-md border px-4 py-3 text-sm text-muted-foreground"
+          >
+            {t(language, "dashboard.home.emailSelectionNeeded")}{" "}
+            <Link href="/dashboard/workers" className="underline underline-offset-4">
+              {t(language, "nav.workers")}
+            </Link>
+          </p>
+        ) : null}
 
         <section className="mt-10">
           <h2 className="text-lg font-medium tracking-tight">

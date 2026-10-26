@@ -41,6 +41,11 @@ const clientStub = {
 };
 
 vi.mock("@/lib/prisma", () => ({ prisma: clientStub }));
+
+const repairWorker = vi.fn();
+vi.mock("@/lib/notification-worker", () => ({
+  repairNotificationWorkerSelection: repairWorker,
+}));
 vi.mock("@/lib/billing/reconciliation-queue", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   claimReconciliation: claim,
@@ -118,6 +123,7 @@ beforeEach(() => {
   receiptFindFirst.mockReset().mockResolvedValue(null);
   receiptCount.mockReset().mockResolvedValue(1);
   userUpdate.mockReset().mockResolvedValue({ id: USER });
+  repairWorker.mockReset().mockResolvedValue("not-one-worker");
   transaction
     .mockReset()
     .mockImplementation((run: (tx: unknown) => Promise<unknown>) => run(clientStub));
@@ -482,5 +488,94 @@ describe("provider neutrality", () => {
         );
       }
     }
+  });
+});
+
+/**
+ * **N1-F8: the notification worker, after the reconciliation has committed.**
+ * A bought entitlement is owed whether or not this works, so it runs outside
+ * the transaction, and its failure changes nothing the run reports.
+ */
+describe("repairing the notification worker afterwards", () => {
+  it.each([
+    ["an activation", { outcome: "applied", kinds: ["subscription.activated"] }],
+    ["a periodic read that changed nothing", { outcome: "already-converged" }],
+  ])("runs after %s, for the subscription's account", async (_label, result) => {
+    reconcile.mockResolvedValue(result);
+
+    await go();
+
+    expect(repairWorker).toHaveBeenCalledTimes(1);
+    expect(repairWorker.mock.calls[0][1]).toBe(USER);
+  });
+
+  it("runs only once the transaction has returned", async () => {
+    await go();
+
+    expect(transaction.mock.invocationCallOrder[0]).toBeLessThan(
+      repairWorker.mock.invocationCallOrder[0],
+    );
+    // Handed the client that can open its own transaction, not the run's.
+    expect(repairWorker.mock.calls[0][0]).toBe(clientStub);
+  });
+
+  it.each([
+    ["a refusal", { outcome: "provider-domain-mismatch", reason: "downgrade" }],
+    ["a superseded subscription", { outcome: "superseded-subscription" }],
+    ["a regression", { outcome: "provider-domain-regression" }],
+  ])("does not run after %s", async (_label, result) => {
+    reconcile.mockResolvedValue(result);
+
+    await go();
+
+    expect(repairWorker).not.toHaveBeenCalled();
+  });
+
+  it("does not run when the read failed or was refused", async () => {
+    await go({ read: vi.fn(async () => ({ kind: "unavailable", reason: "timeout" })) });
+    await go({ read: vi.fn(async () => ({ kind: "refused", reason: "unknown-plan" })) });
+
+    expect(repairWorker).not.toHaveBeenCalled();
+  });
+
+  it("does not run when the lease was lost", async () => {
+    reconciliationUpdateMany.mockResolvedValue({ count: 0 });
+
+    expect(await go()).toEqual({ outcome: "fenced-out" });
+    expect(repairWorker).not.toHaveBeenCalled();
+  });
+
+  /** Paid is paid: a failed repair is logged and the run's answer stands. */
+  it("leaves the run's result as it was when the repair fails", async () => {
+    repairWorker.mockRejectedValue(
+      Object.assign(new Error("relation sub_123 user_456"), { name: "PrismaClientKnownRequestError" }),
+    );
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await go()).toMatchObject({
+      outcome: "reconciled",
+      result: { outcome: "applied" },
+    });
+    expect(logged.mock.calls.flat().join(" ")).toContain("PrismaClientKnownRequestError");
+    expect(logged.mock.calls.flat().join(" ")).not.toContain("sub_123");
+    logged.mockRestore();
+  });
+
+  it.each([
+    ["selected", true],
+    ["ambiguous", true],
+    ["already-selected", false],
+    ["none-enabled", false],
+    ["not-one-worker", false],
+  ])("logs %s only when it is worth reading: %s", async (outcome, logs) => {
+    repairWorker.mockResolvedValue(outcome);
+    const logged = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await go();
+
+    const line = logged.mock.calls.flat().join(" ");
+    expect(line.includes(`notification worker after reconcile — outcome=${outcome}`)).toBe(logs);
+    expect(line).not.toContain(USER);
+    logged.mockRestore();
   });
 });

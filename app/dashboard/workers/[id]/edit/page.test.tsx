@@ -17,6 +17,11 @@ const mocks = vi.hoisted(() => ({
   getWebsiteSource: vi.fn(),
   getDiscoverySource: vi.fn(),
   notFound: vi.fn(),
+  readEmailSelection: vi.fn(),
+}));
+
+vi.mock("@/lib/notification-worker", () => ({
+  readEmailSelection: mocks.readEmailSelection,
 }));
 
 vi.mock("next/navigation", () => ({ notFound: mocks.notFound }));
@@ -119,6 +124,7 @@ beforeEach(() => {
   mocks.getRoutineForEdit.mockReset().mockResolvedValue(worker());
   mocks.getWebsiteSource.mockReset().mockResolvedValue(null);
   mocks.getDiscoverySource.mockReset().mockResolvedValue(null);
+  mocks.readEmailSelection.mockReset().mockResolvedValue(undefined);
   mocks.notFound.mockReset().mockImplementation(() => {
     throw new Error("not found");
   });
@@ -358,3 +364,80 @@ describe("a worker created from a template", () => {
   });
 });
 
+
+/**
+ * **The switch is shown as it behaves.** On a one-worker plan a worker that is
+ * not the chosen one sends nothing, so its switch is shown off with a line
+ * saying why — and turning it on is the move the save already understands.
+ */
+describe("the email switch on a plan that lets one worker email", () => {
+  const shownSwitch = (node: ReactNode) =>
+    (passedProp(node, "worker") as { emailNotificationsEnabled: boolean })
+      .emailNotificationsEnabled;
+  const says = (node: ReactNode, text: string) => JSON.stringify(node).includes(text);
+  const NOT_CHOSEN = "is not the one chosen to send email";
+
+  it.each([
+    ["nobody is chosen", null],
+    ["another worker is chosen", "worker-2"],
+  ])("shows a switched-on worker off, and says why, when %s", async (_label, chosen) => {
+    mocks.getRoutineForEdit.mockResolvedValue(worker({ emailNotificationsEnabled: true }));
+    mocks.readEmailSelection.mockResolvedValue({
+      entitlement: "one-worker",
+      notificationWorkerId: chosen,
+    });
+
+    const page = await render();
+
+    expect(shownSwitch(page)).toBe(false);
+    expect(says(page, NOT_CHOSEN)).toBe(true);
+  });
+
+  it("shows the chosen worker as it is", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(worker({ emailNotificationsEnabled: true }));
+    mocks.readEmailSelection.mockResolvedValue({
+      entitlement: "one-worker",
+      notificationWorkerId: "worker-1",
+    });
+
+    const page = await render();
+
+    expect(shownSwitch(page)).toBe(true);
+    expect(says(page, NOT_CHOSEN)).toBe(false);
+  });
+
+  it.each([
+    ["every worker may email", { entitlement: "all-workers", notificationWorkerId: null }],
+    ["the selection cannot be read", undefined],
+  ])("changes nothing when %s", async (_label, selection) => {
+    mocks.getRoutineForEdit.mockResolvedValue(worker({ emailNotificationsEnabled: true }));
+    mocks.readEmailSelection.mockResolvedValue(selection);
+
+    const page = await render();
+
+    expect(shownSwitch(page)).toBe(true);
+    expect(says(page, NOT_CHOSEN)).toBe(false);
+  });
+
+  it("says nothing for a worker whose switch is off", async () => {
+    mocks.getRoutineForEdit.mockResolvedValue(worker({ emailNotificationsEnabled: false }));
+    mocks.readEmailSelection.mockResolvedValue({
+      entitlement: "one-worker",
+      notificationWorkerId: null,
+    });
+
+    const page = await render();
+
+    expect(shownSwitch(page)).toBe(false);
+    expect(says(page, NOT_CHOSEN)).toBe(false);
+  });
+
+  it("still tells the form which workers the plan lets email", async () => {
+    mocks.readEmailSelection.mockResolvedValue({
+      entitlement: "one-worker",
+      notificationWorkerId: null,
+    });
+
+    expect(passedProp(await render(), "emailEntitlement")).toBe("one-worker");
+  });
+});

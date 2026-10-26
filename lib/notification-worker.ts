@@ -5,7 +5,7 @@ import { InvalidSubscriptionError } from "@/lib/entitlements/states";
 import { UnknownPlanError } from "@/lib/plans";
 import { emailEntitlementOf } from "@/lib/notify/email-entitlement";
 import type { EmailEntitlement } from "@/lib/plans";
-import type { DbClient } from "@/lib/prisma";
+import { type DbClient, prisma } from "@/lib/prisma";
 
 /**
  * Which worker emails its owner, on a plan that allows one.
@@ -208,5 +208,160 @@ export async function readEmailEntitlement(
   } catch (error) {
     console.error("[worker] email entitlement could not be read for the form", error);
     return undefined;
+  }
+}
+
+/** What repairing an account's choice came to. Categories only. */
+export type NotificationWorkerRepair =
+  /** Exactly one worker had its email on and nobody was chosen; it is now. */
+  | "selected"
+  /** Nobody chosen, and two or more workers have email on: the owner chooses. */
+  | "ambiguous"
+  /** Nobody chosen, and no worker has email on: nothing to choose. */
+  | "none-enabled"
+  /** Somebody is chosen already. Never replaced here. */
+  | "already-selected"
+  /** The plan lets every worker email, or none: there is no choice to make. */
+  | "not-one-worker";
+
+/**
+ * Gives a one-worker plan its chosen worker when there is only one it could be.
+ *
+ * **Why this exists.** Every plan but Lite lets all workers email, so an owner
+ * on a trial switches email on wherever they like and nothing is chosen —
+ * there is nothing to choose. Buying Lite then leaves `notificationWorkerId`
+ * null, which a one-worker plan reads as "nobody", and every email stops while
+ * the switches still look on.
+ *
+ * **The one exception to choosing nothing behind anybody's back.** With exactly
+ * one worker switched on there is no choice to make on the owner's behalf: it
+ * is the only answer. With two or more nothing is chosen — the owner is asked
+ * instead — and a choice already made is never replaced, which the condition
+ * on the write enforces rather than a check beforehand.
+ *
+ * **Under the account's lock, like every save of a worker's switch**, so the
+ * workers counted are the ones that exist when the choice is written: a worker
+ * deleted, or a second one switched on, by a save that finished first is seen.
+ * Its own transaction: this runs after a reconciliation has committed, and a
+ * failure here must never undo an entitlement that was paid for.
+ */
+export async function repairNotificationWorkerSelection(
+  client: DbClient,
+  userId: string,
+  now: Date = new Date(),
+): Promise<NotificationWorkerRepair> {
+  const run = async (tx: DbClient): Promise<NotificationWorkerRepair> => {
+    await lockAccountForEmailSelection(tx, userId);
+
+    const record = await tx.subscription.findUnique({
+      where: { userId },
+      select: SUBSCRIPTION_FIELDS,
+    });
+
+    if (record === null) {
+      return "not-one-worker";
+    }
+
+    let oneWorker: boolean;
+    try {
+      oneWorker = emailEntitlementOf(computeEntitlement(record, now)) === "one-worker";
+    } catch (error) {
+      // A plan this version cannot read is not one to choose a worker for.
+      if (error instanceof InvalidSubscriptionError || error instanceof UnknownPlanError) {
+        return "not-one-worker";
+      }
+
+      throw error;
+    }
+
+    if (!oneWorker) {
+      return "not-one-worker";
+    }
+
+    if (record.notificationWorkerId !== null) {
+      return "already-selected";
+    }
+
+    // Two are enough to know it is not one.
+    const enabled = await tx.routine.findMany({
+      where: { userId, emailNotificationsEnabled: true },
+      orderBy: { id: "asc" },
+      take: 2,
+      select: { id: true },
+    });
+
+    if (enabled.length === 0) {
+      return "none-enabled";
+    }
+
+    if (enabled.length > 1) {
+      return "ambiguous";
+    }
+
+    const { count } = await tx.subscription.updateMany({
+      where: { userId, notificationWorkerId: null },
+      data: { notificationWorkerId: enabled[0].id },
+    });
+
+    return count === 1 ? "selected" : "already-selected";
+  };
+
+  return "$transaction" in client && typeof client.$transaction === "function"
+    ? await (client as typeof prisma).$transaction(run)
+    : await run(client);
+}
+
+/** Which workers the plan lets email, and which one is chosen. For pages. */
+export type EmailSelection = {
+  readonly entitlement: EmailEntitlement;
+  readonly notificationWorkerId: string | null;
+};
+
+/**
+ * What a page needs to show a worker's email switch as it actually behaves.
+ *
+ * **Undefined when it cannot be read**, like `readEmailEntitlement`.
+ */
+export async function readEmailSelection(userId: string): Promise<EmailSelection | undefined> {
+  try {
+    const entitlement = await getEffectiveEntitlement(userId);
+
+    return {
+      entitlement: emailEntitlementOf(entitlement),
+      notificationWorkerId: entitlement.notificationWorkerId,
+    };
+  } catch (error) {
+    console.error("[worker] email selection could not be read for the page", error);
+    return undefined;
+  }
+}
+
+/**
+ * Whether the owner has to choose which worker emails them.
+ *
+ * True only on a one-worker plan with nobody chosen and two or more workers
+ * switched on — the one state no repair resolves, because choosing would be
+ * deciding for them. False when it cannot be read: the page says nothing rather
+ * than the wrong thing.
+ */
+export async function readEmailSelectionNeeded(
+  userId: string,
+  client: DbClient = prisma,
+): Promise<boolean> {
+  const selection = await readEmailSelection(userId);
+
+  if (selection?.entitlement !== "one-worker" || selection.notificationWorkerId !== null) {
+    return false;
+  }
+
+  try {
+    const enabled = await client.routine.count({
+      where: { userId, emailNotificationsEnabled: true },
+    });
+
+    return enabled >= 2;
+  } catch (error) {
+    console.error("[worker] email selection could not be counted for the page", error);
+    return false;
   }
 }
