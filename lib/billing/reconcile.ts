@@ -97,14 +97,16 @@ export async function reconcileProviderSubscription(
 
   const run = (tx: DbClient) => converge(tx, snapshot, reconciliationRunId);
 
-  const result =
-    "$transaction" in client && typeof client.$transaction === "function"
-      ? await (client as typeof prisma).$transaction(run)
-      : await run(client);
-
-  await releaseSettledCheckout(snapshot, result, client);
-
-  return result;
+  // **The checkout slot is not released here.** This may be running inside a
+  // caller's transaction — and a Prisma transaction client has a `$transaction`
+  // of its own, so nothing here can tell — where one failed statement leaves
+  // PostgreSQL refusing everything after it and the caller's commit takes the
+  // applied entitlement with it, whatever a catch does. The caller releases it
+  // with `releaseSettledCheckout` once its transaction has committed; see
+  // `runReconciliation`.
+  return "$transaction" in client && typeof client.$transaction === "function"
+    ? await (client as typeof prisma).$transaction(run)
+    : await run(client);
 }
 
 /**
@@ -115,12 +117,17 @@ export async function reconcileProviderSubscription(
  * ending; and an entitlement that has been applied is owed whatever happens here,
  * so nothing this does or fails to do is allowed to reach the caller. An attempt
  * left open outlives its TTL until the provider says its session lapsed unpaid;
- * a paid one goes on refusing a second checkout.
+ * a paid one goes on refusing a second checkout, and the sweep's checkout
+ * recovery closes it once the activation is on record.
+ *
+ * **Never inside the transaction that applied the entitlement.** Called with
+ * the plain client once that transaction has committed, so each statement here
+ * stands on its own and a failure leaves the entitlement exactly as written.
  */
-async function releaseSettledCheckout(
+export async function releaseSettledCheckout(
   snapshot: ProviderSubscriptionSnapshot,
   result: ReconciliationResult,
-  client: DbClient,
+  client: DbClient = prisma,
 ): Promise<void> {
   if (
     result.outcome !== "applied" ||
@@ -157,7 +164,7 @@ async function releaseSettledCheckout(
     // entitlement is applied; this is a slot that will now lapse instead of
     // being released early.
     console.error(
-      "[billing] could not release the settled checkout slot —",
+      "[billing] could not release settled checkout after reconciliation —",
       error instanceof Error ? error.name : "an unexpected failure",
     );
   }

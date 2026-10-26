@@ -2,6 +2,7 @@ import "server-only";
 
 import {
   reconcileProviderSubscription,
+  releaseSettledCheckout,
   type ReconciliationResult,
 } from "@/lib/billing/reconcile";
 import {
@@ -193,12 +194,17 @@ export async function runReconciliation(input: {
       ? await (client as typeof prisma).$transaction(apply)
       : await apply(client);
 
-  if (
-    observation.kind === "observed" &&
-    result.outcome === "reconciled" &&
-    (result.result.outcome === "applied" || result.result.outcome === "already-converged")
-  ) {
-    await repairNotificationWorker(client, observation.observation.snapshot.userId, clock());
+  // **Both after the commit, each on its own.** Neither may undo the
+  // entitlement just applied, and neither may stop the other: the checkout
+  // close logs its own failure and returns. The snapshot is the provider's,
+  // which is what the close reads — user, plan and period; confirming an ending
+  // changes only the entitlement it carries.
+  if (observation.kind === "observed" && result.outcome === "reconciled") {
+    await releaseSettledCheckout(observation.observation.snapshot, result.result, client);
+
+    if (result.result.outcome === "applied" || result.result.outcome === "already-converged") {
+      await repairNotificationWorker(client, observation.observation.snapshot.userId, clock());
+    }
   }
 
   return result;

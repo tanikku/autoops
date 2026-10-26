@@ -56,7 +56,7 @@ vi.mock("@/lib/billing/checkout-cleanup", () => ({
   closeSettledCheckoutAttempt,
 }));
 
-const { reconcileProviderSubscription } = await import(
+const { reconcileProviderSubscription, releaseSettledCheckout } = await import(
   "@/lib/billing/reconcile"
 );
 const { getPlanDefinition } = await import("@/lib/plans");
@@ -1066,6 +1066,22 @@ describe("how the work is carried out", () => {
     ).rejects.toThrow("counter write failed");
   });
 
+  /**
+   * **N2S-F2.** Inside a caller's transaction the close is the caller's to make
+   * after its own commit — a failed statement here would abort that transaction
+   * and the entitlement with it.
+   */
+  it("leaves the checkout close to a caller that holds the transaction", async () => {
+    const tx = { ...clientStub } as unknown as Record<string, unknown>;
+    delete tx.$transaction;
+    subscriptionFindUnique.mockResolvedValue(null);
+
+    const result = await reconcileProviderSubscription(snapshot(), RUN, tx as never);
+
+    expect(result).toEqual({ outcome: "applied", kinds: ["subscription.activated"] });
+    expect(closeSettledCheckoutAttempt).not.toHaveBeenCalled();
+  });
+
   /** It must be usable inside a lease holder's own transaction. */
   it("uses the transaction it is given rather than opening one", async () => {
     const tx = { ...clientStub } as unknown as Record<string, unknown>;
@@ -1195,9 +1211,27 @@ describe("provider neutrality", () => {
  *
  * **It runs after the transaction, so it cannot undo what was applied.** An
  * entitlement that has committed is owed whatever happens to a coordination row.
+ * The reconciliation itself never releases the slot; its caller does, once its
+ * transaction has committed — which is what this helper does.
  */
-const reconcile = (input: Snapshot) =>
-  reconcileProviderSubscription(input, RUN);
+const reconcile = async (input: Snapshot) => {
+  const result = await reconcileProviderSubscription(input, RUN);
+  await releaseSettledCheckout(input, result);
+  return result;
+};
+
+describe("who releases the slot", () => {
+  /** N2S-F2: a failed close inside a transaction took the entitlement with it. */
+  it("is never the reconciliation itself, with its own transaction or a caller's", async () => {
+    subscriptionFindUnique.mockResolvedValue(null);
+    const tx = { ...clientStub } as unknown as Record<string, unknown>;
+
+    await reconcileProviderSubscription(snapshot(), RUN);
+    await reconcileProviderSubscription(snapshot(), RUN, tx as never);
+
+    expect(closeSettledCheckoutAttempt).not.toHaveBeenCalled();
+  });
+});
 
 describe("the checkout slot a purchase was holding", () => {
   it("is released when a subscription activates", async () => {
@@ -1360,7 +1394,7 @@ describe("the line that says what the cleanup came to", () => {
 
     expect(outcomeLogs).toEqual([]);
     expect(cleanupLogs).toEqual([
-      "[billing] could not release the settled checkout slot — Error",
+      "[billing] could not release settled checkout after reconciliation — Error",
     ]);
     expect(result).toEqual({
       outcome: "applied",

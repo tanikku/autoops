@@ -51,8 +51,10 @@ vi.mock("@/lib/billing/reconciliation-queue", async (importOriginal) => ({
   claimReconciliation: claim,
   releaseReconciliation: release,
 }));
+const releaseSettled = vi.fn();
 vi.mock("@/lib/billing/reconcile", () => ({
   reconcileProviderSubscription: reconcile,
+  releaseSettledCheckout: releaseSettled,
 }));
 
 const { runReconciliation } = await import("@/lib/billing/orchestrate");
@@ -124,6 +126,7 @@ beforeEach(() => {
   receiptCount.mockReset().mockResolvedValue(1);
   userUpdate.mockReset().mockResolvedValue({ id: USER });
   repairWorker.mockReset().mockResolvedValue("not-one-worker");
+  releaseSettled.mockReset().mockResolvedValue(undefined);
   transaction
     .mockReset()
     .mockImplementation((run: (tx: unknown) => Promise<unknown>) => run(clientStub));
@@ -577,5 +580,83 @@ describe("repairing the notification worker afterwards", () => {
     expect(line.includes(`notification worker after reconcile — outcome=${outcome}`)).toBe(logs);
     expect(line).not.toContain(USER);
     logged.mockRestore();
+  });
+});
+
+/**
+ * **N2S-F2: the checkout close, after the commit.** Inside the reconciliation's
+ * transaction a failed close statement aborted it and took the activation with
+ * it. Now it runs on the plain client once the transaction has returned.
+ */
+describe("releasing the settled checkout afterwards", () => {
+  it("runs once the transaction has returned, on the client rather than the run's", async () => {
+    await go();
+
+    expect(releaseSettled).toHaveBeenCalledTimes(1);
+    expect(transaction.mock.invocationCallOrder[0]).toBeLessThan(
+      releaseSettled.mock.invocationCallOrder[0],
+    );
+    expect(releaseSettled.mock.calls[0][2]).toBe(clientStub);
+  });
+
+  it("is handed the provider's snapshot and the committed result", async () => {
+    reconcile.mockResolvedValue({ outcome: "applied", kinds: ["subscription.activated"] });
+
+    await go();
+
+    expect(releaseSettled.mock.calls[0][0]).toMatchObject({
+      userId: USER,
+      providerSubscriptionId: SUB,
+      plan: "standard",
+    });
+    expect(releaseSettled.mock.calls[0][1]).toEqual({
+      outcome: "applied",
+      kinds: ["subscription.activated"],
+    });
+  });
+
+  /** It decides for itself whether the result was an activation. */
+  it.each([
+    ["an activation", { outcome: "applied", kinds: ["subscription.activated"] }],
+    ["a renewal", { outcome: "applied", kinds: ["subscription.renewed"] }],
+    ["nothing to do", { outcome: "already-converged" }],
+    ["a refusal", { outcome: "provider-domain-mismatch", reason: "downgrade" }],
+  ])("is asked after %s", async (_label, result) => {
+    reconcile.mockResolvedValue(result);
+
+    await go();
+
+    expect(releaseSettled.mock.calls[0][1]).toEqual(result);
+  });
+
+  it("is not asked when nothing was reconciled", async () => {
+    await go({ read: vi.fn(async () => ({ kind: "unavailable", reason: "timeout" })) });
+    await go({ read: vi.fn(async () => ({ kind: "refused", reason: "unknown-plan" })) });
+    reconciliationUpdateMany.mockResolvedValue({ count: 0 });
+    await go();
+
+    expect(releaseSettled).not.toHaveBeenCalled();
+  });
+
+  it("comes before the notification worker repair, which still runs", async () => {
+    await go();
+
+    expect(releaseSettled.mock.invocationCallOrder[0]).toBeLessThan(
+      repairWorker.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("does not happen inside the domain call any more", async () => {
+    let releasedDuringTransaction = false;
+    transaction.mockImplementation(async (run: (tx: unknown) => Promise<unknown>) => {
+      const value = await run(clientStub);
+      releasedDuringTransaction = releaseSettled.mock.calls.length > 0;
+      return value;
+    });
+
+    await go();
+
+    expect(releasedDuringTransaction).toBe(false);
+    expect(releaseSettled).toHaveBeenCalledTimes(1);
   });
 });
