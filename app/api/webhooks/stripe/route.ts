@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { describeBillingError } from "@/lib/billing/error-category";
 import {
   readStripeDelivery,
   verifyStripeDelivery,
@@ -127,7 +128,7 @@ export async function POST(request: Request) {
   } catch (error) {
     // **Nothing landed, so nothing may be acknowledged.** A non-2xx is what
     // keeps the delivery alive in Stripe's retry schedule.
-    console.error("[billing] could not record a Stripe delivery", error);
+    console.error(`[billing] could not record a Stripe delivery — ${describeBillingError(error)}`);
 
     return answer(500, { success: false, error: "Internal Server Error" });
   }

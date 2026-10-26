@@ -1339,7 +1339,7 @@ describe("the checkout slot a purchase was holding", () => {
 
     const logged = cleanupLogs.join(" ");
 
-    expect(logged).toContain("Error");
+    expect(logged).toContain("category=unknown-error");
     expect(logged).not.toContain(USER);
     expect(logged).not.toContain(SUB);
     expect(logged).not.toContain("cus-1");
@@ -1394,7 +1394,7 @@ describe("the line that says what the cleanup came to", () => {
 
     expect(outcomeLogs).toEqual([]);
     expect(cleanupLogs).toEqual([
-      "[billing] could not release settled checkout after reconciliation — Error",
+      "[billing] could not release settled checkout after reconciliation — category=unknown-error",
     ]);
     expect(result).toEqual({
       outcome: "applied",

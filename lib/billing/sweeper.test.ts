@@ -699,3 +699,32 @@ describe("counting why", () => {
     });
   });
 });
+
+/** N2P-F4: one subscription's failure is logged as a category, never as the error. */
+describe("logging one subscription's failure", () => {
+  it("writes the category and not what the error said", async () => {
+    findMany.mockResolvedValueOnce(pending({ id: "sub_secret" })).mockResolvedValue([]);
+    runReconciliation.mockRejectedValue(
+      Object.assign(new Error("Foreign key failed on user-secret at db.internal"), {
+        name: "PrismaClientKnownRequestError",
+        code: "P2003",
+        meta: { field_name: "userId" },
+      }),
+    );
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const summary = await sweep();
+    const written = logged.mock.calls.flat().map(String).join(" ");
+
+    expect(summary.outcomes).toEqual({ failed: 1 });
+    expect(written).toContain(
+      "[billing] sweep failed for one subscription — provider=stripe category=constraint-error code=P2003",
+    );
+    for (const secret of ["sub_secret", "user-secret", "db.internal", "field_name"]) {
+      expect(written).not.toContain(secret);
+    }
+    // Only strings are logged — no error object a log shipper would expand.
+    expect(logged.mock.calls.flat().every((arg) => typeof arg === "string")).toBe(true);
+    logged.mockRestore();
+  });
+});

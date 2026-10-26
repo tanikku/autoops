@@ -284,7 +284,7 @@ describe("what leaves for a browser", () => {
     const result = await openBillingPortalAction();
 
     expect(result).toEqual({ outcome: "unavailable" });
-    expect(logs).toEqual(["[portal] could not open the billing portal — Error"]);
+    expect(logs).toEqual(["[portal] could not open the billing portal — category=unknown-error"]);
 
     for (const line of [...logs, JSON.stringify(result)]) {
       expect(line).not.toContain("cus_");

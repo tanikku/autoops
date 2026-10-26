@@ -1,5 +1,6 @@
 "use server";
 
+import { describeBillingError } from "@/lib/billing/error-category";
 import { openBillingPortal } from "@/lib/billing/portal";
 import { createStripeBillingPortalProvider } from "@/lib/billing/providers/stripe-portal";
 import { requireUserId } from "@/lib/session";
@@ -53,10 +54,7 @@ export async function openBillingPortalAction(): Promise<OpenBillingPortalAction
       ? { outcome: "portal-ready", url: result.url }
       : { outcome: "not-eligible" };
   } catch (error) {
-    console.error(
-      "[portal] could not open the billing portal —",
-      error instanceof Error ? error.name : "an unexpected failure",
-    );
+    console.error(`[portal] could not open the billing portal — ${describeBillingError(error)}`);
 
     return { outcome: "unavailable" };
   }

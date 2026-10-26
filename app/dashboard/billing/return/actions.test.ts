@@ -122,7 +122,7 @@ describe("when the read fails", () => {
 
     const logged = logs.join(" ");
 
-    expect(logged).toContain("Error");
+    expect(logged).toContain("category=unknown-error");
     expect(logged).not.toContain("db.internal");
     expect(logged).not.toContain(USER);
   });
@@ -147,6 +147,7 @@ describe("what this file is not", () => {
 
     expect(imports).toEqual([
       "@/lib/billing/checkout-return",
+      "@/lib/billing/error-category",
       "@/lib/session",
     ]);
   });

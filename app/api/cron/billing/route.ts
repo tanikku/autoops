@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { evaluateBillingHealth } from "@/lib/billing/billing-health";
+import { describeBillingError } from "@/lib/billing/error-category";
 import { createStripeCheckoutSessionReader } from "@/lib/billing/providers/stripe-checkout";
 import { resolveProviderReader } from "@/lib/billing/providers/stripe-runtime";
 import { sweepBillingReconciliations } from "@/lib/billing/sweeper";
@@ -143,8 +144,9 @@ export async function POST(request: Request) {
       { status: health.critical ? 503 : 200 },
     );
   } catch (error) {
-    // The cause stays in the server log; the caller only learns that it failed.
-    console.error("[billing] sweep failed", error);
+    // A category in the server log, never the error itself; the caller only
+    // learns that it failed.
+    console.error(`[billing] sweep failed — ${describeBillingError(error)}`);
 
     return NextResponse.json(
       { success: false, error: "Internal Server Error" },

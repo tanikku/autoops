@@ -182,12 +182,13 @@ describe("reading the provider", () => {
       },
     });
 
-    expect(result).toEqual({ outcome: "unavailable", reason: "TypeError" });
+    // A class name nothing here recognises is not passed through.
+    expect(result).toEqual({ outcome: "unavailable", reason: "unknown-error" });
     expect(release).toHaveBeenCalledWith(
       PROVIDER,
       SUB,
       TOKEN,
-      "TypeError",
+      "unknown-error",
       clientStub,
     );
     expect(reconcile).not.toHaveBeenCalled();
@@ -207,7 +208,7 @@ describe("reading the provider", () => {
 
     const reason = release.mock.calls[0][3] as string;
 
-    expect(reason).toBe("Error");
+    expect(reason).toBe("unknown-error");
     expect(reason).not.toContain("4242");
     expect(reason).not.toContain("@");
   });
@@ -559,7 +560,7 @@ describe("repairing the notification worker afterwards", () => {
       outcome: "reconciled",
       result: { outcome: "applied" },
     });
-    expect(logged.mock.calls.flat().join(" ")).toContain("PrismaClientKnownRequestError");
+    expect(logged.mock.calls.flat().join(" ")).toContain("category=database-error");
     expect(logged.mock.calls.flat().join(" ")).not.toContain("sub_123");
     logged.mockRestore();
   });

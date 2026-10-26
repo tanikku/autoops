@@ -721,7 +721,7 @@ describe("when something unexpected goes wrong", () => {
 
     const written = logs.join("\n");
 
-    expect(written).toContain("CheckoutSessionConflict");
+    expect(written).toContain("category=checkout-session-conflict");
     expect(written).not.toContain("cs_test_a");
   });
 });
@@ -747,6 +747,7 @@ describe("what this file is not", () => {
     expect(imports).toEqual([
       "@/lib/billing/checkout-attempt",
       "@/lib/billing/checkout",
+      "@/lib/billing/error-category",
       "@/lib/billing/checkout-sandbox-server",
       "@/lib/billing/providers/stripe-checkout",
       "@/lib/session",

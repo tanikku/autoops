@@ -5,6 +5,7 @@ import {
   releaseSettledCheckout,
   type ReconciliationResult,
 } from "@/lib/billing/reconcile";
+import { billingErrorCategory, describeBillingError } from "@/lib/billing/error-category";
 import {
   claimReconciliation,
   recomputePendingSince,
@@ -155,8 +156,9 @@ export async function runReconciliation(input: {
     observation = {
       kind: "unavailable",
       // Only the shape of the failure, never what it carried: a provider's
-      // error body can quote an address or an amount.
-      reason: error instanceof Error ? error.name : "read-failed",
+      // error body can quote an address or an amount, and a class name is
+      // whatever its thrower chose. Stored in `lastFailureReason` and logged.
+      reason: error instanceof Error ? billingErrorCategory(error).category : "read-failed",
     };
   }
 
@@ -233,8 +235,7 @@ async function repairNotificationWorker(
     }
   } catch (error) {
     console.error(
-      "[billing] could not repair the notification worker —",
-      error instanceof Error ? error.name : "an unexpected failure",
+      `[billing] could not repair the notification worker — ${describeBillingError(error)}`,
     );
   }
 }

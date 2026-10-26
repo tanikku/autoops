@@ -99,3 +99,26 @@ describe("reading the selection for a page", () => {
     expect(await readEmailSelection(USER)).toBeUndefined();
   });
 });
+
+/** N2P-F4: a failed read is logged as a category, never as the error. */
+describe("logging a failed read", () => {
+  it("writes the category and not what the error said", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    getEffectiveEntitlement.mockRejectedValue(
+      Object.assign(new Error("timeout for user-secret alice@example.com"), {
+        name: "PrismaClientKnownRequestError",
+        code: "P2024",
+      }),
+    );
+
+    await readEmailSelection(USER);
+    const written = logged.mock.calls.flat().map(String).join(" ");
+
+    expect(written).toContain(
+      "[worker] email selection could not be read for the page — category=timeout code=P2024",
+    );
+    expect(written).not.toContain("user-secret");
+    expect(written).not.toContain("alice@example.com");
+    expect(logged.mock.calls.flat().every((arg) => typeof arg === "string")).toBe(true);
+  });
+});

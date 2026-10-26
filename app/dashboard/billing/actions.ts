@@ -5,6 +5,7 @@ import {
   isCheckoutAttemptPlan,
 } from "@/lib/billing/checkout-attempt";
 import { type StartCheckoutResult, startCheckout } from "@/lib/billing/checkout";
+import { describeBillingError } from "@/lib/billing/error-category";
 import { isSandboxCheckoutEnabledForUser } from "@/lib/billing/checkout-sandbox-server";
 import { createStripeCheckoutProvider } from "@/lib/billing/providers/stripe-checkout";
 import {
@@ -213,7 +214,7 @@ export async function startCheckoutAction(
       throw error;
     }
 
-    console.error("[checkout] could not provision the account row", error);
+    console.error(`[checkout] could not provision the account row — ${describeBillingError(error)}`);
 
     return { outcome: "unavailable" };
   }
@@ -248,10 +249,7 @@ export async function startCheckoutAction(
     // holding two sessions — is a safety failure rather than something a person
     // did. Both are worth reading in a log and neither is worth describing to a
     // browser, so the log gets the name and the caller gets "not now".
-    console.error(
-      "[checkout] could not start a checkout —",
-      error instanceof Error ? error.name : "an unexpected failure",
-    );
+    console.error(`[checkout] could not start a checkout — ${describeBillingError(error)}`);
 
     return { outcome: "unavailable" };
   }

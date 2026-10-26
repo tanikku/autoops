@@ -1,6 +1,7 @@
 import "server-only";
 
 import { closeSettledCheckoutAttempt } from "@/lib/billing/checkout-cleanup";
+import { describeBillingError } from "@/lib/billing/error-category";
 import {
   type BillingEventKind,
   comparePaidPlans,
@@ -164,8 +165,7 @@ export async function releaseSettledCheckout(
     // entitlement is applied; this is a slot that will now lapse instead of
     // being released early.
     console.error(
-      "[billing] could not release settled checkout after reconciliation —",
-      error instanceof Error ? error.name : "an unexpected failure",
+      `[billing] could not release settled checkout after reconciliation — ${describeBillingError(error)}`,
     );
   }
 }

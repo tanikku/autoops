@@ -4,6 +4,7 @@ import {
   type CheckoutReturnStatus,
   readCheckoutReturnStatus,
 } from "@/lib/billing/checkout-return";
+import { describeBillingError } from "@/lib/billing/error-category";
 import { requireUserId } from "@/lib/session";
 
 /**
@@ -35,10 +36,7 @@ export async function readCheckoutReturnStatusAction(): Promise<CheckoutReturnSt
   } catch (error) {
     // **The category, never the cause.** A driver's complaint names a host and a
     // database; "not right now" is the whole of what a waiting page can act on.
-    console.error(
-      "[checkout] could not read the return status —",
-      error instanceof Error ? error.name : "an unexpected failure",
-    );
+    console.error(`[checkout] could not read the return status — ${describeBillingError(error)}`);
 
     return { status: "unavailable" };
   }

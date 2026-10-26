@@ -402,3 +402,23 @@ describe("when billing is critically broken", () => {
     expect(readme).toContain("--fail-with-body");
   });
 });
+
+/** N2P-F4: a sweep that could not run is logged as a category, never as the error. */
+describe("when the sweep itself fails", () => {
+  it("answers 500 and logs only what kind of failure it was", async () => {
+    sweepBillingReconciliations.mockRejectedValue(
+      Object.assign(new Error("connect ECONNREFUSED postgresql://autoops:pw@db.internal sub_secret"), {
+        name: "PrismaClientInitializationError",
+        errorCode: "P1001",
+      }),
+    );
+
+    const response = await tick(`Bearer ${SECRET}`);
+    const written = logs.join("\n");
+
+    expect(response.status).toBe(500);
+    expect(written).toContain("[billing] sweep failed — category=database-unreachable code=P1001");
+    expect(written).not.toContain("db.internal");
+    expect(written).not.toContain("sub_secret");
+  });
+});

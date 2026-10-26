@@ -1,5 +1,6 @@
 import "server-only";
 
+import { describeBillingError } from "@/lib/billing/error-category";
 import { computeEntitlement, getEffectiveEntitlement } from "@/lib/entitlements/index";
 import { InvalidSubscriptionError } from "@/lib/entitlements/states";
 import { UnknownPlanError } from "@/lib/plans";
@@ -206,7 +207,9 @@ export async function readEmailEntitlement(
   try {
     return emailEntitlementOf(await getEffectiveEntitlement(userId));
   } catch (error) {
-    console.error("[worker] email entitlement could not be read for the form", error);
+    console.error(
+      `[worker] email entitlement could not be read for the form — ${describeBillingError(error)}`,
+    );
     return undefined;
   }
 }
@@ -331,7 +334,9 @@ export async function readEmailSelection(userId: string): Promise<EmailSelection
       notificationWorkerId: entitlement.notificationWorkerId,
     };
   } catch (error) {
-    console.error("[worker] email selection could not be read for the page", error);
+    console.error(
+      `[worker] email selection could not be read for the page — ${describeBillingError(error)}`,
+    );
     return undefined;
   }
 }
@@ -361,7 +366,9 @@ export async function readEmailSelectionNeeded(
 
     return enabled >= 2;
   } catch (error) {
-    console.error("[worker] email selection could not be counted for the page", error);
+    console.error(
+      `[worker] email selection could not be counted for the page — ${describeBillingError(error)}`,
+    );
     return false;
   }
 }

@@ -3,6 +3,7 @@ import "server-only";
 import { closeCheckoutAttempt } from "@/lib/billing/checkout-attempt";
 import type { ProviderSessionState } from "@/lib/billing/checkout";
 import { closeSettledCheckoutAttempt } from "@/lib/billing/checkout-cleanup";
+import { describeBillingError } from "@/lib/billing/error-category";
 import { enqueueReconciliation } from "@/lib/billing/reconciliation-queue";
 import { type DbClient, prisma } from "@/lib/prisma";
 
@@ -279,8 +280,7 @@ async function recoverOne(
     // **The category, never the cause.** A provider's error text can quote the
     // session it could not find; this line is read by whoever watches the tick.
     console.error(
-      "[billing] checkout recovery failed for one attempt —",
-      error instanceof Error ? error.name : "an unexpected failure",
+      `[billing] checkout recovery failed for one attempt — ${describeBillingError(error)}`,
     );
 
     return "failed";

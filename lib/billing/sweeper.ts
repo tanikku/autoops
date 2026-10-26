@@ -1,6 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
+import { describeBillingError } from "@/lib/billing/error-category";
 import {
   type CheckoutSessionReaderResolver,
   recoverCheckouts,
@@ -361,11 +362,11 @@ async function sweepOne(
       ...(reason === undefined ? {} : { reason }),
     };
   } catch (error) {
-    // The cause stays in the log; the summary carries a category. One
+    // **A category, never the error.** A database error quotes the query and
+    // the values in it; the summary and this line carry what kind it was. One
     // subscription failing is not a reason to stop reconciling the others.
     console.error(
-      `[billing] sweep failed for one subscription — provider=${provider}`,
-      error,
+      `[billing] sweep failed for one subscription — provider=${provider} ${describeBillingError(error)}`,
     );
 
     return { provider, providerSubscriptionId, outcome: "failed" };

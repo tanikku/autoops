@@ -388,3 +388,27 @@ describe("what the route never does", () => {
     expect(source).toContain('export const runtime = "nodejs"');
   });
 });
+
+/** N2P-F4: a failed write is logged as a category, never as the error. */
+describe("when the delivery cannot be recorded", () => {
+  it("answers 500 and logs only what kind of failure it was", async () => {
+    recordProviderEventReceipt.mockRejectedValue(
+      Object.assign(new Error("Unique constraint failed: evt_secret for sub_secret alice@example.com"), {
+        name: "PrismaClientKnownRequestError",
+        code: "P2002",
+        meta: { target: ["providerEventId"] },
+      }),
+    );
+
+    const response = await deliver(body());
+    const written = logs.join("\n");
+
+    expect(response.status).toBe(500);
+    expect(written).toContain(
+      "[billing] could not record a Stripe delivery — category=constraint-error code=P2002",
+    );
+    for (const secret of ["evt_secret", "sub_secret", "alice@example.com", "providerEventId"]) {
+      expect(written).not.toContain(secret);
+    }
+  });
+});
