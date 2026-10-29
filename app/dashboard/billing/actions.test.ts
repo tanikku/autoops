@@ -180,6 +180,7 @@ const mocks = vi.hoisted(() => ({
   requireProvisionedUserId: vi.fn(),
   isUserProvisioningError: vi.fn(),
   isSandboxCheckoutEnabledForUser: vi.fn(),
+  isBetaPurchaseEnabledForUser: vi.fn(),
   startCheckout: vi.fn(),
   createStripeCheckoutProvider: vi.fn(),
 }));
@@ -197,6 +198,7 @@ vi.mock("@/lib/session", () => ({
 // a request lands on and what happens next.
 vi.mock("@/lib/billing/checkout-sandbox-server", () => ({
   isSandboxCheckoutEnabledForUser: mocks.isSandboxCheckoutEnabledForUser,
+  isBetaPurchaseEnabledForUser: mocks.isBetaPurchaseEnabledForUser,
 }));
 vi.mock("@/lib/billing/checkout", () => ({ startCheckout: mocks.startCheckout }));
 vi.mock("@/lib/billing/providers/stripe-checkout", () => ({
@@ -216,6 +218,7 @@ beforeEach(() => {
   // Inside the rollout unless a test says otherwise: the tests that were written
   // before the gate existed are all about what an authorised request does.
   mocks.isSandboxCheckoutEnabledForUser.mockReset().mockReturnValue(true);
+  mocks.isBetaPurchaseEnabledForUser.mockReset().mockReturnValue(false);
   // A rejection is a redirect unless a test says otherwise.
   mocks.isUserProvisioningError.mockReset().mockReturnValue(false);
   mocks.createStripeCheckoutProvider.mockReset().mockReturnValue(PROVIDER);
@@ -500,15 +503,19 @@ describe("what a request may say", () => {
       currency: "usd",
       locale: "fr",
       provider: "not-stripe",
+      // The beta exception is the server's to decide; asking for it is ignored.
+      allowAdminBetaPurchase: true,
     } as unknown as Parameters<typeof startCheckoutAction>[0]);
 
     expect(Object.keys(mocks.startCheckout.mock.calls[0][0]).sort()).toEqual([
+      "allowAdminBetaPurchase",
       "overLimitAcknowledged",
       "plan",
       "provider",
       "userId",
     ]);
     expect(mocks.startCheckout.mock.calls[0][0].provider).toBe(PROVIDER);
+    expect(mocks.startCheckout.mock.calls[0][0].allowAdminBetaPurchase).toBe(false);
   });
 });
 
@@ -1016,5 +1023,81 @@ describe("an admin beta account inside the rollout", () => {
 
     expect(result).toEqual({ outcome: "unavailable" });
     expect(JSON.stringify(result)).not.toContain("admin");
+  });
+});
+
+/**
+ * **N3-H: the beta exception is decided here, from the session and the
+ * server's environment, and for Lite only.** Nothing a request carries can set
+ * it; an account outside the rollout never reaches the question.
+ */
+describe("deciding the beta purchase exception", () => {
+  it("allows it for Lite when the account is on both lists", async () => {
+    mocks.isBetaPurchaseEnabledForUser.mockReturnValue(true);
+
+    await startCheckoutAction({ plan: "lite" });
+
+    expect(mocks.isBetaPurchaseEnabledForUser).toHaveBeenCalledWith(USER);
+    expect(mocks.startCheckout.mock.calls[0][0].allowAdminBetaPurchase).toBe(true);
+  });
+
+  it("does not allow it when the account is not on both lists", async () => {
+    mocks.isBetaPurchaseEnabledForUser.mockReturnValue(false);
+
+    await startCheckoutAction({ plan: "lite" });
+
+    expect(mocks.startCheckout.mock.calls[0][0].allowAdminBetaPurchase).toBe(false);
+  });
+
+  it.each(["standard", "pro"] as const)(
+    "never allows it for %s, and does not even ask",
+    async (plan) => {
+      mocks.isBetaPurchaseEnabledForUser.mockReturnValue(true);
+
+      await startCheckoutAction({ plan });
+
+      expect(mocks.isBetaPurchaseEnabledForUser).not.toHaveBeenCalled();
+      expect(mocks.startCheckout.mock.calls[0][0].allowAdminBetaPurchase).toBe(false);
+    },
+  );
+
+  it("is never reached outside the rollout", async () => {
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(false);
+    mocks.isBetaPurchaseEnabledForUser.mockReturnValue(true);
+
+    expect(await startCheckoutAction({ plan: "lite" })).toEqual({ outcome: "unavailable" });
+    expect(mocks.isBetaPurchaseEnabledForUser).not.toHaveBeenCalled();
+    expect(mocks.createStripeCheckoutProvider).not.toHaveBeenCalled();
+    expect(mocks.startCheckout).not.toHaveBeenCalled();
+  });
+
+  it("is decided after the account is known and before any provider exists", async () => {
+    mocks.isBetaPurchaseEnabledForUser.mockReturnValue(true);
+
+    await startCheckoutAction({ plan: "lite" });
+
+    expect(mocks.requireProvisionedUserId.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.isBetaPurchaseEnabledForUser.mock.invocationCallOrder[0],
+    );
+    expect(mocks.isBetaPurchaseEnabledForUser.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.createStripeCheckoutProvider.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("ignores a request that asks for it", async () => {
+    mocks.isBetaPurchaseEnabledForUser.mockReturnValue(false);
+
+    await startCheckoutAction({
+      plan: "lite",
+      allowAdminBetaPurchase: true,
+      betaPurchaseAllowed: true,
+      userId: "somebody-else",
+    } as unknown as Parameters<typeof startCheckoutAction>[0]);
+
+    expect(mocks.isBetaPurchaseEnabledForUser).toHaveBeenCalledWith(USER);
+    expect(mocks.startCheckout.mock.calls[0][0]).toMatchObject({
+      userId: USER,
+      allowAdminBetaPurchase: false,
+    });
   });
 });

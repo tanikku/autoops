@@ -246,3 +246,19 @@ export function mayOfferPurchase(current: CurrentPlanView): boolean {
       current.state === "canceled_active")
   );
 }
+
+/**
+ * Whether an admin-granted beta account is offered Lite anyway.
+ *
+ * **The one exception the checkout honours, and only for that plan.** The
+ * Closed Beta allowance is otherwise a price list — see `mayOfferPurchase`. An
+ * account an operator has named on both lists (`isBetaPurchaseEnabledForUser`)
+ * is offered Lite and nothing else, which is exactly what `startCheckout` will
+ * accept from it. The page shows this; the action decides it again.
+ */
+export function mayOfferAdminBetaLitePurchase(
+  current: CurrentPlanView,
+  betaPurchaseAllowed: boolean,
+): boolean {
+  return betaPurchaseAllowed && current.kind === "on-plan" && current.adminGrantedBeta;
+}

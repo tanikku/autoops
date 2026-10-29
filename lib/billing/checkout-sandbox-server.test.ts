@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  BETA_PURCHASE_USER_IDS_ENV,
   SANDBOX_CHECKOUT_USER_IDS_ENV,
+  isBetaPurchaseEnabledForUser,
   isSandboxCheckoutEnabledForUser,
 } from "@/lib/billing/checkout-sandbox-server";
 
@@ -116,8 +118,9 @@ describe("when the list is read", () => {
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/\/\/[^\n]*/g, "");
 
-    // The only `process.env` is the default argument, inside the function.
-    expect(source.match(/process\.env/g) ?? []).toHaveLength(1);
+    // The only `process.env` are the default arguments, one per reader, inside
+    // the functions.
+    expect(source.match(/process\.env/g) ?? []).toHaveLength(2);
     expect(source).not.toMatch(/^const \w+ = parseSandboxCheckoutUserIds/m);
   });
 });
@@ -153,5 +156,80 @@ describe("what this module is not", () => {
     for (const forbidden of ["prisma", "Stripe", "fetch(", "startCheckout"]) {
       expect(source, `reaches for ${forbidden}`).not.toContain(forbidden);
     }
+  });
+});
+
+/**
+ * **N3-H: the beta purchase exception.** Named on both lists, or not at all —
+ * and every absent, blank or malformed value names nobody.
+ */
+describe("the beta purchase exception", () => {
+  const both = (rollout?: string, beta?: string): NodeJS.ProcessEnv =>
+    ({
+      ...(rollout === undefined ? {} : { [SANDBOX_CHECKOUT_USER_IDS_ENV]: rollout }),
+      ...(beta === undefined ? {} : { [BETA_PURCHASE_USER_IDS_ENV]: beta }),
+    }) as unknown as NodeJS.ProcessEnv;
+
+  it("is named once", () => {
+    expect(BETA_PURCHASE_USER_IDS_ENV).toBe("CHECKOUT_BETA_PURCHASE_USER_IDS");
+  });
+
+  it("allows an account on both lists", () => {
+    expect(isBetaPurchaseEnabledForUser(ACCOUNT, both(ACCOUNT, ACCOUNT))).toBe(true);
+  });
+
+  it.each([
+    ["unset", undefined],
+    ["empty", ""],
+    ["blank", "   "],
+    ["only separators", " , , "],
+  ])("refuses when the beta list is %s", (_label, beta) => {
+    expect(isBetaPurchaseEnabledForUser(ACCOUNT, both(ACCOUNT, beta))).toBe(false);
+  });
+
+  it("refuses an account only on the rollout list", () => {
+    expect(isBetaPurchaseEnabledForUser(ACCOUNT, both(ACCOUNT, OTHER))).toBe(false);
+  });
+
+  /** The exception can never open the purchase path the rollout keeps shut. */
+  it.each([
+    ["unset", undefined],
+    ["naming somebody else", OTHER],
+  ])("refuses an account only on the beta list, the rollout being %s", (_label, rollout) => {
+    expect(isBetaPurchaseEnabledForUser(ACCOUNT, both(rollout, ACCOUNT))).toBe(false);
+  });
+
+  it("refuses another account", () => {
+    expect(isBetaPurchaseEnabledForUser(OTHER, both(ACCOUNT, ACCOUNT))).toBe(false);
+  });
+
+  it.each([
+    ["a prefix", ACCOUNT.slice(0, -1)],
+    ["a longer id", `${ACCOUNT}9`],
+    ["a different case", "ABC"],
+  ])("matches exactly, refusing %s", (_label, id) => {
+    expect(isBetaPurchaseEnabledForUser(id, both(`${ACCOUNT},abc`, `${ACCOUNT},abc`))).toBe(false);
+  });
+
+  /** Nothing about Stripe decides it: a live deployment behaves the same. */
+  it("ignores every Stripe variable", () => {
+    const live = {
+      ...both(ACCOUNT, ACCOUNT),
+      STRIPE_EXPECTED_LIVEMODE: "true",
+      STRIPE_SECRET_KEY: "rk_live_not_a_real_key",
+    } as unknown as NodeJS.ProcessEnv;
+    const liveWithoutLists = {
+      STRIPE_EXPECTED_LIVEMODE: "true",
+      STRIPE_SECRET_KEY: "rk_live_not_a_real_key",
+    } as unknown as NodeJS.ProcessEnv;
+
+    expect(isBetaPurchaseEnabledForUser(ACCOUNT, live)).toBe(true);
+    expect(isBetaPurchaseEnabledForUser(ACCOUNT, liveWithoutLists)).toBe(false);
+    expect(isSandboxCheckoutEnabledForUser(ACCOUNT, liveWithoutLists)).toBe(false);
+  });
+
+  it("is read on every call", () => {
+    expect(isBetaPurchaseEnabledForUser(ACCOUNT, both(ACCOUNT, ACCOUNT))).toBe(true);
+    expect(isBetaPurchaseEnabledForUser(ACCOUNT, both(ACCOUNT, ""))).toBe(false);
   });
 });

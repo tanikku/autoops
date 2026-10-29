@@ -1,5 +1,6 @@
 import { TriangleAlert } from "lucide-react";
 import { planNameKeyFor } from "@/lib/billing/plan-labels";
+import type { CheckoutAttemptPlan } from "@/lib/billing/checkout-attempt";
 import type { PricedPlan, PlanStanding } from "@/lib/billing/pricing";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -250,6 +251,7 @@ export function PlanCards({
   language,
   checkoutEnabled,
   purchasable = true,
+  purchasablePlans,
   trialing = false,
 }: {
   plans: readonly PricedPlan[];
@@ -263,6 +265,11 @@ export function PlanCards({
    * disabled one.
    */
   purchasable?: boolean;
+  /**
+   * When set, only these plans get a purchase button; the rest stay a price
+   * list. Unset means every plan, as before.
+   */
+  purchasablePlans?: readonly CheckoutAttemptPlan[];
   /** Whether buying would end a running trial; the purchase terms then say so. */
   trialing?: boolean;
 }) {
@@ -302,7 +309,7 @@ export function PlanCards({
                 no price, no customer: the action takes who is asking from the
                 session, so there is nothing here that could make it act for
                 somebody else. */}
-            {purchasable ? (
+            {purchasable && (purchasablePlans === undefined || purchasablePlans.includes(plan.id)) ? (
               <CheckoutPlanButton
                 plan={plan.id}
                 enabled={checkoutEnabled}

@@ -1330,3 +1330,83 @@ describe("what this module is not", () => {
     );
   });
 });
+
+/**
+ * **N3-H: the one beta exception.** An admin-granted beta account named by an
+ * operator may buy Lite, and only Lite; past the beta refusal it is judged like
+ * any other account. The flag is decided on the server — see the action.
+ */
+describe("an admin-granted beta account allowed to buy", () => {
+  beforeEach(() => {
+    subscriptionFindUnique.mockResolvedValue(adminBetaRow());
+  });
+
+  it("may start a Lite checkout", async () => {
+    const result = await start({ plan: "lite", allowAdminBetaPurchase: true });
+
+    expect(result).toMatchObject({ outcome: "checkout-ready", resumed: false });
+    expect(createSession).toHaveBeenCalledTimes(1);
+    // A granted row names no customer, so none is asked about or passed on.
+    expect(createSession.mock.calls[0][0].providerCustomerId).toBeNull();
+    expect(findLiveSubscription).not.toHaveBeenCalled();
+  });
+
+  it.each(["standard", "pro"])("may not buy %s, flag or not", async (plan) => {
+    expect(await start({ plan, allowAdminBetaPurchase: true })).toEqual({
+      outcome: "unavailable",
+      reason: "admin-granted-beta",
+    });
+    expect(createSession).not.toHaveBeenCalled();
+    expect(attemptCreate).not.toHaveBeenCalled();
+  });
+
+  it.each([false, undefined])("is refused as before when the flag is %p", async (flag) => {
+    expect(await start({ plan: "lite", allowAdminBetaPurchase: flag })).toEqual({
+      outcome: "unavailable",
+      reason: "admin-granted-beta",
+    });
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  /** The exception lifts the beta refusal and nothing else. */
+  it("does not let a paying account past its own refusal", async () => {
+    subscriptionFindUnique.mockResolvedValue(paidRow());
+
+    expect(await start({ plan: "lite", allowAdminBetaPurchase: true })).toEqual({
+      outcome: "billing-management-required",
+      reason: "already-subscribed",
+    });
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it("still reports a paid session instead of opening a second", async () => {
+    attemptFindUnique.mockResolvedValue(
+      storedAttempt({ state: "open", providerCheckoutSessionId: "cs_test_paid" }),
+    );
+    readSession.mockResolvedValue({ kind: "paid", url: null, providerSubscriptionId: "sub_1" });
+
+    expect(await start({ plan: "lite", allowAdminBetaPurchase: true })).toEqual({
+      outcome: "payment-processing",
+      attemptId: "attempt-1",
+    });
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it("still asks before buying a plan below what is running", async () => {
+    routineCount.mockResolvedValue(5);
+
+    expect(await start({ plan: "lite", allowAdminBetaPurchase: true })).toMatchObject({
+      outcome: "over-limit-confirmation-required",
+      activeWorkers: 5,
+    });
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it("has no effect on an account that is not on the beta allowance", async () => {
+    subscriptionFindUnique.mockResolvedValue(subscriptionRow());
+
+    expect(await start({ plan: "standard", allowAdminBetaPurchase: true })).toMatchObject({
+      outcome: "checkout-ready",
+    });
+  });
+});

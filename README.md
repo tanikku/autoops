@@ -1021,7 +1021,9 @@ prices and no provider price ids. The prices are `MONTHLY_YEN` in
 `lib/billing/pricing.ts` — ¥780 / ¥1,480 / ¥2,480 a month, **tax included** — and
 the Stripe price ids are read from `STRIPE_PRICE_LITE`, `STRIPE_PRICE_STANDARD` and
 `STRIPE_PRICE_PRO`. Checkout exists, opened only to the accounts listed in
-`CHECKOUT_SANDBOX_USER_IDS`. Nothing checks that the Stripe prices charge the
+`CHECKOUT_SANDBOX_USER_IDS`; an admin-granted beta account among them is still
+refused unless it is also listed in `CHECKOUT_BETA_PURCHASE_USER_IDS`, and then
+for Lite only. Nothing checks that the Stripe prices charge the
 amounts shown: **before a live launch, confirm in the Stripe Dashboard that the
 live prices are 780, 1,480 and 2,480 JPY, each billed monthly.** No balance or
 payment state refuses an account anything. The one subscription that has existed on the provider's side
@@ -1567,6 +1569,7 @@ cp .env.example .env
 | `EMAIL_FROM` | No | The sender those are from, e.g. `Koqentra <notifications@example.com>`. Needed alongside the key; either one missing sends nothing |
 | `YOUTUBE_API_KEY` | No | A YouTube Data API v3 key, used by [discovery workers](#discovery-workers). Without it, a discovery worker cannot be created and an existing one fails its runs; nothing else is affected |
 | `STRIPE_EXPECTED_LIVEMODE` | **Wherever Stripe is configured** | Which Stripe world this deployment is in: `false` for a sandbox, `true` for live. Unset or anything else fails every Stripe operation closed — see below |
+| `CHECKOUT_BETA_PURCHASE_USER_IDS` | No | Comma-separated account ids (Google `sub`) of **admin-granted beta** accounts allowed to buy anyway — an exception to the rule that the Closed Beta allowance is never sold to. Honoured only for an account **also** listed in `CHECKOUT_SANDBOX_USER_IDS`, and **only for Lite**. Unset, empty or malformed means nobody: every beta account is refused as before. In Production it names the single operator account used for a live end-to-end purchase, and goes back to empty before checkout opens to everybody. Buying converts that account's beta allowance to a paid Lite subscription; the allowance does not come back afterwards |
 
 `.env` is gitignored; `.env.example` is committed and holds no real values.
 

@@ -3,11 +3,15 @@ import Link from "next/link";
 import { BillingPortalButton } from "@/components/billing-portal-button";
 import { DashboardNav } from "@/components/dashboard-nav";
 import { PlanCards } from "@/components/plan-cards";
-import { isSandboxCheckoutEnabledForUser } from "@/lib/billing/checkout-sandbox-server";
+import {
+  isBetaPurchaseEnabledForUser,
+  isSandboxCheckoutEnabledForUser,
+} from "@/lib/billing/checkout-sandbox-server";
 import { planNameKey } from "@/lib/billing/plan-labels";
 import { mayOpenBillingPortal } from "@/lib/billing/portal";
 import {
   type CurrentPlanView,
+  mayOfferAdminBetaLitePurchase,
   mayOfferPurchase,
   readPricingView,
 } from "@/lib/billing/pricing";
@@ -160,6 +164,12 @@ export default async function BillingPage() {
   // into the browser from this is one boolean; the list it was decided from stays
   // in the environment of the server that read it.
   const checkoutEnabled = isSandboxCheckoutEnabledForUser(userId);
+  // **The one beta exception, Lite only.** Shown here; decided again by the
+  // action, which is what enforces it.
+  const betaLiteOffered = mayOfferAdminBetaLitePurchase(
+    view.current,
+    isBetaPurchaseEnabledForUser(userId),
+  );
   // **The Closed Beta allowance sees the plans but is offered none of them.**
   // `mayOfferPurchase` already answers no for it, and the action refuses it
   // too; the cards stay so the prices and allowances can still be read.
@@ -234,7 +244,8 @@ export default async function BillingPage() {
               activeWorkers={view.activeWorkers}
               language={language}
               checkoutEnabled={checkoutEnabled}
-              purchasable={offerPurchase}
+              purchasable={offerPurchase || betaLiteOffered}
+              purchasablePlans={offerPurchase ? undefined : betaLiteOffered ? ["lite"] : undefined}
               trialing={trialPurchaseNotice}
             />
             {/* What each line on the cards counts, said once beneath them. */}

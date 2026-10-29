@@ -41,3 +41,41 @@ export function isSandboxCheckoutEnabledForUser(
     parseSandboxCheckoutUserIds(env[SANDBOX_CHECKOUT_USER_IDS_ENV]),
   );
 }
+
+/**
+ * The second list: admin-granted beta accounts that may buy anyway.
+ *
+ * **An exception to a refusal, not a rollout.** The Closed Beta allowance is
+ * never offered a purchase; this names the accounts an operator has decided to
+ * take through a paid checkout regardless — one, for a live end-to-end check.
+ * Unset, empty or nothing but separators, it names nobody, exactly like the
+ * rollout list.
+ */
+export const BETA_PURCHASE_USER_IDS_ENV = "CHECKOUT_BETA_PURCHASE_USER_IDS";
+
+/**
+ * Whether this admin-granted beta account may buy despite being one.
+ *
+ * **Both lists, every time.** Being named here is not enough on its own: the
+ * account must also be inside the checkout rollout, so this can never open the
+ * purchase path to anybody the rollout keeps out. Read per call, for the same
+ * reason as the rollout list — so emptying it closes the exception on the next
+ * request.
+ *
+ * Which plan the exception covers is the caller's to enforce; see
+ * `startCheckout`, which allows it for Lite and nothing else.
+ *
+ * @param userId the account id from the session, never from a request payload
+ */
+export function isBetaPurchaseEnabledForUser(
+  userId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return (
+    isSandboxCheckoutAllowed(
+      userId,
+      parseSandboxCheckoutUserIds(env[SANDBOX_CHECKOUT_USER_IDS_ENV]),
+    ) &&
+    isSandboxCheckoutAllowed(userId, parseSandboxCheckoutUserIds(env[BETA_PURCHASE_USER_IDS_ENV]))
+  );
+}

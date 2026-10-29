@@ -21,8 +21,10 @@ const mocks = vi.hoisted(() => ({
   getUserLanguage: vi.fn(),
   readPricingView: vi.fn(),
   mayOfferPurchase: vi.fn(),
+  mayOfferAdminBetaLitePurchase: vi.fn(),
   getDocumentLanguage: vi.fn(),
   isSandboxCheckoutEnabledForUser: vi.fn(),
+  isBetaPurchaseEnabledForUser: vi.fn(),
 }));
 
 vi.mock("@/auth", () => ({ auth: vi.fn(), signIn: vi.fn(), signOut: vi.fn() }));
@@ -34,9 +36,11 @@ vi.mock("@/lib/users", () => ({ getUserLanguage: mocks.getUserLanguage }));
 vi.mock("@/lib/billing/pricing", () => ({
   readPricingView: mocks.readPricingView,
   mayOfferPurchase: mocks.mayOfferPurchase,
+  mayOfferAdminBetaLitePurchase: mocks.mayOfferAdminBetaLitePurchase,
 }));
 vi.mock("@/lib/billing/checkout-sandbox-server", () => ({
   isSandboxCheckoutEnabledForUser: mocks.isSandboxCheckoutEnabledForUser,
+  isBetaPurchaseEnabledForUser: mocks.isBetaPurchaseEnabledForUser,
 }));
 vi.mock("@/components/dashboard-nav", () => ({ DashboardNav: () => null }));
 // **Stood in for, because it is a client component that calls the action.**
@@ -143,6 +147,8 @@ beforeEach(() => {
   buttonProps.length = 0;
   portalProps.length = 0;
   mocks.isSandboxCheckoutEnabledForUser.mockReset().mockReturnValue(false);
+  mocks.isBetaPurchaseEnabledForUser.mockReset().mockReturnValue(false);
+  mocks.mayOfferAdminBetaLitePurchase.mockReset().mockReturnValue(false);
   mocks.requireUserId.mockReset().mockResolvedValue(USER);
   mocks.getUserLanguage.mockReset().mockResolvedValue("en");
   mocks.getDocumentLanguage.mockReset().mockResolvedValue("en");
@@ -1475,5 +1481,62 @@ describe("the discovery allowance explanation", () => {
     expect(html).toContain(sentence);
     expect(html).not.toContain("おすすめを探す』");
     expect(html).not.toContain("Find recommendations");
+  });
+});
+
+/**
+ * **N3-H: the beta exception, on the page.** An admin-granted beta account the
+ * server allows is offered Lite and nothing else; any other beta account still
+ * sees a price list. The action decides again — this is what is shown.
+ */
+describe("an admin-granted beta account allowed to buy", () => {
+  const betaCurrent = {
+    kind: "on-plan",
+    plan: "beta",
+    state: "active",
+    purchased: false,
+    entitled: true,
+    adminGrantedBeta: true,
+  };
+
+  beforeEach(() => {
+    mocks.mayOfferPurchase.mockReturnValue(false);
+    mocks.isSandboxCheckoutEnabledForUser.mockReturnValue(true);
+  });
+
+  it("is offered a Lite button and no other", async () => {
+    mocks.isBetaPurchaseEnabledForUser.mockReturnValue(true);
+    mocks.mayOfferAdminBetaLitePurchase.mockReturnValue(true);
+
+    await render({ current: betaCurrent });
+
+    expect(buttonProps.map((props) => props.plan)).toEqual(["lite"]);
+    expect(buttonProps[0].enabled).toBe(true);
+  });
+
+  it("asks the server's lists about the signed-in account", async () => {
+    mocks.isBetaPurchaseEnabledForUser.mockReturnValue(true);
+
+    await render({ current: betaCurrent });
+
+    expect(mocks.isBetaPurchaseEnabledForUser).toHaveBeenCalledWith(USER);
+    expect(mocks.mayOfferAdminBetaLitePurchase).toHaveBeenCalledWith(betaCurrent, true);
+  });
+
+  it("is offered nothing without the exception, as before", async () => {
+    const html = await render({ current: betaCurrent });
+
+    expect(buttonProps).toEqual([]);
+    // The cards are still shown as a price list.
+    expect(html).toContain("780");
+  });
+
+  it("leaves an ordinary purchase offering every plan", async () => {
+    mocks.mayOfferPurchase.mockReturnValue(true);
+    mocks.mayOfferAdminBetaLitePurchase.mockReturnValue(true);
+
+    await render({ current: { kind: "none" } });
+
+    expect(buttonProps.map((props) => props.plan)).toEqual(["lite", "standard", "pro"]);
   });
 });

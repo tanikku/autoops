@@ -22,7 +22,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-const { mayOfferPurchase, readPricingView } = await import(
+const { mayOfferAdminBetaLitePurchase, mayOfferPurchase, readPricingView } = await import(
   "@/lib/billing/pricing"
 );
 
@@ -463,5 +463,43 @@ describe("what this module is not", () => {
     for (const amount of ["780", "1480", "2480"]) {
       expect(source.match(new RegExp(amount, "g"))).toHaveLength(1);
     }
+  });
+});
+
+/**
+ * **N3-H: the one beta exception.** Offered only to an admin-granted beta
+ * account the server allows — and that account is offered Lite alone, by the
+ * page; the action enforces the same.
+ */
+describe("offering Lite to an allowed beta account", () => {
+  const beta = {
+    kind: "on-plan",
+    plan: "beta",
+    state: "active",
+    purchased: false,
+    entitled: true,
+    adminGrantedBeta: true,
+  } as const;
+
+  it("offers it to an admin-granted beta account the server allows", () => {
+    expect(mayOfferAdminBetaLitePurchase(beta as never, true)).toBe(true);
+  });
+
+  it("does not offer it when the server does not allow it", () => {
+    expect(mayOfferAdminBetaLitePurchase(beta as never, false)).toBe(false);
+  });
+
+  it.each([
+    ["no plan", { kind: "none" }],
+    ["an unreadable plan", { kind: "unreadable" }],
+    ["a trial", { ...beta, plan: "trial", state: "trialing", adminGrantedBeta: false }],
+    ["a paid plan", { ...beta, plan: "lite", purchased: true, adminGrantedBeta: false }],
+  ])("is never the reason %s is offered anything", (_label, current) => {
+    expect(mayOfferAdminBetaLitePurchase(current as never, true)).toBe(false);
+  });
+
+  /** The ordinary rule is untouched: a beta account is still not offered plans. */
+  it("leaves the ordinary purchase rule refusing a beta account", () => {
+    expect(mayOfferPurchase(beta as never)).toBe(false);
   });
 });

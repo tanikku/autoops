@@ -6,7 +6,10 @@ import {
 } from "@/lib/billing/checkout-attempt";
 import { type StartCheckoutResult, startCheckout } from "@/lib/billing/checkout";
 import { describeBillingError } from "@/lib/billing/error-category";
-import { isSandboxCheckoutEnabledForUser } from "@/lib/billing/checkout-sandbox-server";
+import {
+  isBetaPurchaseEnabledForUser,
+  isSandboxCheckoutEnabledForUser,
+} from "@/lib/billing/checkout-sandbox-server";
 import { createStripeCheckoutProvider } from "@/lib/billing/providers/stripe-checkout";
 import {
   isUserProvisioningError,
@@ -230,6 +233,13 @@ export async function startCheckoutAction(
     return { outcome: "unavailable" };
   }
 
+  // **The beta exception, decided here and nowhere else.** From the session's
+  // own id and the server's environment — nothing a request carries — and for
+  // Lite only. It only lifts the beta refusal for an account that is one;
+  // `startCheckout` judges everything else about the account as usual.
+  const allowAdminBetaPurchase =
+    input.plan === "lite" && isBetaPurchaseEnabledForUser(userId);
+
   // **Built here, from the server's own environment.** A provider a caller could
   // name would be a caller choosing which service gets told about the payment.
   const provider = createStripeCheckoutProvider();
@@ -239,6 +249,7 @@ export async function startCheckoutAction(
       userId,
       plan: input.plan,
       overLimitAcknowledged: acknowledged === true,
+      allowAdminBetaPurchase,
       provider,
     });
 

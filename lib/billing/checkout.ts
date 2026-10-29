@@ -266,6 +266,7 @@ const ENTITLING_PAID_STATES: Record<string, BillingManagementReason> = {
 function readEligibility(
   row: SubscriptionRow | null,
   now: Date,
+  allowAdminBetaPurchase: boolean,
 ): Eligibility {
   if (row === null) {
     return { kind: "may-buy", providerCustomerId: null, verifyWithProvider: false };
@@ -274,7 +275,12 @@ function readEligibility(
   // **An account on the Closed Beta allowance is not offered a purchase**, live
   // or expired, and the rollout list does not change that. Asked from the row's
   // own plan and source, before anything is created or anybody is asked.
-  if (isAdminGrantedBeta(row)) {
+  //
+  // **One exception, decided by the server and for Lite only**: an account an
+  // operator has named on both lists, for a paid end-to-end check. Past this
+  // point it is judged like any other row — so an exception for a beta account
+  // can never reach past the refusals that protect a paying one.
+  if (isAdminGrantedBeta(row) && !allowAdminBetaPurchase) {
     return { kind: "closed", reason: "admin-granted-beta" };
   }
 
@@ -380,6 +386,12 @@ export type StartCheckoutInput = {
   readonly plan: CheckoutAttemptPlan;
   /** True only when somebody was shown the over-limit explanation and agreed. */
   readonly overLimitAcknowledged?: boolean;
+  /**
+   * Whether this admin-granted beta account is one an operator has allowed to
+   * buy. **Decided on the server** — see `isBetaPurchaseEnabledForUser` — and
+   * honoured for Lite alone, whatever the caller passes.
+   */
+  readonly allowAdminBetaPurchase?: boolean;
   readonly provider: CheckoutProvider | { readonly unavailable: string };
   readonly client?: DbClient;
   readonly now?: Date;
@@ -423,7 +435,11 @@ export async function startCheckout(
     select: SUBSCRIPTION_FIELDS,
   });
 
-  const eligibility = readEligibility(subscription, now);
+  const eligibility = readEligibility(
+    subscription,
+    now,
+    input.allowAdminBetaPurchase === true && input.plan === "lite",
+  );
 
   if (eligibility.kind === "manage") {
     return { outcome: "billing-management-required", reason: eligibility.reason };
