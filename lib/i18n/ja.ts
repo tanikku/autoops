@@ -955,16 +955,30 @@ export const ja: Record<TranslationKey, string> = {
 
   // Public Beta の目的別作成と、その監視テンプレート。
   "create.purpose.heading": "どんなことをKoqentraに任せますか？",
-  "create.purpose.ai.title": "AIに定期的に仕事をしてもらう",
-  "create.purpose.ai.description": "決まったタイミングで、アイデア出しや整理などをAIに任せます。",
-  "create.purpose.web.title": "Webを見ておいてもらう",
-  "create.purpose.web.description": "ページを定期的に確認し、価格や在庫などの変化を見つけます。",
+  "create.purpose.ai.title": "AIに定期的な仕事を任せる",
+  "create.purpose.ai.description":
+    "登録した指示に沿って、AIが文章作成や分析を定期的に実行します。",
+  "create.purpose.web.title": "Webページの変化を知らせる",
+  "create.purpose.web.description":
+    "指定したWebページを定期的に確認し、前回からの変化を検知します。",
+  "create.purpose.recommended.heading": "Web監視のおすすめ",
+  "create.purpose.municipal.title": "自治体のお知らせ",
+  "create.purpose.municipal.description": "募集・イベント・手続きの変更",
+  "create.purpose.careers.title": "採用・募集情報",
+  "create.purpose.careers.description": "求人情報や応募条件の変更",
+  "create.purpose.others.toggle": "その他の用途・テンプレートを表示",
+  "create.purpose.guide.draft":
+    "下書きとして保存した Worker は自動では実行されません。",
+  "create.purpose.guide.firstCheck":
+    "Webページの初回チェックは、比較の基準を記録するためのものです。変化の検知は2回目以降のチェックで行われます。",
+  "create.purpose.guide.nextRun":
+    "次回の実行予定は、Worker の一覧と詳細画面で確認できます。",
   "create.purpose.youtube.title": "YouTubeでおすすめ動画を探す",
   "create.purpose.youtube.description": "テーマに合う新しいYouTube動画を定期的に探して、おすすめします。",
   "create.purpose.youtube.note": "YouTubeの動画だけを探します。Web全体は探しません。",
   "create.purpose.web.heading": "何を見ておいてもらいますか？",
-  "create.purpose.price.title": "商品価格をチェック",
-  "create.purpose.price.description": "商品ページを定期的に確認し、価格や内容が変わったら、何が変わったかをまとめてお知らせします。",
+  "create.purpose.price.title": "商品価格・再入荷",
+  "create.purpose.price.description": "価格や在庫表示の変化",
   "create.purpose.backToWeb": "Webの用途を選び直す",
   "create.purpose.hotel.title": "ホテルの空室",
   "create.purpose.hotel.description": "希望の日に空室が出たらお知らせします。",

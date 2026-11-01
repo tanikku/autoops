@@ -15,9 +15,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Koqentra — AI Content Editor",
+  title: "Koqentra — AI Workers and Creator",
   description:
-    "Evaluate content for X, Reddit, and long-form, get drafts for what is worth using, and keep the final decision with you.",
+    "Hand page-change checks and recurring AI work to Workers, and use Creator to analyse writing and draft posts — the final decision stays with you.",
 };
 
 /**

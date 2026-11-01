@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactElement } from "react";
 
@@ -68,7 +68,7 @@ const render = async (query: Query = {}) =>
 
 /** The page as a reader sees it, with the markup taken out. */
 const text = async (query: Query = {}) =>
-  (await render(query)).replace(/<[^>]*>/g, " ");
+  (await render(query)).replace(/<!-- -->|<wbr\/>/g, "").replace(/<[^>]*>/g, " ");
 
 /** The first `<form>` in the returned element tree, or null. */
 function findForm(node: unknown): ReactElement | null {
@@ -96,14 +96,35 @@ function findForm(node: unknown): ReactElement | null {
 }
 
 describe("what the product says it is", () => {
-  it("names itself an editor", async () => {
-    expect(await render()).toContain("Your AI content editor.");
+  it("leads with handing daily checks to AI", async () => {
+    expect(await text()).toContain("毎日の確認作業を、AIに任せる。");
   });
 
-  it("says what it actually does, in one sentence", async () => {
-    expect(await text()).toContain(
-      "Paste text or a public URL. Koqentra evaluates X, Reddit, and long-form, recommends what is worth using, and drafts the copy.",
+  /** A phone wraps the headline after the comma, not mid-phrase. */
+  it("lets the headline wrap only after the comma", async () => {
+    const html = await render();
+
+    expect(html).toContain("毎日の確認作業を、<wbr/>AIに任せる。");
+    expect(html).toMatch(/<h1 class="[^"]*break-keep/);
+  });
+
+  it("says what Workers do and what Creator does", async () => {
+    const page = await text();
+
+    expect(page).toContain(
+      "指定したWebページの変更確認や、定期的なAI処理をWorkerに任せられます。",
     );
+    expect(page).toContain("文章の分析やSNS向け投稿案の作成には、Creatorも利用できます。");
+    expect(page).toContain("Webページの変更確認や定期的なAI処理。");
+    expect(page).toContain("文章の分析、投稿先の適性判断、投稿案の作成。");
+  });
+
+  it("names the three example uses", async () => {
+    const page = await text();
+
+    for (const use of ["自治体のお知らせ", "商品価格・再入荷", "採用・募集情報"]) {
+      expect(page).toContain(use);
+    }
   });
 
   /**
@@ -112,16 +133,20 @@ describe("what the product says it is", () => {
    * before they hand it over, not only in a policy page.
    */
   it("says plainly that it publishes nothing", async () => {
-    expect(await text()).toContain(
-      "You decide what to use. Nothing is posted automatically.",
-    );
+    expect(await text()).toContain("自動で投稿することはありません。");
   });
 
   it.each([
     "Automate recurring AI workflows.",
     "Create AI routines once. Run forever.",
+    "Your AI content editor.",
   ])("no longer says %o", async (old) => {
     expect(await text()).not.toContain(old);
+  });
+
+  /** The page is Japanese, and says so even where the document says English. */
+  it("declares the page Japanese", async () => {
+    expect(await render()).toMatch(/^<div lang="ja"/);
   });
 });
 
@@ -152,10 +177,113 @@ describe("what it must not promise", () => {
     expect((await text()).toLowerCase()).not.toContain(claim);
   });
 
+  it.each(["投稿します", "代わりに投稿", "SNSアカウントと連携", "検索して", "残り"])(
+    "does not claim %o",
+    async (claim) => {
+      expect(await text()).not.toContain(claim);
+    },
+  );
+
   it("keeps the denial that those checks are written around", async () => {
-    expect((await text()).toLowerCase()).toContain(
-      "nothing is posted automatically",
+    expect(await text()).toContain("自動で投稿することはありません。");
+  });
+});
+
+/**
+ * **Signing in starts nothing.** The trial begins when the first worker is
+ * switched on, so the button may not say it starts one.
+ */
+describe("the call to action", () => {
+  it("says to register with Google and try it", async () => {
+    expect(await text()).toContain("Googleで無料登録して試す");
+  });
+
+  it("does not say signing in starts the trial", async () => {
+    const page = await text();
+
+    expect(page).not.toContain("無料Trialを始める");
+    expect(page).not.toContain("無料トライアルを始める");
+  });
+});
+
+/**
+ * What the beta section says, read from the same settings `auth.ts` reads.
+ *
+ * **The cap is the configured total, never places left**: the page does not
+ * count admissions, so it could not keep a remaining number true.
+ */
+describe("the beta section", () => {
+  const publicBeta = (limit = "10", enabled = "true") => {
+    vi.stubEnv("AUTH_ACCESS_MODE", "public-beta");
+    vi.stubEnv("PUBLIC_BETA_SIGNUP_ENABLED", enabled);
+    vi.stubEnv("PUBLIC_BETA_SIGNUP_LIMIT", limit);
+  };
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("states the configured cap, and no remaining count", async () => {
+    publicBeta("10");
+    const page = await text();
+
+    expect(page).toContain("受付上限は10名です。");
+    expect(page).not.toContain("残り");
+  });
+
+  it("follows the configured cap rather than a written number", async () => {
+    publicBeta("25");
+
+    expect(await text()).toContain("受付上限は25名です。");
+  });
+
+  it.each([
+    ["switched off", "10", "false"],
+    ["with no usable limit", "ten", "true"],
+  ])("says signup is stopped when %s", async (_label, limit, enabled) => {
+    publicBeta(limit, enabled);
+    const page = await text();
+
+    expect(page).toContain("現在、新規受付は停止しています。");
+    expect(page).not.toContain("受付上限は");
+  });
+
+  it("says the trial starts on the first activated worker, with the plan's numbers", async () => {
+    publicBeta();
+    const page = (await text()).replace(/\s+/g, " ");
+
+    expect(page).toContain("Googleアカウントでログインして参加します。");
+    expect(page).toContain("最初のWorkerを「有効」にした時点で、14日間の無料トライアルが始まります。");
+    expect(page).toContain("登録しただけでは始まりません。");
+    expect(page).toContain("同時に稼働できるWorker 3件");
+    expect(page).toContain("AI処理 30回");
+    expect(page).toContain("手動実行 20回");
+    expect(page).toContain("YouTubeおすすめ探し 14回");
+  });
+
+  it("says what happens after the trial, as the entitlement code does it", async () => {
+    publicBeta();
+
+    expect(await text()).toContain(
+      "トライアル終了後、Workerは実行されなくなります。Worker・履歴・設定は保存されたままで、自動で料金が発生することはありません。",
     );
+  });
+
+  it("calls itself Public Beta in Public Beta", async () => {
+    publicBeta();
+    const page = await text();
+
+    expect(page).toContain("Public Betaについて");
+    expect(page).not.toContain("Closed Beta");
+  });
+
+  it("calls itself an invitation-only Closed Beta otherwise", async () => {
+    vi.stubEnv("AUTH_ACCESS_MODE", "");
+    const page = await text();
+
+    expect(page).toContain("Closed Betaについて");
+    expect(page).toContain("現在は招待制です。");
+    expect(page).not.toContain("受付上限は");
   });
 });
 
@@ -202,7 +330,7 @@ describe("signing in", () => {
   });
 
   it("offers Google as the way in", async () => {
-    expect(await text()).toContain("Continue with Google");
+    expect(await text()).toContain("Googleで無料登録して試す");
   });
 });
 
@@ -271,7 +399,7 @@ describe("what the page keeps", () => {
     expect(html).toContain('href="/privacy"');
     expect(html).toContain('href="/terms"');
     expect(html).toContain('href="/legal"');
-    expect(await text()).toContain("Terms of Service");
+    expect(await text()).toContain("利用規約");
     expect(await text()).toContain("特定商取引法に基づく表記");
   });
 });
@@ -309,7 +437,7 @@ describe("who the landing page is for", () => {
   it("shows a visitor with no session the page, as before", async () => {
     mocks.auth.mockResolvedValue(null);
 
-    expect(await render()).toContain("Your AI content editor.");
+    expect(await text()).toContain("毎日の確認作業を、AIに任せる。");
     expect(mocks.redirect).not.toHaveBeenCalled();
   });
 
@@ -345,7 +473,7 @@ describe("who the landing page is for", () => {
   ])("treats %s as signed out", async (_name, session) => {
     mocks.auth.mockResolvedValue(session);
 
-    expect(await render()).toContain("Your AI content editor.");
+    expect(await text()).toContain("毎日の確認作業を、AIに任せる。");
     expect(mocks.redirect).not.toHaveBeenCalled();
   });
 

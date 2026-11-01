@@ -1728,16 +1728,29 @@ Notes for the report:
 
   // Public Beta purpose-first creation and its watch templates.
   "create.purpose.heading": "What would you like Koqentra to handle?",
-  "create.purpose.ai.title": "Have AI do recurring work",
-  "create.purpose.ai.description": "Hand AI tasks such as coming up with ideas or tidying things up, on a schedule you set.",
-  "create.purpose.web.title": "Watch a web page for changes",
-  "create.purpose.web.description": "Checks a page regularly and spots changes such as a new price or stock.",
+  "create.purpose.ai.title": "Hand recurring work to AI",
+  "create.purpose.ai.description":
+    "AI writes or analyses on a schedule, following the instructions you save.",
+  "create.purpose.web.title": "Get told when a web page changes",
+  "create.purpose.web.description":
+    "Checks a page you choose on a schedule and detects what changed since last time.",
+  "create.purpose.recommended.heading": "Recommended page watches",
+  "create.purpose.municipal.title": "Local government notices",
+  "create.purpose.municipal.description": "New applications, events and changed procedures",
+  "create.purpose.careers.title": "Jobs and openings",
+  "create.purpose.careers.description": "Changes to job listings or how to apply",
+  "create.purpose.others.toggle": "Show other uses and templates",
+  "create.purpose.guide.draft": "A Worker saved as a draft does not run on its own.",
+  "create.purpose.guide.firstCheck":
+    "The first check of a web page records a baseline to compare against. Changes are detected from the second check on.",
+  "create.purpose.guide.nextRun":
+    "You can see when a Worker runs next on the Workers list and on its own page.",
   "create.purpose.youtube.title": "Find recommended videos on YouTube",
   "create.purpose.youtube.description": "Regularly finds new YouTube videos on your topic and recommends some.",
   "create.purpose.youtube.note": "This searches YouTube videos only, not the whole web.",
   "create.purpose.web.heading": "What would you like to keep an eye on?",
-  "create.purpose.price.title": "Check a product's price",
-  "create.purpose.price.description": "Checks a product page regularly and tells you what changed when its price or details change.",
+  "create.purpose.price.title": "Product prices and restocks",
+  "create.purpose.price.description": "Changes to a price or stock status",
   "create.purpose.backToWeb": "Choose a different page to watch",
   "create.purpose.hotel.title": "Hotel vacancy",
   "create.purpose.hotel.description": "Hear when a room opens up for the date you want.",
