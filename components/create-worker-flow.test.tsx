@@ -21,6 +21,7 @@ vi.mock("@/components/notification/use-action-result", () => ({
 const { CreateWorkerFlow } = await import("@/components/create-worker-flow");
 type Purpose = Parameters<typeof CreateWorkerFlow>[0]["initialPurpose"];
 const { t } = await import("@/lib/i18n");
+type TranslationKey = Parameters<typeof t>[1];
 
 function render(
   initialPurpose: Purpose = null,
@@ -53,55 +54,101 @@ function hidden(html: string, name: string): string | null {
   return new RegExp(`<input type="hidden" name="${name}" value="([^"]*)"`).exec(html)?.[1] ?? null;
 }
 
-const TOP_LEVEL = [
-  "create.purpose.ai.title",
-  "create.purpose.web.title",
+const PRIMARY = ["create.purpose.web.title", "create.purpose.ai.title"] as const;
+
+const RECOMMENDED = [
+  "create.purpose.municipal.title",
+  "create.purpose.price.title",
+  "create.purpose.careers.title",
+] as const;
+
+const OTHERS = [
+  "create.purpose.hotel.title",
+  "create.purpose.restock.title",
+  "create.purpose.website.title",
   "create.purpose.youtube.title",
   "create.purpose.free.title",
 ] as const;
 
 const WEB_CHOICES = [
-  "create.purpose.price.title",
+  ...RECOMMENDED,
   "create.purpose.hotel.title",
   "create.purpose.restock.title",
   "create.purpose.website.title",
 ] as const;
 
+/** Where each key's words first appear, as rendered (apostrophes escaped). */
+function positions(html: string, language: string, keys: readonly TranslationKey[]): number[] {
+  return keys.map((key) => html.indexOf(t(language, key).replaceAll("'", "&#x27;")));
+}
+
+function inOrder(found: number[]): boolean {
+  return found.every((position) => position > -1) &&
+    [...found].sort((a, b) => a - b).every((position, index) => position === found[index]);
+}
+
 describe("the first screen", () => {
-  it.each(["ja", "en"])("asks what Koqentra should handle, with four cards, in %s", (language) => {
-    const html = render(null, language);
+  it.each(["ja", "en"])(
+    "leads with web watching, then AI work, then three recommended watches, in %s",
+    (language) => {
+      const html = render(null, language);
 
-    expect(html).toContain(t(language, "create.purpose.heading"));
-    for (const key of TOP_LEVEL) {
-      expect(html).toContain(t(language, key));
-    }
-  });
+      expect(html).toContain(t(language, "create.purpose.heading"));
+      expect(html).toContain(t(language, "create.purpose.recommended.heading"));
+      expect(inOrder(positions(html, language, [...PRIMARY, ...RECOMMENDED]))).toBe(true);
+    },
+  );
 
-  /** Not "what are you waiting for": a worker also finds things and does AI work. */
-  it("words the heading and the cards as the three kinds of work plus the builder", () => {
+  it("words the two main cards and the three recommendations as agreed", () => {
     const html = render(null, "ja");
 
-    expect(html).toContain("どんなことをKoqentraに任せますか？");
-    expect(html).toContain("AIに定期的に仕事をしてもらう");
-    expect(html).toContain("Webを見ておいてもらう");
-    expect(html).toContain("YouTubeでおすすめ動画を探す");
-    expect(html).toContain("自由に作る");
-    expect(render(null, "en")).toContain("What would you like Koqentra to handle?");
-  });
-
-  it("keeps the individual watches one level down", () => {
-    const html = render();
-
-    for (const key of WEB_CHOICES) {
-      expect(html).not.toContain(t("ja", key));
+    expect(html).toContain("Webページの変化を知らせる");
+    expect(html).toContain("指定したWebページを定期的に確認し、前回からの変化を検知します。");
+    expect(html).toContain("AIに定期的な仕事を任せる");
+    expect(html).toContain("登録した指示に沿って、AIが文章作成や分析を定期的に実行します。");
+    for (const [title, detail] of [
+      ["自治体のお知らせ", "募集・イベント・手続きの変更"],
+      ["商品価格・再入荷", "価格や在庫表示の変化"],
+      ["採用・募集情報", "求人情報や応募条件の変更"],
+    ]) {
+      expect(html).toContain(title);
+      expect(html).toContain(detail);
     }
   });
 
-  it("offers no price-drop or application card yet, and no form", () => {
+  /** Reordered, not removed: every earlier way in is still one click away. */
+  it.each(["ja", "en"])("keeps every other use under a toggle, in %s", (language) => {
+    const html = render(null, language);
+    const details = /<details[^>]*>([\s\S]*?)<\/details>/.exec(html)?.[1] ?? "";
+
+    expect(details).toMatch(/^<summary/);
+    expect(details).toContain(t(language, "create.purpose.others.toggle"));
+    expect(inOrder(positions(details, language, OTHERS))).toBe(true);
+    expect(html.indexOf("<details")).toBeGreaterThan(
+      Math.max(...positions(html, language, RECOMMENDED)),
+    );
+  });
+
+  it("makes every card one button", () => {
+    const html = render();
+    const buttons = html.match(/<button type="button"/g) ?? [];
+
+    expect(buttons).toHaveLength(PRIMARY.length + RECOMMENDED.length + OTHERS.length);
+    expect(html).toContain("focus-visible:ring-3");
+  });
+
+  it("says what a draft, a first check and the next run mean", () => {
+    const html = render();
+
+    expect(html).toContain(t("ja", "create.purpose.guide.draft"));
+    expect(html).toContain(t("ja", "create.purpose.guide.firstCheck"));
+    expect(html).toContain(t("ja", "create.purpose.guide.nextRun"));
+  });
+
+  it("offers no price-drop card and no form", () => {
     const html = render();
 
     expect(html).not.toContain("値下がり");
-    expect(html).not.toContain("募集");
     expect(html).not.toContain("<form");
   });
 
@@ -116,16 +163,11 @@ describe("the first screen", () => {
 });
 
 describe("watching a web page", () => {
-  it.each(["ja", "en"])("offers the four watches, price first, in %s", (language) => {
+  it.each(["ja", "en"])("offers the six watches, recommended first, in %s", (language) => {
     const html = render("web", language);
 
     expect(html).toContain(t(language, "create.purpose.web.heading"));
-    // As rendered: an apostrophe comes out escaped.
-    const positions = WEB_CHOICES.map((key) =>
-      html.indexOf(t(language, key).replaceAll("'", "&#x27;")),
-    );
-    expect(positions.every((position) => position > -1)).toBe(true);
-    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+    expect(inOrder(positions(html, language, WEB_CHOICES))).toBe(true);
     expect(html).not.toContain("<form");
   });
 
@@ -133,7 +175,7 @@ describe("watching a web page", () => {
     expect(render("web")).toContain(t("ja", "create.purpose.back"));
   });
 
-  it.each(["price", "hotel", "restock", "website"] as const)(
+  it.each(["municipal", "price", "careers", "hotel", "restock", "website"] as const)(
     "goes back to the web choices from %s",
     (purpose) => {
       const html = render(purpose);
@@ -158,6 +200,25 @@ describe("checking a product's price", () => {
     expect(tag(html, "targetCondition")).not.toContain("value=");
     expect(html).not.toContain('name="templateId"');
     expect(html).not.toContain(t("ja", "worker.create.draftHeading"));
+  });
+});
+
+describe.each([
+  ["municipal", "template.municipalNotices.name"],
+  ["careers", "template.careersPage.name"],
+] as const)("the recommended %s watch", (purpose, nameKey) => {
+  const html = render(purpose);
+
+  it("is the generic website form with its existing example applied", () => {
+    expect(hidden(html, "kind")).toBe("website");
+    expect(html).toContain(`value="${t("ja", nameKey)}"`);
+    expect(html).toContain('name="websiteUrl"');
+  });
+
+  it("adds no template origin, no draft and no kind picker", () => {
+    expect(html).not.toContain('name="templateId"');
+    expect(html).not.toContain(t("ja", "worker.create.draftHeading"));
+    expect(html).not.toContain(t("ja", "worker.create.kindHeading"));
   });
 });
 
