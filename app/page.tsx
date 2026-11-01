@@ -123,8 +123,12 @@ export default async function Home({
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-16 sm:px-10 sm:py-24">
         <section className="flex flex-col items-center text-center">
           <p className="text-sm font-medium text-muted-foreground">{betaLabel}</p>
-          <h1 className="mt-3 text-balance text-4xl font-semibold tracking-tight sm:text-5xl">
-            毎日の確認作業を、AIに任せる。
+          {/* Japanese has no spaces to wrap at; without a hint a phone splits
+              the line mid-phrase. Wrap only after the comma. */}
+          <h1 className="mt-3 text-balance break-keep text-4xl font-semibold tracking-tight sm:text-5xl">
+            毎日の確認作業を、
+            <wbr />
+            AIに任せる。
           </h1>
 
           {/* **Only what the product does today.** A worker fetches one page it

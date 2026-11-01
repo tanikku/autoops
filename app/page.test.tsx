@@ -68,7 +68,7 @@ const render = async (query: Query = {}) =>
 
 /** The page as a reader sees it, with the markup taken out. */
 const text = async (query: Query = {}) =>
-  (await render(query)).replace(/<!-- -->/g, "").replace(/<[^>]*>/g, " ");
+  (await render(query)).replace(/<!-- -->|<wbr\/>/g, "").replace(/<[^>]*>/g, " ");
 
 /** The first `<form>` in the returned element tree, or null. */
 function findForm(node: unknown): ReactElement | null {
@@ -97,7 +97,15 @@ function findForm(node: unknown): ReactElement | null {
 
 describe("what the product says it is", () => {
   it("leads with handing daily checks to AI", async () => {
-    expect(await render()).toContain("毎日の確認作業を、AIに任せる。");
+    expect(await text()).toContain("毎日の確認作業を、AIに任せる。");
+  });
+
+  /** A phone wraps the headline after the comma, not mid-phrase. */
+  it("lets the headline wrap only after the comma", async () => {
+    const html = await render();
+
+    expect(html).toContain("毎日の確認作業を、<wbr/>AIに任せる。");
+    expect(html).toMatch(/<h1 class="[^"]*break-keep/);
   });
 
   it("says what Workers do and what Creator does", async () => {
@@ -429,7 +437,7 @@ describe("who the landing page is for", () => {
   it("shows a visitor with no session the page, as before", async () => {
     mocks.auth.mockResolvedValue(null);
 
-    expect(await render()).toContain("毎日の確認作業を、AIに任せる。");
+    expect(await text()).toContain("毎日の確認作業を、AIに任せる。");
     expect(mocks.redirect).not.toHaveBeenCalled();
   });
 
@@ -465,7 +473,7 @@ describe("who the landing page is for", () => {
   ])("treats %s as signed out", async (_name, session) => {
     mocks.auth.mockResolvedValue(session);
 
-    expect(await render()).toContain("毎日の確認作業を、AIに任せる。");
+    expect(await text()).toContain("毎日の確認作業を、AIに任せる。");
     expect(mocks.redirect).not.toHaveBeenCalled();
   });
 
