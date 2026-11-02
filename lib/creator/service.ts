@@ -6,6 +6,7 @@ import {
   type CreatorAnalysisRequest,
   type CreatorAnalysisResult,
   type CreatorAnalyzer,
+  CreatorAnalysisRequestTooLargeError,
   InvalidCreatorAnalysisResponseError,
   creatorAnalysisLimits,
 } from "@/lib/creator/analyzer";
@@ -173,15 +174,9 @@ async function analyzeCreatorContent(
 
   const feedback = partition.recent;
 
-  // **Everything about memory happens here, before the request is built and
-  // outside every transaction.** It may make one provider call; it may make
-  // none. Whatever happens, `memory` ends up as a value the analyzer can be
-  // given or as null, and never as a reason this analysis fails.
-  const memory = await settleCreatorMemory(userId, partition, synthesizer);
-
-  const request: CreatorAnalysisRequest = {
+  const withoutMemory: CreatorAnalysisRequest = {
     profile,
-    memory,
+    memory: null,
     content: {
       // Carried from the entry point rather than chosen here, and never from a
       // form: the two callers below are the only things that may say what a
@@ -194,13 +189,16 @@ async function analyzeCreatorContent(
     feedback,
   };
 
-  // **Before the call, not after a 413.** The limits belong to
-  // `lib/creator/analyzer.ts`; nothing here restates a number it owns.
-  assertCreatorAnalysisRequestWithinLimits(request);
+  // **Before the call, not after a 413, and before anything is reserved.** The
+  // limits belong to `lib/creator/analyzer.ts`; nothing here restates a number
+  // it owns. Measured without a memory, because every other field is already
+  // final: whatever is refused here is refused for free.
+  assertCreatorAnalysisRequestWithinLimits(withoutMemory);
 
-  // **After every check that refuses the request for free, and immediately
-  // before it is sent.** A refusal writes nothing, exactly as a failed call
-  // does not.
+  // **The analysis is reserved first.** It is what somebody is waiting for, so
+  // its unit is taken before a summary can take one: an account with one unit
+  // left gets its analysis rather than a background summary and a refusal. A
+  // refusal here asks no model at all, and writes nothing.
   const reservation = await reserveAiProcessing(userId);
 
   if (!reservation.granted) {
@@ -208,6 +206,17 @@ async function analyzeCreatorContent(
   }
 
   const { usagePeriodId } = reservation;
+
+  // **Memory comes after the analysis's unit is held, and outside every
+  // transaction.** It may reserve and make one provider call of its own; it may
+  // make none. Whatever happens, `memory` ends up as a value the analyzer can
+  // be given or as null, and never as a reason this analysis fails.
+  const memory = sendableMemory(
+    withoutMemory,
+    await settleCreatorMemory(userId, partition, synthesizer),
+  );
+
+  const request: CreatorAnalysisRequest = { ...withoutMemory, memory };
 
   let analysis: CreatorAnalysis;
   try {
@@ -434,6 +443,49 @@ async function settleCreatorMemory(
       stored: usable,
       synthesizer,
     })) ?? asAnalysisMemory(usable)
+  );
+}
+
+/**
+ * The memory this analysis may send, measured with the rest of the request.
+ *
+ * **Only the memory can be refused here.** Every other field was measured
+ * without it before the analysis's unit was taken, and the memory is checked
+ * on its own, independently of them — so a refusal now is about the memory, and
+ * the analysis goes ahead without it rather than losing the unit it holds.
+ *
+ * **Recognised by type, never by message.** Anything that is not a memory
+ * refusal is not swallowed: it means the request changed in a way nothing here
+ * expected, and that is not something to send around.
+ */
+function sendableMemory(
+  withoutMemory: CreatorAnalysisRequest,
+  memory: CreatorAnalysisMemory | null,
+): CreatorAnalysisMemory | null {
+  if (memory === null) {
+    return null;
+  }
+
+  try {
+    assertCreatorAnalysisRequestWithinLimits({ ...withoutMemory, memory });
+  } catch (error) {
+    if (!isMemoryRefusal(error)) {
+      throw error;
+    }
+
+    logMemoryAnomaly("refused-by-request", error);
+    return null;
+  }
+
+  return memory;
+}
+
+/** Whether a request refusal was about the memory and nothing else. */
+function isMemoryRefusal(error: unknown): boolean {
+  return (
+    error instanceof InvalidCreatorMemoryError ||
+    (error instanceof CreatorAnalysisRequestTooLargeError &&
+      error.field === "memory.summary")
   );
 }
 
