@@ -25,7 +25,11 @@ import {
   InvalidCreatorAnalysisResponseError,
 } from "@/lib/creator/analyzer";
 import { ProviderError } from "@/lib/ai/provider";
-import { InvalidCreatorMemoryError } from "@/lib/creator/memory";
+import {
+  type CreatorMemorySynthesizer,
+  creatorMemoryLimits,
+  InvalidCreatorMemoryError,
+} from "@/lib/creator/memory";
 
 /**
  * The loop, end to end, with a fake model and a replaced database.
@@ -1209,14 +1213,14 @@ describe("the summary of older answers", () => {
     }
 
     /**
-     * **Two calls, two reservations, two periods named.** The memory call is
-     * reserved and sent first; the analysis is reserved on its own afterwards.
+     * **Two calls, two reservations, two periods named.** The analysis is
+     * reserved first; the memory call is reserved on its own afterwards.
      */
     it("links the memory call and the analysis call to their own reservations", async () => {
       agedOutFeedback();
       allowance.reserveAiProcessing
-        .mockResolvedValueOnce({ granted: true, usagePeriodId: "period-memory" })
-        .mockResolvedValueOnce({ granted: true, usagePeriodId: "period-analysis" });
+        .mockResolvedValueOnce({ granted: true, usagePeriodId: "period-analysis" })
+        .mockResolvedValueOnce({ granted: true, usagePeriodId: "period-memory" });
       const { analyzer } = fakeAnalyzer(threeRecommendations);
       const { synthesizer } = fakeSynthesizer();
 
@@ -1405,8 +1409,10 @@ describe("the summary of older answers", () => {
       "asks no model and keeps the batch outstanding when the allowance is %s",
       async (refusal) => {
         agedOutFeedback();
-        // The synthesis asks first; the analysis after it is granted.
-        allowance.reserveAiProcessing.mockResolvedValueOnce({ granted: false, refusal });
+        // The analysis asks first and is granted; the synthesis after it is not.
+        allowance.reserveAiProcessing
+          .mockResolvedValueOnce({ granted: true, usagePeriodId: "period-analysis" })
+          .mockResolvedValueOnce({ granted: false, refusal });
         const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
         const { synthesizer, requests: synthesised } = fakeSynthesizer();
 
@@ -1424,14 +1430,19 @@ describe("the summary of older answers", () => {
 
     it("keeps the batch outstanding when the allowance cannot be read", async () => {
       agedOutFeedback();
-      allowance.reserveAiProcessing.mockRejectedValueOnce(new Error("connection lost"));
-      const { analyzer } = fakeAnalyzer(threeRecommendations);
+      // The analysis's own reservation is granted; the synthesis's cannot be read.
+      allowance.reserveAiProcessing
+        .mockResolvedValueOnce({ granted: true, usagePeriodId: "period-analysis" })
+        .mockRejectedValueOnce(new Error("connection lost"));
+      const { analyzer, requests } = fakeAnalyzer(threeRecommendations);
       const { synthesizer, requests: synthesised } = fakeSynthesizer();
 
       await analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer);
 
       expect(synthesised).toHaveLength(0);
       expect(evidenceCreateMany).not.toHaveBeenCalled();
+      expect(requests).toHaveLength(1);
+      expect(contentItemCreate).toHaveBeenCalled();
     });
 
     /**
@@ -1451,6 +1462,250 @@ describe("the summary of older answers", () => {
     });
   });
 
+  /**
+   * **The analysis comes first.** Its unit is reserved before a summary can take
+   * one, so an account with one unit left gets the analysis it asked for; a
+   * summary is brought up to date only with a unit to spare, and a summary that
+   * does not fit the request is left out rather than costing the analysis.
+   */
+  describe("when the analysis and the summary compete for allowance", () => {
+    const GRANTED = (usagePeriodId: string) => ({ granted: true as const, usagePeriodId });
+    const REFUSED = { granted: false as const, refusal: "exhausted" as const };
+
+    /** Thirteen answers, so exactly one has aged out and a summary is eligible. */
+    function agedOutFeedback() {
+      feedbackFindMany
+        .mockReset()
+        .mockResolvedValueOnce(historyOf(13))
+        .mockResolvedValueOnce([storedRow(0)]);
+      profileFindUnique.mockResolvedValue(PROFILE_ROW);
+    }
+
+    /** Fourteen answers with one already summarised, and one more outstanding. */
+    function storedAndOutstanding() {
+      feedbackFindMany
+        .mockReset()
+        .mockResolvedValueOnce(historyOf(14))
+        .mockResolvedValueOnce([storedRow(1)]);
+      memoryFindFirst.mockResolvedValue(memoryRow("Stored summary.", 1));
+      profileFindUnique.mockResolvedValue(PROFILE_ROW);
+    }
+
+    /** Everything that happened, in the order it happened. */
+    function tracked(summary: string = SUMMARY) {
+      const order: string[] = [];
+      allowance.reserveAiProcessing.mockImplementation(async () => {
+        order.push("reserve");
+        return GRANTED(`period-${order.filter((step) => step === "reserve").length}`);
+      });
+      const analyzed: CreatorAnalysisRequest[] = [];
+      const analyzer: CreatorAnalyzer = {
+        analyze: async (request) => {
+          order.push("analyze");
+          analyzed.push(structuredClone(request));
+          return { result: threeRecommendations, call: PROVIDER_CALL };
+        },
+      };
+      const synthesizer = {
+        synthesize: async () => {
+          order.push("synthesize");
+          return { summary, call: PROVIDER_CALL };
+        },
+      };
+
+      return { order, analyzed, analyzer, synthesizer };
+    }
+
+    function usageRow(feature: "creator-analysis" | "creator-memory") {
+      return usageCreate.mock.calls.find(
+        (entry: { data: { feature: string } }[]) => entry[0].data.feature === feature,
+      )?.[0].data;
+    }
+
+    it("with nothing left, refuses the analysis and asks no model at all", async () => {
+      agedOutFeedback();
+      const run = tracked();
+      allowance.reserveAiProcessing.mockReset().mockResolvedValue(REFUSED);
+
+      const error = await analyzeCreatorText(
+        USER,
+        { title: null, body: "b" },
+        run.analyzer,
+        run.synthesizer,
+      ).catch((caught: unknown) => caught);
+
+      expect(aiAllowanceRefusalOf(error)).toBe("exhausted");
+      expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(1);
+      expect(run.order).not.toContain("synthesize");
+      expect(run.order).not.toContain("analyze");
+      expect(memoryCreate).not.toHaveBeenCalled();
+      expect(evidenceCreateMany).not.toHaveBeenCalled();
+      expect(contentItemCreate).not.toHaveBeenCalled();
+      expect(usageCreate).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["text", (analyzer: CreatorAnalyzer, synthesizer: CreatorMemorySynthesizer) =>
+        analyzeCreatorText(USER, { title: null, body: "b" }, analyzer, synthesizer)],
+      ["URL", (analyzer: CreatorAnalyzer, synthesizer: CreatorMemorySynthesizer) =>
+        analyzeCreatorUrl(
+          USER,
+          { title: null, sourceUrl: "https://example.com/a", body: "b" },
+          analyzer,
+          synthesizer,
+        )],
+    ] as const)(
+      "with one unit left, analyses (%s) and skips the summary",
+      async (_entry, analyze) => {
+        agedOutFeedback();
+        const run = tracked();
+        allowance.reserveAiProcessing
+          .mockReset()
+          .mockResolvedValueOnce(GRANTED("period-analysis"))
+          .mockResolvedValueOnce(REFUSED);
+
+        const outcome = await analyze(run.analyzer, run.synthesizer);
+
+        expect(outcome.contentItemId).toBe("content-1");
+        expect(allowance.reserveAiProcessing).toHaveBeenCalledTimes(2);
+        expect(run.order).toEqual(["analyze"]);
+        expect(run.analyzed).toHaveLength(1);
+        expect(run.analyzed[0].memory).toBeNull();
+        expect(memoryCreate).not.toHaveBeenCalled();
+        expect(evidenceCreateMany).not.toHaveBeenCalled();
+        expect(usageRow("creator-analysis")?.usagePeriodId).toBe("period-analysis");
+        expect(usageRow("creator-memory")).toBeUndefined();
+      },
+    );
+
+    it("with one unit left, still sends the summary that was already stored", async () => {
+      storedAndOutstanding();
+      const run = tracked();
+      allowance.reserveAiProcessing
+        .mockReset()
+        .mockResolvedValueOnce(GRANTED("period-analysis"))
+        .mockResolvedValueOnce(REFUSED);
+
+      await analyzeCreatorText(USER, { title: null, body: "b" }, run.analyzer, run.synthesizer);
+
+      expect(run.order).toEqual(["analyze"]);
+      expect(run.analyzed[0].memory).toEqual({
+        summary: "Stored summary.",
+        derivedFromCount: 1,
+      });
+      expect(memoryUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it("with two units, reserves the analysis, then the summary, and sends the new summary", async () => {
+      agedOutFeedback();
+      const run = tracked();
+
+      await analyzeCreatorText(USER, { title: null, body: "b" }, run.analyzer, run.synthesizer);
+
+      expect(run.order).toEqual(["reserve", "reserve", "synthesize", "analyze"]);
+      expect(run.analyzed[0].memory).toEqual({ summary: SUMMARY, derivedFromCount: 1 });
+      // The first reservation is the analysis's, the second the summary's.
+      expect(usageRow("creator-analysis")?.usagePeriodId).toBe("period-1");
+      expect(usageRow("creator-memory")?.usagePeriodId).toBe("period-2");
+    });
+
+    it("reserves only the analysis when no summary is needed", async () => {
+      feedbackFindMany.mockReset().mockResolvedValue(historyOf(12));
+      const run = tracked();
+
+      await analyzeCreatorText(USER, { title: null, body: "b" }, run.analyzer, run.synthesizer);
+
+      expect(run.order).toEqual(["reserve", "analyze"]);
+    });
+
+    it("refuses an oversized request before reserving anything", async () => {
+      agedOutFeedback();
+      const run = tracked();
+
+      await expect(
+        analyzeCreatorText(
+          USER,
+          { title: null, body: "x".repeat(creatorAnalysisLimits.contentBody + 1) },
+          run.analyzer,
+          run.synthesizer,
+        ),
+      ).rejects.toBeInstanceOf(CreatorAnalysisRequestTooLargeError);
+
+      expect(run.order).toEqual([]);
+      expect(memoryCreate).not.toHaveBeenCalled();
+      expect(usageCreate).not.toHaveBeenCalled();
+    });
+
+    it("keeps the analysis's unit when the summary's reservation cannot be read", async () => {
+      agedOutFeedback();
+      const run = tracked();
+      allowance.reserveAiProcessing
+        .mockReset()
+        .mockResolvedValueOnce(GRANTED("period-analysis"))
+        .mockRejectedValueOnce(new Error("connection lost"));
+
+      await analyzeCreatorText(USER, { title: null, body: "b" }, run.analyzer, run.synthesizer);
+
+      expect(run.order).toEqual(["analyze"]);
+      expect(usageRow("creator-analysis")?.usagePeriodId).toBe("period-analysis");
+      expect(contentItemCreate).toHaveBeenCalled();
+    });
+
+    it("analyses anyway when the summary's provider call fails", async () => {
+      agedOutFeedback();
+      const run = tracked();
+      const synthesizer = {
+        synthesize: async () => {
+          run.order.push("synthesize");
+          throw new ProviderError("timeout", "took too long", {
+            attempt: {
+              provider: "anthropic",
+              model: "claude-opus-5",
+              usage: {
+                inputTokens: null,
+                outputTokens: null,
+                cacheReadTokens: null,
+                cacheWriteTokens: null,
+              },
+            },
+          });
+        },
+      };
+
+      await analyzeCreatorText(USER, { title: null, body: "b" }, run.analyzer, synthesizer);
+
+      expect(run.order).toEqual(["reserve", "reserve", "synthesize", "analyze"]);
+      expect(run.analyzed[0].memory).toBeNull();
+      // The failed call is recorded against the summary's own reservation.
+      expect(usageRow("creator-memory")).toMatchObject({ outcome: "error", usagePeriodId: "period-2" });
+      expect(usageRow("creator-analysis")?.usagePeriodId).toBe("period-1");
+      expect(contentItemCreate).toHaveBeenCalled();
+    });
+
+    /**
+     * **A summary the request would refuse is left out, not sent.** The real
+     * synthesizer validates its answer; the service only trusts the interface,
+     * so this is what happens if that ever stops being true.
+     */
+    it.each([
+      ["too long", "x".repeat(creatorMemoryLimits.summary + 1)],
+      ["blank", "   "],
+    ])("analyses without a new summary that is %s", async (_label, summary) => {
+      agedOutFeedback();
+      const run = tracked(summary);
+
+      await analyzeCreatorText(USER, { title: null, body: "b" }, run.analyzer, run.synthesizer);
+
+      expect(run.order).toEqual(["reserve", "reserve", "synthesize", "analyze"]);
+      expect(run.analyzed[0].memory).toBeNull();
+      expect(contentItemCreate).toHaveBeenCalled();
+      const logged = (console.error as unknown as { mock: { calls: unknown[][] } }).mock.calls
+        .flat()
+        .map(String)
+        .join(" ");
+      expect(logged).toContain("[creator] memory refused-by-request");
+    });
+  });
 });
 
 /**
