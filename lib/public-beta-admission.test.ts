@@ -1,4 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  SUBJECT_LOCK_NAMESPACE,
+  subjectLockKey,
+  TOMBSTONE_KEYS_ENV,
+  type TombstoneStatus,
+} from "@/lib/account-tombstone";
 import {
   readAccessMode,
   readPublicBetaSignup,
@@ -27,12 +33,30 @@ const OUTCOMES = {
   joined: { status: "joined", participants: 1, admittedAt: JOINED_AT },
   admitted: { status: "admitted" },
   full: { status: "full" },
+  refused: { status: "refused" },
 } as const;
 
+// A fixed dummy key, so the tombstone check inside an admission can run.
+const DUMMY_KEYS = `1:${Buffer.alloc(32, 7).toString("base64")}`;
+
+beforeEach(() => {
+  vi.stubEnv(TOMBSTONE_KEYS_ENV, DUMMY_KEYS);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 function deps(
-  overrides: { known?: boolean; admit?: keyof typeof OUTCOMES; notify?: () => Promise<void> } = {},
+  overrides: {
+    known?: boolean;
+    admit?: keyof typeof OUTCOMES;
+    notify?: () => Promise<void>;
+    tombstone?: TombstoneStatus;
+  } = {},
 ) {
   return {
+    checkTombstone: vi.fn(async () => overrides.tombstone ?? "clear"),
     isKnown: vi.fn(async () => overrides.known ?? false),
     admit: vi.fn(async () => OUTCOMES[overrides.admit ?? "joined"]),
     notifyJoined: vi.fn(overrides.notify ?? (async () => {})),
@@ -95,13 +119,19 @@ describe("reading the signup switch and cap", () => {
  * this fixes that the count reported for a new place is read inside it.
  */
 describe("admitting within the lock", () => {
-  function fakeClient(state: { existing?: boolean; count: number }) {
+  function fakeClient(state: { existing?: boolean; count: number; deleted?: boolean }) {
     const steps: string[] = [];
     const tx = {
       $executeRaw: vi.fn(async () => {
         steps.push("lock");
         return 0;
       }),
+      deletedAccount: {
+        findFirst: vi.fn(async () => {
+          steps.push("tombstone");
+          return state.deleted ? { id: "tombstone-1" } : null;
+        }),
+      },
       publicBetaAdmission: {
         findUnique: vi.fn(async () => {
           steps.push("find");
@@ -137,8 +167,53 @@ describe("admitting within the lock", () => {
       participants: 1,
       admittedAt: JOINED_AT,
     });
-    expect(steps).toEqual(["begin", "lock", "find", "count", "create", "count", "commit"]);
-    expect(tx.$executeRaw.mock.calls[0].slice(1)).toEqual([PUBLIC_BETA_ADMISSION_LOCK]);
+    expect(steps).toEqual([
+      "begin",
+      "lock",
+      "lock",
+      "tombstone",
+      "tombstone",
+      "find",
+      "count",
+      "create",
+      "count",
+      "commit",
+    ]);
+    // The subject's lock first, then the admission lock: the one order every
+    // transaction that takes both uses.
+    expect(tx.$executeRaw.mock.calls[0].slice(1)).toEqual([
+      SUBJECT_LOCK_NAMESPACE,
+      subjectLockKey("google-sub-new"),
+    ]);
+    expect(tx.$executeRaw.mock.calls[1].slice(1)).toEqual([PUBLIC_BETA_ADMISSION_LOCK]);
+  });
+
+  it("refuses a deleted subject under the locks, before its place is looked at", async () => {
+    const { client, tx, steps } = fakeClient({ count: 0, deleted: true });
+
+    expect(await admitToPublicBeta(client, "google-sub-new", 10)).toEqual({ status: "refused" });
+    expect(steps).toEqual(["begin", "lock", "lock", "tombstone", "commit"]);
+    expect(tx.publicBetaAdmission.findUnique).not.toHaveBeenCalled();
+    expect(tx.publicBetaAdmission.create).not.toHaveBeenCalled();
+  });
+
+  it("does not keep a deleted subject's existing place", async () => {
+    const { client, tx } = fakeClient({ existing: true, count: 3, deleted: true });
+
+    expect(await admitToPublicBeta(client, "google-sub-new", 10)).toEqual({ status: "refused" });
+    expect(tx.publicBetaAdmission.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["unparseable", "1:short"],
+  ])("refuses when the keys are %s, taking no place", async (_label, keys) => {
+    vi.stubEnv(TOMBSTONE_KEYS_ENV, keys ?? "");
+    const { client, tx } = fakeClient({ count: 0 });
+
+    expect(await admitToPublicBeta(client, "google-sub-new", 10)).toEqual({ status: "refused" });
+    expect(tx.deletedAccount.findFirst).not.toHaveBeenCalled();
+    expect(tx.publicBetaAdmission.create).not.toHaveBeenCalled();
   });
 
   it("does not call an existing place new, and creates nothing", async () => {
@@ -314,5 +389,71 @@ describe("deciding a sign-in", () => {
   it("says only full or closed, nothing about the account", () => {
     expect(SIGNUP_FULL_PATH).toBe("/?signup=full");
     expect(SIGNUP_CLOSED_PATH).toBe("/?signup=closed");
+  });
+});
+
+/**
+ * A deleted subject is turned away before anything that would let it in, and a
+ * subject whose deletion cannot be checked is let in only if already known.
+ */
+describe("deciding a sign-in for a deleted subject", () => {
+  const LISTED = { allowlist: new Set(["new@example.com"]) };
+
+  it.each([
+    ["Closed Beta, allowlisted", { mode: "closed-beta" as const, ...LISTED }, {}],
+    ["Public Beta, allowlisted", LISTED, {}],
+    ["Closed Beta, already known", { mode: "closed-beta" as const }, { known: true }],
+    ["Public Beta, already known", {}, { known: true }],
+    ["Public Beta, a place left", {}, {}],
+  ])("refuses it: %s", async (_label, input, overrides) => {
+    const d = deps({ ...overrides, tombstone: "deleted" });
+
+    expect(await decide(input, d)).toBe(false);
+    expect(d.isKnown).not.toHaveBeenCalled();
+    expect(d.admit).not.toHaveBeenCalled();
+  });
+
+  it("asks before the allowlist and before the database", async () => {
+    const d = deps({ tombstone: "deleted" });
+
+    await decide(LISTED, d);
+
+    expect(d.checkTombstone).toHaveBeenCalledWith("google-sub-new");
+    expect(d.checkTombstone).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses when the admission itself refuses, taking no place", async () => {
+    const d = deps({ admit: "refused" });
+
+    expect(await decide({}, d)).toBe(false);
+    expect(d.notifyJoined).not.toHaveBeenCalled();
+  });
+
+  describe("when the check cannot be completed", () => {
+    it("lets an already known subject in", async () => {
+      const d = deps({ tombstone: "unverifiable", known: true });
+
+      expect(await decide({ mode: "closed-beta" }, d)).toBe(true);
+      expect(d.admit).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["an allowlisted newcomer", LISTED],
+      ["a Public Beta newcomer with a place left", {}],
+    ])("refuses %s", async (_label, input) => {
+      const d = deps({ tombstone: "unverifiable" });
+
+      expect(await decide(input, d)).toBe(false);
+      expect(d.admit).not.toHaveBeenCalled();
+    });
+  });
+
+  it("changes nothing for a subject that was not deleted", async () => {
+    const listed = deps();
+    const newcomer = deps();
+
+    expect(await decide({ mode: "closed-beta", ...LISTED }, listed)).toBe(true);
+    expect(await decide({}, newcomer)).toBe(true);
+    expect(newcomer.admit).toHaveBeenCalledWith("google-sub-new", 10);
   });
 });

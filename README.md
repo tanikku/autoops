@@ -1561,6 +1561,7 @@ cp .env.example .env
 | `AUTH_GOOGLE_SECRET` | Yes | Google OAuth client secret |
 | `CRON_SECRET` | Yes | Bearer token for `POST /api/cron/run` and `POST /api/cron/billing` — **one secret, both routes**, because one cron service calls both. Unset means every request to either is rejected |
 | `BETA_ALLOWED_EMAILS` | Yes | Comma-separated addresses allowed to sign in. **Unset means nobody can** — see below |
+| `ACCOUNT_TOMBSTONE_KEYS` | **For new accounts** | Keys for recognising deleted accounts: `version:secret` pairs, comma-separated, each secret base64 of at least 32 bytes — `1:…,2:…`. A deleted account is kept only as `HMAC-SHA256(key, "google:" + subject)`; the newest version writes, every version checks. **Add versions, never remove one** — a removed key leaves its tombstones uncheckable. Unset or malformed: accounts that already exist sign in and save as before, but **no new account can sign in or be created** (fail-closed), because whether it was deleted cannot be checked. Its own secret: do not reuse `AUTH_SECRET` |
 | `AUTH_URL` | **In production** | The deployed origin, e.g. `https://koqentra.example.com`. Leave it unset locally — see below |
 | `ANTHROPIC_API_KEY` | No | Real AI execution. Without it, a stand-in provider answers |
 | `SUPPORT_EMAIL` | No | The address Settings and the privacy notice offer as a way to reach a person. **Without it there is no support link at all** — see below |

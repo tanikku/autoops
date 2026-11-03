@@ -55,6 +55,7 @@ const APPLICATION: Readonly<Record<string, BillingErrorCategory>> = {
   CheckoutSessionConflict: "checkout-session-conflict",
   UnreadableCheckoutAttempt: "unreadable-attempt",
   UserProvisioningError: "provisioning-error",
+  DeletedAccountError: "provisioning-error",
   InvalidSubscriptionError: "invalid-subscription",
   UnknownPlanError: "unknown-plan",
   BillingEventError: "billing-event-error",

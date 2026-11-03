@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * What reading a zone answers, and what provisioning refuses to write.
@@ -11,27 +11,70 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * the column default, to decide.
  */
 
-const { findUnique, update, upsert } = vi.hoisted(() => ({
-  findUnique: vi.fn(),
-  update: vi.fn(),
-  upsert: vi.fn(),
-}));
+const { findUnique, update, upsert, tombstoneFind, executeRaw, transaction, steps } =
+  vi.hoisted(() => ({
+    findUnique: vi.fn(),
+    update: vi.fn(),
+    upsert: vi.fn(),
+    tombstoneFind: vi.fn(),
+    executeRaw: vi.fn(),
+    transaction: vi.fn(),
+    steps: [] as string[],
+  }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: { user: { findUnique, update, upsert } },
-}));
+/**
+ * One object stands for both the client and the transaction it opens, so the
+ * order of what a provisioning does inside its transaction can be read off
+ * `steps`.
+ */
+vi.mock("@/lib/prisma", () => {
+  const db = {
+    user: { findUnique, update, upsert },
+    deletedAccount: { findFirst: tombstoneFind },
+    $executeRaw: executeRaw,
+    $transaction: transaction,
+  };
+  transaction.mockImplementation(async (work: (tx: typeof db) => unknown) => {
+    steps.push("begin");
+    const result = await work(db);
+    steps.push("commit");
+    return result;
+  });
+  return { prisma: db };
+});
 
 const { getUserTimezone, ensureUser, setUserTimezone } = await import(
   "@/lib/users"
 );
 const { NEW_ACCOUNT_TIMEZONE } = await import("@/lib/timezones");
+const { AccountDeletedError, TOMBSTONE_KEYS_ENV, TombstoneUnverifiableError } = await import(
+  "@/lib/account-tombstone"
+);
 
 const USER = "google-sub-1";
+// A fixed dummy key: provisioning checks tombstones, and needs one to do so.
+const DUMMY_KEYS = `1:${Buffer.alloc(32, 5).toString("base64")}`;
 
 beforeEach(() => {
+  vi.stubEnv(TOMBSTONE_KEYS_ENV, DUMMY_KEYS);
+  steps.length = 0;
   findUnique.mockReset();
   update.mockReset().mockResolvedValue(undefined);
-  upsert.mockReset().mockResolvedValue(undefined);
+  upsert.mockReset().mockImplementation(async () => {
+    steps.push("upsert");
+  });
+  tombstoneFind.mockReset().mockImplementation(async () => {
+    steps.push("tombstone");
+    return null;
+  });
+  executeRaw.mockReset().mockImplementation(async () => {
+    steps.push("lock");
+    return 0;
+  });
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe("getUserTimezone", () => {
@@ -186,6 +229,68 @@ describe("ensureUser", () => {
 
       expect(args.create.email).toBe(person?.email);
     }
+  });
+});
+
+/**
+ * A deleted subject's row is never written again, and a subject whose deletion
+ * cannot be checked is only refreshed, never created.
+ */
+describe("ensureUser for a deleted subject", () => {
+  const person = { id: USER, email: "someone@example.com" };
+
+  it("locks the subject, checks the tombstone, then writes — all in one transaction", async () => {
+    await ensureUser(person);
+
+    expect(steps).toEqual(["begin", "lock", "tombstone", "tombstone", "upsert", "commit"]);
+  });
+
+  it("refuses a deleted subject and writes nothing", async () => {
+    tombstoneFind.mockImplementation(async () => {
+      steps.push("tombstone");
+      return { id: "tombstone-1" };
+    });
+
+    await expect(ensureUser(person)).rejects.toBeInstanceOf(AccountDeletedError);
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("refuses a deleted subject even when its row is still there", async () => {
+    tombstoneFind.mockResolvedValue({ id: "tombstone-1" });
+    findUnique.mockResolvedValue({ id: USER });
+
+    await expect(ensureUser(person)).rejects.toBeInstanceOf(AccountDeletedError);
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["missing", ""],
+    ["unparseable", "1:too-short"],
+  ])("refuses to create a row when the keys are %s", async (_label, keys) => {
+    vi.stubEnv(TOMBSTONE_KEYS_ENV, keys);
+    findUnique.mockResolvedValue(null);
+
+    await expect(ensureUser(person)).rejects.toBeInstanceOf(TombstoneUnverifiableError);
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("still refreshes an existing row when the keys cannot be used", async () => {
+    vi.stubEnv(TOMBSTONE_KEYS_ENV, "");
+    findUnique.mockResolvedValue({ id: USER });
+
+    await ensureUser(person);
+
+    expect(upsert).toHaveBeenCalledTimes(1);
+    expect(tombstoneFind).not.toHaveBeenCalled();
+  });
+
+  it("puts no subject and no key in what it throws", async () => {
+    tombstoneFind.mockResolvedValue({ id: "tombstone-1" });
+
+    const error = await ensureUser(person).catch((caught: unknown) => caught);
+
+    expect(String(error)).not.toContain(USER);
+    expect(String(error)).not.toContain(DUMMY_KEYS.slice(2));
   });
 });
 

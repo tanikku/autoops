@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   isKnown: vi.fn(),
   admit: vi.fn(),
   notify: vi.fn(),
+  tombstone: vi.fn(),
 }));
 
 vi.mock("next-auth", () => ({
@@ -31,6 +32,7 @@ vi.mock("@/lib/public-beta-admission", () => ({
   isKnownSubject: mocks.isKnown,
   admitToPublicBeta: mocks.admit,
 }));
+vi.mock("@/lib/account-tombstone", () => ({ checkTombstone: mocks.tombstone }));
 vi.mock("@/lib/notify/public-beta-admission", () => ({
   notifyPublicBetaJoin: mocks.notify,
 }));
@@ -101,6 +103,17 @@ describe("the mode the decision is given", () => {
       profile: stranger.profile,
     });
     expect([...input.allowlist]).toEqual(["qa@example.com"]);
+  });
+
+  it("hands over the tombstone check, asked of the database for the subject signing in", async () => {
+    mocks.tombstone.mockReset().mockResolvedValue("deleted");
+    const signIn = await load({ AUTH_ACCESS_MODE: "public-beta" });
+
+    await signIn(stranger);
+
+    const [, deps] = mocks.decide.mock.calls[0];
+    expect(await deps.checkTombstone("sub-new")).toBe("deleted");
+    expect(mocks.tombstone).toHaveBeenCalledWith({ tag: "prisma" }, "sub-new");
   });
 
   it("hands over the operator notifier as the report of a new place", async () => {

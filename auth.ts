@@ -1,5 +1,6 @@
 import NextAuth from "next-auth";
 import { authConfig } from "@/auth.config";
+import { checkTombstone } from "@/lib/account-tombstone";
 import {
   parseBetaAllowlist,
   readAccessMode,
@@ -40,6 +41,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     /**
      * Who may sign in.
      *
+     * **A deleted subject is refused before anything else**, allowlisted or
+     * not (see `decideSignIn`).
+     *
      * **An existing user is let in in either mode** — an allowlisted address,
      * an account, or a Public Beta place already taken. Somebody new is
      * refused in Closed Beta, and in Public Beta is admitted while a place is
@@ -66,6 +70,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           signup: publicBetaSignup,
         },
         {
+          checkTombstone: (userId) => checkTombstone(prisma, userId),
           isKnown: (userId) => isKnownSubject(prisma, userId),
           admit: (userId, limit) => admitToPublicBeta(prisma, userId, limit),
           notifyJoined: notifyPublicBetaJoin,
