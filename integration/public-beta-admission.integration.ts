@@ -1,6 +1,7 @@
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/lib/generated/prisma/client";
+import { TOMBSTONE_KEYS_ENV } from "@/lib/account-tombstone";
 import { admitToPublicBeta } from "@/lib/public-beta-admission";
 import { requireTestDatabaseUrl } from "@/integration/test-database";
 
@@ -33,7 +34,14 @@ const status = (outcome: { status: string }) => outcome.status;
 const letIn = (outcome: { status: string }) => outcome.status !== "full";
 
 beforeEach(async () => {
+  // An admission checks for a tombstone and refuses when it cannot, so the
+  // suite needs keys to admit anybody. A fixed dummy, never a deployed one.
+  vi.stubEnv(TOMBSTONE_KEYS_ENV, `1:${Buffer.alloc(32, 3).toString("base64")}`);
   await admin.publicBetaAdmission.deleteMany({});
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 afterAll(async () => {

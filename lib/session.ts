@@ -2,6 +2,10 @@ import "server-only";
 
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
+import {
+  isAccountDeletedError,
+  TombstoneUnverifiableError,
+} from "@/lib/account-tombstone";
 import { ensureUser } from "@/lib/users";
 
 /**
@@ -51,6 +55,50 @@ export function isUserProvisioningError(error: unknown): boolean {
 }
 
 /**
+ * The account was deleted, so its row is never written again.
+ *
+ * **A provisioning failure as far as every existing caller knows**, so each of
+ * them already stops before its write and shows what it shows when the row
+ * could not be made. Its own class is what lets it be told apart from a
+ * database that did not answer.
+ *
+ * **Names no subject.** The base message carries the id; this one replaces it,
+ * because the id is what a deleted account must not leave in a log.
+ */
+export class DeletedAccountError extends UserProvisioningError {
+  constructor(options?: { cause?: unknown }) {
+    super("", options);
+    this.name = "DeletedAccountError";
+    this.message = "This account has been deleted and cannot be used again.";
+  }
+}
+
+/** Whether a rejection means the account was deleted. */
+export function isDeletedAccountError(error: unknown): boolean {
+  return error instanceof DeletedAccountError;
+}
+
+/**
+ * Whether the account was deleted could not be checked, so its row was not
+ * written.
+ *
+ * **A provisioning failure to every existing caller, under the same name** —
+ * the billing log classifies errors by name, and this one should read there as
+ * the provisioning failure it is. It is not a deleted account
+ * (`isDeletedAccountError` is false) and not a database failure either: it has
+ * its own class.
+ *
+ * **Names no subject**, for the same reason as `DeletedAccountError`: the base
+ * message carries the id, and this path is new.
+ */
+export class ProvisioningUnverifiableError extends UserProvisioningError {
+  constructor(options?: { cause?: unknown }) {
+    super("", options);
+    this.message = "Whether this account was deleted could not be checked, so it was not provisioned.";
+  }
+}
+
+/**
  * The tenant key, with the account row guaranteed to exist behind it.
  *
  * **Sessions are JWT-only, so nothing writes the `User` row at sign-in.** That
@@ -90,6 +138,14 @@ export async function requireProvisionedUserId(): Promise<string> {
       image: session.user.image,
     });
   } catch (error) {
+    if (isAccountDeletedError(error)) {
+      throw new DeletedAccountError({ cause: error });
+    }
+
+    if (error instanceof TombstoneUnverifiableError) {
+      throw new ProvisioningUnverifiableError({ cause: error });
+    }
+
     // Named so a caller can tell it apart from the redirect above, which also
     // leaves by being thrown. The driver's own complaint travels as `cause`
     // and stays in the log.

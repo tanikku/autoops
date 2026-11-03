@@ -1310,3 +1310,17 @@ model PublicBetaAdmission {
   admittedAt DateTime @default(now())
 }
 
+
+/// A deleted account, kept only so it cannot be signed into again.
+///
+/// **No subject, no address, no name.** `subjectHash` is
+/// `HMAC-SHA256(key, "google:" + subject)` under the key `keyVersion` names, so
+/// a subject that is presented can be checked against it and the table cannot
+/// be read back into people. No relation to `User`: the row it stands for is
+/// gone. See `lib/account-tombstone.ts`.
+model DeletedAccount {
+  id          String   @id @default(cuid())
+  subjectHash String   @unique
+  keyVersion  Int
+  deletedAt   DateTime @default(now())
+}

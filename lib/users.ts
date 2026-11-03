@@ -6,6 +6,13 @@ import {
   isSupportedLanguage,
   type Language,
 } from "@/lib/i18n";
+import {
+  AccountDeletedError,
+  checkTombstone,
+  lockSubject,
+  TombstoneUnverifiableError,
+} from "@/lib/account-tombstone";
+import type { PrismaClient } from "@/lib/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { NEW_ACCOUNT_TIMEZONE } from "@/lib/timezones";
 
@@ -177,22 +184,57 @@ export async function setUserTimezone(
  * **`timezone` is not touched.** Every other column here comes from the
  * provider and is safe to overwrite with a newer copy of itself; that one is
  * the account's own choice, and refreshing a profile must not undo it.
+ *
+ * **A deleted account is never written again.** The subject's lock is taken
+ * first and the tombstone is checked under it, in the same transaction as the
+ * write, so a deletion holding the same lock is either already visible or has
+ * not begun — there is no moment in between for the row to come back.
+ *
+ * **An unanswerable check stops only a new account.** When the tombstone keys
+ * cannot be used, a subject that already has a row is let through: a deletion
+ * removes the row together with writing its tombstone, so a row that exists is
+ * a subject that has not been deleted. A subject with no row could be either,
+ * and is refused.
  */
-export async function ensureUser(user: {
-  id: string;
-  email: string;
-  name?: string | null;
-  image?: string | null;
-}): Promise<void> {
+export async function ensureUser(
+  user: {
+    id: string;
+    email: string;
+    name?: string | null;
+    image?: string | null;
+  },
+  client: PrismaClient = prisma,
+): Promise<void> {
   const fields = {
     email: user.email,
     name: user.name ?? null,
     image: user.image ?? null,
   };
 
-  await prisma.user.upsert({
-    where: { id: user.id },
-    create: { id: user.id, ...fields },
-    update: fields,
+  await client.$transaction(async (tx) => {
+    await lockSubject(tx, user.id);
+
+    const tombstone = await checkTombstone(tx, user.id);
+
+    if (tombstone === "deleted") {
+      throw new AccountDeletedError();
+    }
+
+    if (tombstone === "unverifiable") {
+      const existing = await tx.user.findUnique({
+        where: { id: user.id },
+        select: { id: true },
+      });
+
+      if (existing === null) {
+        throw new TombstoneUnverifiableError();
+      }
+    }
+
+    await tx.user.upsert({
+      where: { id: user.id },
+      create: { id: user.id, ...fields },
+      update: fields,
+    });
   });
 }

@@ -1,3 +1,8 @@
+import {
+  checkTombstone,
+  lockSubject,
+  type TombstoneStatus,
+} from "@/lib/account-tombstone";
 import type { PrismaClient } from "@/lib/generated/prisma/client";
 import {
   type AccessMode,
@@ -33,15 +38,39 @@ export const PUBLIC_BETA_ADMISSION_LOCK = 7_204_118_001;
 export type AdmissionOutcome =
   | { readonly status: "joined"; readonly participants: number; readonly admittedAt: Date }
   | { readonly status: "admitted" }
-  | { readonly status: "full" };
+  | { readonly status: "full" }
+  /**
+   * The subject was deleted, or whether it was could not be checked. No place
+   * is taken and none is kept. One answer for both, because the person signing
+   * in is told the same thing either way.
+   */
+  | { readonly status: "refused" };
 
+/**
+ * **Two locks, always in this order: the subject's, then the admission lock.**
+ * Every transaction that takes both takes them this way round, so none can be
+ * holding the second while it waits for the first.
+ *
+ * **The tombstone is checked under both.** A sign-in checks it too, earlier
+ * and without a lock; that check is a courtesy. This one is the one that holds,
+ * because a deletion takes the same locks and removes the subject's place in
+ * the same transaction as it writes the tombstone — so a place cannot be
+ * written after it, nor an old one kept.
+ */
 export async function admitToPublicBeta(
   client: PrismaClient,
   userId: string,
   limit: number,
 ): Promise<AdmissionOutcome> {
   return client.$transaction(async (tx) => {
+    await lockSubject(tx, userId);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(${PUBLIC_BETA_ADMISSION_LOCK}::bigint)`;
+
+    // Before the existing place is looked at: a deleted subject keeps nothing,
+    // and one that cannot be checked is not let in on the strength of a row.
+    if ((await checkTombstone(tx, userId)) !== "clear") {
+      return { status: "refused" };
+    }
 
     // Somebody already let in keeps their place without taking another.
     const existing = await tx.publicBetaAdmission.findUnique({
@@ -83,18 +112,28 @@ export async function isKnownSubject(client: PrismaClient, userId: string): Prom
  *
  * 1. A verified Google address and a subject are required, as every sign-in
  *    has always required a verified address.
- * 2. An address on the internal allowlist is let in without taking a place.
- * 3. Somebody with an account or a place already is let in, in either mode and
+ * 2. A deleted subject is refused — before the allowlist, before an existing
+ *    place, in either mode. When whether it was deleted cannot be checked,
+ *    only somebody already known is let in: a deletion removes both the
+ *    account and the place, so a subject that still has one was not deleted.
+ * 3. An address on the internal allowlist is let in without taking a place.
+ * 4. Somebody with an account or a place already is let in, in either mode and
  *    however full the beta is — neither the mode nor the cap locks out an
  *    existing user.
- * 4. Anybody else is refused in Closed Beta. In Public Beta they are refused
+ * 5. Anybody else is refused in Closed Beta. In Public Beta they are refused
  *    while signup is closed, and otherwise admitted if a place is left.
- * 5. A place this sign-in created is reported to the operator, after the
+ * 6. A place this sign-in created is reported to the operator, after the
  *    admission has committed. The report cannot change the answer: whatever it
  *    does, a participant who was let in is let in.
  *
- * The allowlist is looked at before the database only because it needs no
- * query; an address on it would be let in either way.
+ * **Step 2 is not the only check.** It runs without a lock, so a deletion can
+ * land just after it; the admission checks again under its locks, and an
+ * account row is never written for a deleted subject (`ensureUser`). What this
+ * step buys is that a deleted person is turned away at the door rather than
+ * signed in to an account that will refuse every write.
+ *
+ * A refusal says nothing about why: Auth.js returns `AccessDenied`, the same
+ * as any other refused sign-in.
  */
 export async function decideSignIn(
   input: {
@@ -105,6 +144,7 @@ export async function decideSignIn(
     signup: PublicBetaSignup;
   },
   deps: {
+    checkTombstone: (userId: string) => Promise<TombstoneStatus>;
     isKnown: (userId: string) => Promise<boolean>;
     admit: (userId: string, limit: number) => Promise<AdmissionOutcome>;
     notifyJoined: (joined: { participants: number; limit: number; admittedAt: Date }) => Promise<void>;
@@ -114,6 +154,16 @@ export async function decideSignIn(
 
   if (!profile || profile.email_verified !== true || !userId) {
     return false;
+  }
+
+  const tombstone = await deps.checkTombstone(userId);
+
+  if (tombstone === "deleted") {
+    return false;
+  }
+
+  if (tombstone === "unverifiable") {
+    return deps.isKnown(userId);
   }
 
   const email = profile.email?.trim().toLowerCase();
@@ -134,6 +184,10 @@ export async function decideSignIn(
   }
 
   const outcome = await deps.admit(userId, signup.limit);
+  if (outcome.status === "refused") {
+    return false;
+  }
+
   if (outcome.status === "full") {
     return SIGNUP_FULL_PATH;
   }
